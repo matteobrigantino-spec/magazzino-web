@@ -7,6 +7,7 @@ import { supabase } from "../../../lib/supabaseClient";
 type Item = {
   id: string;
   code: string;
+  supplier_code: string | null;
   description: string;
   stock: number;
   price: number;
@@ -47,7 +48,7 @@ export default function SupplierDetail({
 
       const { data: itemsData } = await supabase
         .from("items")
-        .select("id, code, description, stock, price, on_order, image_url")
+        .select("id, code, supplier_code, description, stock, price, on_order, image_url")
         .eq("supplier_id", supplierId)
         .order("description");
 
@@ -77,7 +78,6 @@ export default function SupplierDetail({
 
   return (
     <div>
-      {/* HEADER */}
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold">{supplierName}</h1>
 
@@ -98,13 +98,11 @@ export default function SupplierDetail({
         </div>
       </div>
 
-      {/* TOTALI */}
       <div className="mt-4 border p-3 rounded bg-gray-900">
         <div>Totale € in magazzino: {totals.totalMagazzino.toFixed(2)}</div>
         <div>Totale € in ordine: {totals.totalOrdine.toFixed(2)}</div>
       </div>
 
-      {/* IMMAGINE HOVER */}
       {hoveredImage && (
         <div className="fixed right-5 top-20 z-50 border bg-black p-2 rounded shadow-lg">
           <img
@@ -115,19 +113,18 @@ export default function SupplierDetail({
         </div>
       )}
 
-      {/* TABELLA */}
       <div className="mt-4 overflow-x-auto">
         <table className="w-full border mt-2 text-sm">
           <thead className="bg-gray-700 text-white">
             <tr>
-              <th className="p-2">Codice</th>
+              <th className="p-2">Codice fornitore</th>
               <th className="p-2">Fornitore</th>
               <th className="p-2">Descrizione</th>
-              <th className="p-2">Prezzo</th>
-              <th className="p-2">Stock</th>
-              <th className="p-2">Totale € mag.</th>
-              <th className="p-2">In ordine</th>
-              <th className="p-2">Totale € ord.</th>
+              <th className="p-2">Prezzo singolo</th>
+              <th className="p-2">Articoli in magazzino</th>
+              <th className="p-2">Prezzo totale in magazzino</th>
+              <th className="p-2">Articoli in ordine</th>
+              <th className="p-2">Prezzo totale in ordine</th>
             </tr>
           </thead>
 
@@ -157,25 +154,19 @@ export default function SupplierDetail({
                     onMouseEnter={() => setHoveredImage(it.image_url)}
                     onMouseLeave={() => setHoveredImage(null)}
                   >
-                    <Link href={`/items/${it.id}`}>{it.code}</Link>
+                    <Link href={`/items/${it.id}`}>
+                      {it.supplier_code || "-"}
+                    </Link>
                   </td>
 
                   <td className="p-2">{supplierName}</td>
-
                   <td className="p-2">{it.description}</td>
-
-                  <td className="p-2">
-                    {Number(it.price).toFixed(2)}
-                  </td>
-
+                  <td className="p-2">{Number(it.price).toFixed(2)}</td>
                   <td className="p-2">{it.stock}</td>
-
                   <td className="p-2">
                     {(Number(it.stock) * Number(it.price)).toFixed(2)}
                   </td>
-
                   <td className="p-2">{it.on_order}</td>
-
                   <td className="p-2">
                     {(Number(it.on_order) * Number(it.price)).toFixed(2)}
                   </td>

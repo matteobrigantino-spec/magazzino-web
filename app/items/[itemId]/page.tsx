@@ -2,13 +2,13 @@
 
 import React, { use, useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { supabase } from "../../../lib/supabaseClient";
 
 type ItemData = {
   id: string;
   supplier_id: string;
   code: string;
+  supplier_code: string | null;
   description: string;
   stock: number;
   price: number;
@@ -27,14 +27,14 @@ export default function ItemDetailPage({
       : (params as { itemId: string });
 
   const itemId = resolvedParams.itemId;
-  const router = useRouter();
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
 
   const [supplierId, setSupplierId] = useState("");
-  const [code, setCode] = useState("");
+  const [scannerCode, setScannerCode] = useState("");
+  const [supplierCode, setSupplierCode] = useState("");
   const [description, setDescription] = useState("");
   const [price, setPrice] = useState<number>(0);
   const [stock, setStock] = useState<number>(0);
@@ -59,7 +59,8 @@ export default function ItemDetailPage({
 
       const item = data as ItemData;
       setSupplierId(item.supplier_id || "");
-      setCode(item.code || "");
+      setScannerCode(item.code || "");
+      setSupplierCode(item.supplier_code || "");
       setDescription(item.description || "");
       setPrice(Number(item.price || 0));
       setStock(Number(item.stock || 0));
@@ -76,16 +77,19 @@ export default function ItemDetailPage({
     setMsg("");
     setSaving(true);
 
-    const trimmedCode = code.trim();
-    const trimmedDescription = description.trim();
-
-    if (!trimmedCode) {
-      setMsg("Inserisci il codice articolo.");
+    if (!scannerCode.trim()) {
+      setMsg("Inserisci il codice scanner.");
       setSaving(false);
       return;
     }
 
-    if (!trimmedDescription) {
+    if (!supplierCode.trim()) {
+      setMsg("Inserisci il codice fornitore.");
+      setSaving(false);
+      return;
+    }
+
+    if (!description.trim()) {
       setMsg("Inserisci la descrizione.");
       setSaving(false);
       return;
@@ -94,8 +98,9 @@ export default function ItemDetailPage({
     const { error } = await supabase
       .from("items")
       .update({
-        code: trimmedCode,
-        description: trimmedDescription,
+        code: scannerCode.trim(),
+        supplier_code: supplierCode.trim(),
+        description: description.trim(),
         price: Number(price) || 0,
         stock: Number(stock) || 0,
         on_order: Number(onOrder) || 0,
@@ -135,10 +140,19 @@ export default function ItemDetailPage({
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
         <div className="space-y-4">
           <div>
-            <label className="block mb-1 font-semibold">Codice articolo</label>
+            <label className="block mb-1 font-semibold">Codice scanner</label>
             <input
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
+              value={scannerCode}
+              onChange={(e) => setScannerCode(e.target.value)}
+              className="border p-3 w-full rounded"
+            />
+          </div>
+
+          <div>
+            <label className="block mb-1 font-semibold">Codice fornitore</label>
+            <input
+              value={supplierCode}
+              onChange={(e) => setSupplierCode(e.target.value)}
               className="border p-3 w-full rounded"
             />
           </div>
@@ -208,7 +222,16 @@ export default function ItemDetailPage({
 
             <div className="mb-4">
               <div className="text-sm opacity-70">Codice letto dalla pistola</div>
-              <div className="text-2xl font-bold mt-1">{code || "Nessun codice"}</div>
+              <div className="text-2xl font-bold mt-1">
+                {scannerCode || "Nessun codice"}
+              </div>
+            </div>
+
+            <div className="mb-4">
+              <div className="text-sm opacity-70">Codice fornitore</div>
+              <div className="text-xl font-semibold">
+                {supplierCode || "Nessun codice"}
+              </div>
             </div>
 
             <div className="mb-4">

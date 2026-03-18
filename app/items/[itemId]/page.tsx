@@ -2,6 +2,7 @@
 
 import React, { use, useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { supabase } from "../../../lib/supabaseClient";
 
 type ItemData = {
@@ -27,6 +28,7 @@ export default function ItemDetailPage({
       : (params as { itemId: string });
 
   const itemId = resolvedParams.itemId;
+  const router = useRouter();
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -58,6 +60,7 @@ export default function ItemDetailPage({
       }
 
       const item = data as ItemData;
+
       setSupplierId(item.supplier_id || "");
       setScannerCode(item.code || "");
       setSupplierCode(item.supplier_code || "");
@@ -73,6 +76,7 @@ export default function ItemDetailPage({
     loadItem();
   }, [itemId]);
 
+  // ✅ SALVA
   async function saveItem() {
     setMsg("");
     setSaving(true);
@@ -114,8 +118,30 @@ export default function ItemDetailPage({
       return;
     }
 
-    setMsg("Articolo salvato correttamente ✔");
+    setMsg("Articolo salvato ✔");
     setSaving(false);
+  }
+
+  // 🗑️ ELIMINA
+  async function deleteItem() {
+    const conferma = confirm(
+      "Sei sicuro di voler eliminare questo articolo?"
+    );
+
+    if (!conferma) return;
+
+    const { error } = await supabase
+      .from("items")
+      .delete()
+      .eq("id", itemId);
+
+    if (error) {
+      setMsg("Errore eliminazione: " + error.message);
+      return;
+    }
+
+    router.push(`/suppliers/${supplierId}`);
+    router.refresh();
   }
 
   if (loading) {
@@ -123,24 +149,23 @@ export default function ItemDetailPage({
   }
 
   return (
-    <div className="max-w-4xl">
+    <div className="max-w-5xl">
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold">Dettaglio Articolo</h1>
 
-        <div className="flex gap-3">
-          <Link
-            href={supplierId ? `/suppliers/${supplierId}` : "/suppliers"}
-            className="border px-4 py-2 rounded hover:bg-gray-700"
-          >
-            ← Torna al fornitore
-          </Link>
-        </div>
+        <Link
+          href={`/suppliers/${supplierId}`}
+          className="border px-4 py-2 rounded hover:bg-gray-700"
+        >
+          ← Torna al fornitore
+        </Link>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+        {/* FORM */}
         <div className="space-y-4">
           <div>
-            <label className="block mb-1 font-semibold">Codice scanner</label>
+            <label className="block mb-1">Codice scanner</label>
             <input
               value={scannerCode}
               onChange={(e) => setScannerCode(e.target.value)}
@@ -149,7 +174,7 @@ export default function ItemDetailPage({
           </div>
 
           <div>
-            <label className="block mb-1 font-semibold">Codice fornitore</label>
+            <label className="block mb-1">Codice fornitore</label>
             <input
               value={supplierCode}
               onChange={(e) => setSupplierCode(e.target.value)}
@@ -158,7 +183,7 @@ export default function ItemDetailPage({
           </div>
 
           <div>
-            <label className="block mb-1 font-semibold">Descrizione</label>
+            <label className="block mb-1">Descrizione</label>
             <input
               value={description}
               onChange={(e) => setDescription(e.target.value)}
@@ -167,7 +192,7 @@ export default function ItemDetailPage({
           </div>
 
           <div>
-            <label className="block mb-1 font-semibold">Prezzo singolo</label>
+            <label className="block mb-1">Prezzo singolo</label>
             <input
               type="number"
               value={price}
@@ -177,7 +202,7 @@ export default function ItemDetailPage({
           </div>
 
           <div>
-            <label className="block mb-1 font-semibold">Articoli in magazzino</label>
+            <label className="block mb-1">Articoli in magazzino</label>
             <input
               type="number"
               value={stock}
@@ -187,7 +212,7 @@ export default function ItemDetailPage({
           </div>
 
           <div>
-            <label className="block mb-1 font-semibold">Articoli in ordine</label>
+            <label className="block mb-1">Articoli in ordine</label>
             <input
               type="number"
               value={onOrder}
@@ -197,7 +222,7 @@ export default function ItemDetailPage({
           </div>
 
           <div>
-            <label className="block mb-1 font-semibold">Link immagine</label>
+            <label className="block mb-1">Link immagine</label>
             <input
               value={imageUrl}
               onChange={(e) => setImageUrl(e.target.value)}
@@ -205,6 +230,7 @@ export default function ItemDetailPage({
             />
           </div>
 
+          {/* BOTTONI */}
           <button
             onClick={saveItem}
             disabled={saving}
@@ -213,38 +239,56 @@ export default function ItemDetailPage({
             {saving ? "Salvataggio..." : "Salva modifiche"}
           </button>
 
+          <button
+            onClick={deleteItem}
+            className="border px-4 py-3 rounded bg-red-700 hover:bg-red-800"
+          >
+            🗑️ Cancella articolo
+          </button>
+
           {msg && <div className="border p-3 rounded">{msg}</div>}
         </div>
 
+        {/* ANTEPRIMA */}
         <div>
           <div className="border rounded p-4 bg-gray-900">
-            <div className="mb-3 text-lg font-semibold">Anteprima articolo</div>
+            <div className="mb-3 text-lg font-semibold">
+              Anteprima articolo
+            </div>
 
             <div className="mb-4">
-              <div className="text-sm opacity-70">Codice letto dalla pistola</div>
+              <div className="text-sm opacity-70">
+                Codice letto dalla pistola
+              </div>
               <div className="text-2xl font-bold mt-1">
-                {scannerCode || "Nessun codice"}
+                {scannerCode || "-"}
               </div>
             </div>
 
             <div className="mb-4">
-              <div className="text-sm opacity-70">Codice fornitore</div>
+              <div className="text-sm opacity-70">
+                Codice fornitore
+              </div>
               <div className="text-xl font-semibold">
-                {supplierCode || "Nessun codice"}
+                {supplierCode || "-"}
               </div>
             </div>
 
             <div className="mb-4">
-              <div className="text-sm opacity-70">Totale in magazzino</div>
+              <div className="text-sm opacity-70">
+                Totale in magazzino
+              </div>
               <div className="text-xl font-semibold">
-                {(Number(stock) * Number(price)).toFixed(2)} €
+                {(stock * price).toFixed(2)} €
               </div>
             </div>
 
             <div className="mb-4">
-              <div className="text-sm opacity-70">Totale in ordine</div>
+              <div className="text-sm opacity-70">
+                Totale in ordine
+              </div>
               <div className="text-xl font-semibold">
-                {(Number(onOrder) * Number(price)).toFixed(2)} €
+                {(onOrder * price).toFixed(2)} €
               </div>
             </div>
 
@@ -256,7 +300,9 @@ export default function ItemDetailPage({
                   className="max-h-64 object-contain"
                 />
               ) : (
-                <span className="opacity-50">Nessuna immagine</span>
+                <span className="opacity-50">
+                  Nessuna immagine
+                </span>
               )}
             </div>
           </div>

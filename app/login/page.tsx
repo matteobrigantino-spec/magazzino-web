@@ -18,7 +18,7 @@ export default function LoginPage() {
 
     const { data, error } = await supabase
       .from("users")
-      .select("username, password, role")
+      .select("id, username, password, role, session_version")
       .eq("username", username.trim())
       .eq("password", password.trim())
       .maybeSingle();
@@ -37,9 +37,18 @@ export default function LoginPage() {
 
     localStorage.setItem("magazzino_user", data.username);
     localStorage.setItem("magazzino_role", data.role || "admin");
+    localStorage.setItem("magazzino_user_id", data.id);
+    localStorage.setItem(
+      "magazzino_session_version",
+      String(data.session_version || 1)
+    );
 
     setLoading(false);
-    router.replace("/");
+
+    // piccolo ritardo per evitare rimbalzi di navigazione
+    setTimeout(() => {
+      router.replace("/");
+    }, 100);
   }
 
   return (

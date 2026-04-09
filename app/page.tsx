@@ -21,7 +21,6 @@ export default function Home() {
       return;
     }
 
-    // Se manca l'ID ma c'è lo username, recuperalo dal database
     if (!userId && username) {
       const { data: foundUser, error: findError } = await supabase
         .from("users")
@@ -92,7 +91,13 @@ export default function Home() {
         </p>
       </div>
 
-      <div className="max-w-md border rounded-xl p-6 bg-gray-900">
+      <div
+        className="max-w-md border rounded-xl p-6"
+        style={{
+          backgroundColor: "var(--card)",
+          borderColor: "var(--border-color)",
+        }}
+      >
         <h2 className="text-xl font-bold mb-4">Cambio password admin</h2>
 
         <div className="space-y-4">
@@ -103,18 +108,31 @@ export default function Home() {
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
               className="border p-3 w-full rounded"
+              style={{
+                backgroundColor: "var(--background)",
+                color: "var(--foreground)",
+                borderColor: "var(--border-color)",
+              }}
             />
           </div>
 
           <button
             onClick={changePassword}
             disabled={saving}
-            className="border px-4 py-3 rounded hover:bg-gray-700"
+            className="border px-4 py-3 rounded hover:opacity-80"
+            style={{ borderColor: "var(--border-color)" }}
           >
             {saving ? "Salvataggio..." : "Aggiorna password"}
           </button>
 
-          {msg && <div className="border p-3 rounded">{msg}</div>}
+          {msg && (
+            <div
+              className="border p-3 rounded"
+              style={{ borderColor: "var(--border-color)" }}
+            >
+              {msg}
+            </div>
+          )}
         </div>
       </div>
     </div>

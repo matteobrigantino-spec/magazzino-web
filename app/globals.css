@@ -2,25 +2,264 @@
 
 :root {
   --background: #ffffff;
-  --foreground: #171717;
-}
+  --foreground: #111827;
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --card: #f3f4f6;
+  --card-2: #e5e7eb;
+
+  --header-bg: #ffffff;
+  --menu-bg: #ffffff;
+  --menu-hover: #f3f4f6;
+
+  --border-color: #d1d5db;
+  --table-head: #e5e7eb;
+
+  --input-bg: #ffffff;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: #050505;
+    --foreground: #ffffff;
+
+    --card: #111827;
+    --card-2: #1f2937;
+
+    --header-bg: #080808;
+    --menu-bg: #111827;
+    --menu-hover: #1f2937;
+
+    --border-color: #374151;
+    --table-head: #374151;
+
+    --input-bg: #0b0b0b;
   }
 }
 
+* {
+  box-sizing: border-box;
+}
+
+html,
 body {
-  background: var(--background);
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+}
+
+body {
+  background-color: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+input,
+select,
+textarea {
+  background-color: var(--input-bg);
+  color: var(--foreground);
+}
+
+/* ============================= */
+/* TOP BAR                       */
+/* ============================= */
+
+.topbar {
+  width: 100%;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--header-bg);
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+}
+
+.topbar-inner {
+  width: 100%;
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  padding: 0 32px;
+  gap: 6px;
+}
+
+.topbar-logo {
+  font-size: 20px;
+  font-weight: 800;
+  margin-right: 22px;
+  letter-spacing: 0.5px;
+}
+
+.topbar-menu {
+  position: relative;
+}
+
+.topbar-button,
+.topbar-link {
+  height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 16px;
+
+  border: none;
+  border-radius: 7px;
+
+  background: transparent;
+  color: var(--foreground);
+
+  cursor: pointer;
+
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.topbar-button:hover,
+.topbar-link:hover {
+  background: var(--menu-hover);
+}
+
+.topbar-arrow {
+  font-size: 9px;
+  opacity: 0.65;
+}
+
+.topbar-spacer {
+  flex: 1;
+}
+
+.topbar-user {
+  font-size: 14px;
+  opacity: 0.7;
+  margin-right: 5px;
+}
+
+.topbar-logout {
+  padding: 9px 15px;
+
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+
+  background: transparent;
+  color: var(--foreground);
+
+  cursor: pointer;
+}
+
+.topbar-logout:hover {
+  background: var(--menu-hover);
+}
+
+/* ============================= */
+/* DROPDOWN                      */
+/* ============================= */
+
+.dropdown-menu {
+  position: absolute;
+
+  top: calc(100% + 7px);
+  left: 0;
+
+  width: 230px;
+
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+
+  background: var(--menu-bg);
+
+  overflow: hidden;
+
+  box-shadow:
+    0 10px 25px rgba(0, 0, 0, 0.18);
+}
+
+.warehouse-dropdown {
+  max-height: 430px;
+  overflow-y: auto;
+}
+
+.dropdown-item {
+  display: block;
+
+  width: 100%;
+  padding: 13px 16px;
+
+  border-bottom: 1px solid var(--border-color);
+
+  font-size: 14px;
+}
+
+.dropdown-item:last-child {
+  border-bottom: none;
+}
+
+.dropdown-item:hover {
+  background: var(--menu-hover);
+}
+
+.dropdown-empty {
+  padding: 15px;
+  font-size: 14px;
+  opacity: 0.6;
+}
+
+/* ============================= */
+/* PAGINA                        */
+/* ============================= */
+
+main {
+  width: 100%;
+  max-width: 1500px;
+  margin: auto;
+  padding: 30px;
+}
+
+/* ============================= */
+/* TABELLE                       */
+/* ============================= */
+
+table {
+  border-collapse: collapse;
+}
+
+th {
+  font-weight: 700;
+}
+
+input,
+select {
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+}
+
+/* MOBILE */
+
+@media (max-width: 800px) {
+  .topbar-inner {
+    padding: 0 12px;
+    overflow-x: auto;
+  }
+
+  .topbar-logo {
+    margin-right: 5px;
+  }
+
+  .topbar-user {
+    display: none;
+  }
+
+  main {
+    padding: 16px;
+  }
 }

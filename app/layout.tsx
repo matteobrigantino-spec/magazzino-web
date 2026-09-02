@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+
 import "./globals.css";
+
 import AuthGuard from "../components/AuthGuard";
 import TopBar from "../components/TopBar";
 
@@ -31,7 +33,10 @@ export default function RootLayout({
       >
         <AuthGuard>
           <TopBar />
-          <main className="mx-auto max-w-6xl px-4 py-6">{children}</main>
+
+          <main className="mx-auto max-w-7xl px-6 py-6">
+            {children}
+          </main>
         </AuthGuard>
       </body>
     </html>

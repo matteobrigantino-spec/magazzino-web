@@ -1478,4 +1478,3 @@ const emptyStyle = {
   padding: 45,
   textAlign: "center" as const,
   opacity: 0.55,
-};

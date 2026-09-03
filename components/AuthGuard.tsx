@@ -6,7 +6,7 @@ import { supabase } from "../lib/supabaseClient";
 
 const INACTIVITY_LIMIT = 3 * 60 * 60 * 1000; // 3 ore
 const SESSION_CHECK_INTERVAL = 60 * 1000; // 1 minuto
-const ACTIVITY_UPDATE_INTERVAL = 30 * 1000; // aggiorna max ogni 30 secondi
+const ACTIVITY_UPDATE_INTERVAL = 30 * 1000; // max ogni 30 secondi
 
 export default function AuthGuard({
   children,
@@ -16,9 +16,22 @@ export default function AuthGuard({
   const router = useRouter();
   const pathname = usePathname();
 
+  const isCatalogo = pathname.startsWith("/catalogo");
+
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
+    /*
+      CATALOGO MAGAZZINIERE
+
+      Il catalogo è indipendente dal login
+      e deve poter funzionare anche offline.
+    */
+    if (isCatalogo) {
+      setReady(true);
+      return;
+    }
+
     let interval: ReturnType<typeof setInterval> | null = null;
     let lastActivityWrite = 0;
 
@@ -98,6 +111,7 @@ export default function AuthGuard({
 
     async function checkAuth() {
       const user = localStorage.getItem("magazzino_user");
+
       const userId = localStorage.getItem(
         "magazzino_user_id"
       );
@@ -106,6 +120,10 @@ export default function AuthGuard({
         "magazzino_session_version"
       );
 
+      /*
+        Se non siamo autenticati,
+        tutte le pagine del gestionale vanno al login.
+      */
       if (!user || !userId) {
         if (pathname !== "/login") {
           logoutAndRedirect();
@@ -126,7 +144,7 @@ export default function AuthGuard({
       }
 
       /*
-        Controllo delle 3 ore di inattività.
+        Logout dopo 3 ore di inattività.
       */
       const expired = checkInactivity();
 
@@ -135,11 +153,7 @@ export default function AuthGuard({
       }
 
       /*
-        Controllo session_version su Supabase.
-
-        IMPORTANTE:
-        se c'è solo un errore temporaneo di rete,
-        NON facciamo logout.
+        Controllo sessione su Supabase.
       */
       const { data, error } = await supabase
         .from("users")
@@ -147,6 +161,10 @@ export default function AuthGuard({
         .eq("id", userId)
         .maybeSingle();
 
+      /*
+        Un problema temporaneo di Internet
+        NON deve scollegare l'utente.
+      */
       if (error) {
         console.warn(
           "Controllo sessione temporaneamente non disponibile:",
@@ -158,8 +176,8 @@ export default function AuthGuard({
       }
 
       /*
-        Se l'utente non esiste più nel database,
-        allora facciamo logout.
+        Se l'utente non esiste più,
+        facciamo logout.
       */
       if (!data) {
         logoutAndRedirect();
@@ -175,8 +193,8 @@ export default function AuthGuard({
       );
 
       /*
-        Se è stata cambiata la password da un altro PC,
-        la session_version cambia e questo PC viene scollegato.
+        Se cambia la password da un altro PC,
+        la session_version cambia.
       */
       if (dbVersion !== savedVersion) {
         logoutAndRedirect();
@@ -186,16 +204,9 @@ export default function AuthGuard({
       setReady(true);
     }
 
-    /*
-      Primo controllo all'apertura della pagina.
-    */
     checkAuth();
 
     if (pathname !== "/login") {
-      /*
-        Se non esiste ancora il timestamp attività,
-        lo creiamo.
-      */
       if (
         !localStorage.getItem("magazzino_last_activity")
       ) {
@@ -205,10 +216,6 @@ export default function AuthGuard({
         );
       }
 
-      /*
-        Questi eventi indicano che stai usando
-        realmente il gestionale.
-      */
       const activityEvents = [
         "mousedown",
         "keydown",
@@ -225,10 +232,6 @@ export default function AuthGuard({
         );
       });
 
-      /*
-        Controlliamo sessione e inattività
-        una volta al minuto, non ogni 5 secondi.
-      */
       interval = setInterval(() => {
         checkAuth();
       }, SESSION_CHECK_INTERVAL);
@@ -246,7 +249,7 @@ export default function AuthGuard({
         });
       };
     }
-  }, [pathname, router]);
+  }, [pathname, router, isCatalogo]);
 
   if (!ready) {
     return (

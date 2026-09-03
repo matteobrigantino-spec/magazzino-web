@@ -29,9 +29,6 @@ export default function TopBar() {
 
   /*
     UTENTE
-
-    Sul catalogo non serve leggere nessun dato
-    relativo all'utente del gestionale.
   */
   useEffect(() => {
     if (hideTopBar) {
@@ -46,9 +43,8 @@ export default function TopBar() {
   /*
     FORNITORI DEL MENU MAGAZZINO
 
-    IMPORTANTE:
-    sul catalogo non facciamo questa richiesta a Supabase,
-    perché il catalogo dovrà funzionare anche offline.
+    Sul catalogo non facciamo richieste
+    a Supabase, perché deve funzionare offline.
   */
   useEffect(() => {
     if (hideTopBar) {
@@ -109,7 +105,7 @@ export default function TopBar() {
   }, [hideTopBar]);
 
   /*
-    LOGOUT GESTIONALE
+    LOGOUT
   */
   function logout() {
     localStorage.removeItem("magazzino_user");
@@ -127,7 +123,7 @@ export default function TopBar() {
 
   /*
     LOGIN E CATALOGO:
-    NESSUNA BARRA DEL GESTIONALE
+    NESSUNA BARRA
   */
   if (hideTopBar) {
     return null;
@@ -223,22 +219,18 @@ export default function TopBar() {
                   Nessun fornitore
                 </div>
               ) : (
-                suppliers.map(
-                  (supplier) => (
-                    <Link
-                      key={supplier.id}
-                      href={`/suppliers/${supplier.id}`}
-                      className="dropdown-item"
-                      onClick={() =>
-                        setWarehouseMenuOpen(
-                          false
-                        )
-                      }
-                    >
-                      {supplier.name}
-                    </Link>
-                  )
-                )
+                suppliers.map((supplier) => (
+                  <Link
+                    key={supplier.id}
+                    href={`/suppliers/${supplier.id}`}
+                    className="dropdown-item"
+                    onClick={() =>
+                      setWarehouseMenuOpen(false)
+                    }
+                  >
+                    {supplier.name}
+                  </Link>
+                ))
               )}
             </div>
           )}
@@ -271,6 +263,46 @@ export default function TopBar() {
         <div className="topbar-user">
           {username}
         </div>
+
+        {/* IMPOSTAZIONI */}
+
+        <Link
+          href="/settings"
+          title="Impostazioni"
+          aria-label="Impostazioni"
+          style={{
+            width: 34,
+            height: 34,
+
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+
+            borderRadius: 8,
+
+            border:
+              pathname === "/settings"
+                ? "1px solid var(--foreground)"
+                : "1px solid var(--border-color)",
+
+            background:
+              pathname === "/settings"
+                ? "var(--input-bg)"
+                : "transparent",
+
+            color: "var(--foreground)",
+
+            textDecoration: "none",
+
+            fontSize: 18,
+
+            lineHeight: 1,
+
+            transition: "all 0.15s ease",
+          }}
+        >
+          ⚙
+        </Link>
 
         {/* LOGOUT */}
 

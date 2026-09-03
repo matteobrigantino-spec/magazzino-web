@@ -59,14 +59,19 @@ export default function OrderDetailPage() {
 
   const [order, setOrder] = useState<OrderRow | null>(null);
   const [supplier, setSupplier] = useState<Supplier | null>(null);
+
   const [lines, setLines] = useState<LineView[]>([]);
-  const [incomingQty, setIncomingQty] = useState<Record<string, number>>({});
+
+  const [incomingQty, setIncomingQty] = useState<
+    Record<string, number>
+  >({});
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
   const [message, setMessage] = useState("");
+
   const [messageType, setMessageType] = useState<
     "success" | "error" | ""
   >("");
@@ -77,70 +82,90 @@ export default function OrderDetailPage() {
 
   async function loadData() {
     setLoading(true);
-    setMessage("");
-    setMessageType("");
 
-    const { data: orderData, error: orderError } = await supabase
-      .from("orders")
-      .select(
-        "id,supplier_id,status,order_date,created_at,pdf_url,pdf_path"
-      )
-      .eq("id", orderId)
-      .single();
+    const { data: orderData, error: orderError } =
+      await supabase
+        .from("orders")
+        .select(
+          "id,supplier_id,status,order_date,created_at,pdf_url,pdf_path"
+        )
+        .eq("id", orderId)
+        .single();
 
     if (orderError || !orderData) {
       setMessage(
         "Errore caricamento ordine: " +
-          (orderError?.message || "Ordine non trovato")
+          (orderError?.message ||
+            "Ordine non trovato")
       );
+
       setMessageType("error");
       setLoading(false);
       return;
     }
 
-    const { data: supplierData, error: supplierError } = await supabase
-      .from("suppliers")
-      .select("id,name")
-      .eq("id", orderData.supplier_id)
-      .single();
+    const { data: supplierData, error: supplierError } =
+      await supabase
+        .from("suppliers")
+        .select("id,name")
+        .eq("id", orderData.supplier_id)
+        .single();
 
     if (supplierError || !supplierData) {
       setMessage(
         "Errore caricamento fornitore: " +
-          (supplierError?.message || "Fornitore non trovato")
+          (supplierError?.message ||
+            "Fornitore non trovato")
       );
+
       setMessageType("error");
       setLoading(false);
       return;
     }
 
-    const { data: orderItemsData, error: orderItemsError } = await supabase
+    const {
+      data: orderItemsData,
+      error: orderItemsError,
+    } = await supabase
       .from("order_items")
-      .select("id,order_id,item_id,qty,received_qty,unit_price")
+      .select(
+        "id,order_id,item_id,qty,received_qty,unit_price"
+      )
       .eq("order_id", orderId);
 
     if (orderItemsError) {
       setMessage(
-        "Errore caricamento righe ordine: " + orderItemsError.message
+        "Errore caricamento righe ordine: " +
+          orderItemsError.message
       );
+
       setMessageType("error");
       setLoading(false);
       return;
     }
 
-    const orderItems = (orderItemsData || []) as OrderItem[];
-    const itemIds = orderItems.map((line) => line.item_id);
+    const orderItems =
+      (orderItemsData || []) as OrderItem[];
+
+    const itemIds =
+      orderItems.map((line) => line.item_id);
 
     let itemsData: Item[] = [];
 
     if (itemIds.length > 0) {
       const { data, error } = await supabase
         .from("items")
-        .select("id,code,supplier_code,description,stock,on_order")
+        .select(
+          "id,code,supplier_code,description,stock,on_order"
+        )
         .in("id", itemIds);
 
       if (error) {
-        setMessage("Errore caricamento articoli: " + error.message);
+        setMessage(
+          "Errore caricamento articoli: " +
+            error.message
+        );
+
         setMessageType("error");
         setLoading(false);
         return;
@@ -159,28 +184,54 @@ export default function OrderDetailPage() {
       itemMap.set(item.id, item);
     });
 
-    const lineViews: LineView[] = orderItems.map((line) => {
-      const item = itemMap.get(line.item_id);
+    const lineViews: LineView[] =
+      orderItems.map((line) => {
+        const item = itemMap.get(line.item_id);
 
-      const qty = Number(line.qty || 0);
-      const receivedQty = Number(line.received_qty || 0);
+        const qty =
+          Number(line.qty || 0);
 
-      return {
-        id: line.id,
-        item_id: line.item_id,
-        code: item?.code || "-",
-        supplier_code: item?.supplier_code || null,
-        description: item?.description || "Articolo non trovato",
-        qty,
-        received_qty: receivedQty,
-        remaining_qty: Math.max(0, qty - receivedQty),
-        unit_price: Number(line.unit_price || 0),
-        stock: Number(item?.stock || 0),
-        on_order: Number(item?.on_order || 0),
-      };
-    });
+        const receivedQty =
+          Number(line.received_qty || 0);
 
-    const initialIncoming: Record<string, number> = {};
+        return {
+          id: line.id,
+          item_id: line.item_id,
+
+          code:
+            item?.code || "-",
+
+          supplier_code:
+            item?.supplier_code || null,
+
+          description:
+            item?.description ||
+            "Articolo non trovato",
+
+          qty,
+
+          received_qty:
+            receivedQty,
+
+          remaining_qty:
+            Math.max(
+              0,
+              qty - receivedQty
+            ),
+
+          unit_price:
+            Number(line.unit_price || 0),
+
+          stock:
+            Number(item?.stock || 0),
+
+          on_order:
+            Number(item?.on_order || 0),
+        };
+      });
+
+    const initialIncoming:
+      Record<string, number> = {};
 
     lineViews.forEach((line) => {
       initialIncoming[line.id] = 0;
@@ -190,42 +241,65 @@ export default function OrderDetailPage() {
     setSupplier(supplierData);
     setLines(lineViews);
     setIncomingQty(initialIncoming);
+
     setLoading(false);
   }
 
   const totalOrderValue = useMemo(() => {
-    return lines.reduce((sum, line) => {
-      return sum + line.qty * line.unit_price;
-    }, 0);
+    return lines.reduce(
+      (sum, line) =>
+        sum +
+        line.qty *
+          line.unit_price,
+      0
+    );
   }, [lines]);
 
   const totalOrderedQty = useMemo(() => {
-    return lines.reduce((sum, line) => {
-      return sum + line.qty;
-    }, 0);
+    return lines.reduce(
+      (sum, line) =>
+        sum + line.qty,
+      0
+    );
   }, [lines]);
 
   const totalReceivedQty = useMemo(() => {
-    return lines.reduce((sum, line) => {
-      return sum + line.received_qty;
-    }, 0);
+    return lines.reduce(
+      (sum, line) =>
+        sum +
+        line.received_qty,
+      0
+    );
   }, [lines]);
 
   const totalRemainingQty = useMemo(() => {
-    return lines.reduce((sum, line) => {
-      return sum + line.remaining_qty;
-    }, 0);
+    return lines.reduce(
+      (sum, line) =>
+        sum +
+        line.remaining_qty,
+      0
+    );
   }, [lines]);
 
-  function changeIncomingQty(lineId: string, value: number) {
-    const line = lines.find((row) => row.id === lineId);
+  function changeIncomingQty(
+    lineId: string,
+    value: number
+  ) {
+    const line =
+      lines.find(
+        (row) => row.id === lineId
+      );
 
     if (!line) return;
 
-    const safeValue = Math.max(
-      0,
-      Math.min(Math.floor(value || 0), line.remaining_qty)
-    );
+    const safeValue =
+      Math.max(
+        0,
+        Math.min(
+          Math.floor(value || 0),
+          line.remaining_qty
+        )
+      );
 
     setIncomingQty((current) => ({
       ...current,
@@ -233,152 +307,167 @@ export default function OrderDetailPage() {
     }));
   }
 
-  async function registerArrival(mode: "partial" | "complete") {
+  /*
+    RICEZIONE ORDINE ATOMICA
+
+    Non aggiorniamo più:
+    - stock
+    - on_order
+    - received_qty
+    - status
+
+    uno alla volta dal browser.
+
+    Facciamo UNA SOLA chiamata a Supabase.
+  */
+  async function registerArrival(
+    mode: "partial" | "complete"
+  ) {
     if (!order) return;
 
     if (order.status === "received") {
-      setMessage("Questo ordine è già stato completato.");
+      setMessage(
+        "Questo ordine è già stato completato."
+      );
+
       setMessageType("error");
       return;
     }
 
-    let rowsToReceive = lines.map((line) => {
-      const qty =
-        mode === "complete"
-          ? line.remaining_qty
-          : Number(incomingQty[line.id] || 0);
+    if (order.status === "cancelled") {
+      setMessage(
+        "Questo ordine è stato annullato."
+      );
 
-      return {
-        line,
-        qty,
-      };
-    });
-
-    rowsToReceive = rowsToReceive.filter((row) => row.qty > 0);
-
-    if (rowsToReceive.length === 0) {
-      setMessage("Inserisci almeno una quantità ricevuta.");
       setMessageType("error");
       return;
     }
 
-    const text =
+    /*
+      ARRIVO PARZIALE
+
+      Prepariamo soltanto le righe
+      dove hai inserito una quantità.
+    */
+    const receipts = lines
+      .map((line) => ({
+        line_id: line.id,
+        qty: Number(
+          incomingQty[line.id] || 0
+        ),
+      }))
+      .filter(
+        (receipt) =>
+          receipt.qty > 0
+      );
+
+    if (
+      mode === "partial" &&
+      receipts.length === 0
+    ) {
+      setMessage(
+        "Inserisci almeno una quantità ricevuta."
+      );
+
+      setMessageType("error");
+      return;
+    }
+
+    if (
+      mode === "complete" &&
+      totalRemainingQty <= 0
+    ) {
+      setMessage(
+        "Non ci sono quantità ancora da ricevere."
+      );
+
+      setMessageType("error");
+      return;
+    }
+
+    const confirmationText =
       mode === "complete"
         ? "Confermi che tutto il materiale residuo dell'ordine è arrivato?"
         : "Confermi le quantità ricevute indicate?";
 
-    const confirmed = confirm(text);
+    const confirmed =
+      confirm(confirmationText);
 
-    if (!confirmed) return;
+    if (!confirmed) {
+      return;
+    }
 
     setSaving(true);
     setMessage("");
     setMessageType("");
 
-    for (const row of rowsToReceive) {
-      const { line, qty } = row;
+    /*
+      QUI AVVIENE TUTTO.
 
-      const { data: currentItem, error: itemReadError } = await supabase
-        .from("items")
-        .select("stock,on_order")
-        .eq("id", line.item_id)
-        .single();
+      Supabase esegue la funzione SQL
+      dentro una transazione.
 
-      if (itemReadError || !currentItem) {
-        setMessage(
-          "Errore lettura articolo: " +
-            (itemReadError?.message || "Articolo non trovato")
-        );
-        setMessageType("error");
-        setSaving(false);
-        return;
-      }
+      Se qualcosa fallisce,
+      nessuna modifica viene confermata.
+    */
+    const { data, error } =
+      await supabase.rpc(
+        "receive_order_atomic",
+        {
+          p_order_id: orderId,
 
-      const newStock = Number(currentItem.stock || 0) + qty;
+          p_receipts:
+            mode === "partial"
+              ? receipts
+              : [],
 
-      const newOnOrder = Math.max(
-        0,
-        Number(currentItem.on_order || 0) - qty
+          p_complete:
+            mode === "complete",
+        }
       );
 
-      const { error: itemUpdateError } = await supabase
-        .from("items")
-        .update({
-          stock: newStock,
-          on_order: newOnOrder,
-        })
-        .eq("id", line.item_id);
+    if (error) {
+      console.error(
+        "Errore ricezione atomica:",
+        error
+      );
 
-      if (itemUpdateError) {
-        setMessage(
-          "Errore aggiornamento magazzino: " + itemUpdateError.message
-        );
-        setMessageType("error");
-        setSaving(false);
-        return;
-      }
-
-      const newReceivedQty = line.received_qty + qty;
-
-      const { error: lineUpdateError } = await supabase
-        .from("order_items")
-        .update({
-          received_qty: newReceivedQty,
-        })
-        .eq("id", line.id);
-
-      if (lineUpdateError) {
-        setMessage(
-          "Errore aggiornamento riga ordine: " + lineUpdateError.message
-        );
-        setMessageType("error");
-        setSaving(false);
-        return;
-      }
-    }
-
-    const refreshedReceived = lines.map((line) => {
-      const added =
-        mode === "complete"
-          ? line.remaining_qty
-          : Number(incomingQty[line.id] || 0);
-
-      return {
-        ...line,
-        received_qty: line.received_qty + added,
-      };
-    });
-
-    const allCompleted = refreshedReceived.every(
-      (line) => line.received_qty >= line.qty
-    );
-
-    const newStatus = allCompleted ? "received" : "partial";
-
-    const { error: statusError } = await supabase
-      .from("orders")
-      .update({
-        status: newStatus,
-      })
-      .eq("id", orderId);
-
-    if (statusError) {
       setMessage(
-        "Le giacenze sono state aggiornate, ma errore stato ordine: " +
-          statusError.message
+        "Ricezione non registrata: " +
+          error.message
       );
+
       setMessageType("error");
       setSaving(false);
+
       return;
     }
 
+    console.log(
+      "Ricezione completata:",
+      data
+    );
+
+    /*
+      Ricarichiamo tutto dal database.
+    */
     await loadData();
 
     setSaving(false);
 
-    if (allCompleted) {
+    const result =
+      data as {
+        success?: boolean;
+        status?: string;
+        complete?: boolean;
+      } | null;
+
+    if (
+      result?.status ===
+      "received"
+    ) {
       setMessage(
-        "Ordine completato. Tutte le giacenze sono state aggiornate."
+        "Ordine completato. Giacenze e quantità in ordine aggiornate correttamente."
       );
     } else {
       setMessage(
@@ -389,6 +478,15 @@ export default function OrderDetailPage() {
     setMessageType("success");
   }
 
+  /*
+    ELIMINAZIONE ORDINE
+
+    Questa parte per ora rimane
+    come prima.
+
+    Successivamente renderemo atomica
+    anche questa operazione.
+  */
   async function deleteOrder() {
     if (!order || !supplier) return;
 
@@ -407,84 +505,110 @@ export default function OrderDetailPage() {
     setMessage("");
     setMessageType("");
 
-    /*
-      1. TOGLIAMO DA "IN ORDINE"
-      SOLO LE QUANTITÀ ANCORA DA RICEVERE
-    */
-
     for (const line of lines) {
-      const remainingQty = Math.max(
-        0,
-        Number(line.qty || 0) - Number(line.received_qty || 0)
-      );
+      const remainingQty =
+        Math.max(
+          0,
+          Number(line.qty || 0) -
+            Number(
+              line.received_qty || 0
+            )
+        );
 
       if (remainingQty <= 0) {
         continue;
       }
 
-      const { data: currentItem, error: itemReadError } = await supabase
+      const {
+        data: currentItem,
+        error: itemReadError,
+      } = await supabase
         .from("items")
         .select("on_order")
-        .eq("id", line.item_id)
+        .eq(
+          "id",
+          line.item_id
+        )
         .single();
 
-      if (itemReadError || !currentItem) {
+      if (
+        itemReadError ||
+        !currentItem
+      ) {
         setMessage(
           "Errore lettura articolo durante eliminazione: " +
-            (itemReadError?.message || "Articolo non trovato")
+            (
+              itemReadError?.message ||
+              "Articolo non trovato"
+            )
         );
+
         setMessageType("error");
         setDeleting(false);
+
         return;
       }
 
-      const newOnOrder = Math.max(
-        0,
-        Number(currentItem.on_order || 0) - remainingQty
-      );
+      const newOnOrder =
+        Math.max(
+          0,
+          Number(
+            currentItem.on_order ||
+              0
+          ) -
+            remainingQty
+        );
 
-      const { error: itemUpdateError } = await supabase
+      const {
+        error: itemUpdateError,
+      } = await supabase
         .from("items")
         .update({
           on_order: newOnOrder,
         })
-        .eq("id", line.item_id);
+        .eq(
+          "id",
+          line.item_id
+        );
 
       if (itemUpdateError) {
         setMessage(
           "Errore aggiornamento quantità in ordine: " +
             itemUpdateError.message
         );
+
         setMessageType("error");
         setDeleting(false);
+
         return;
       }
     }
 
-    /*
-      2. CANCELLIAMO LE RIGHE DELL'ORDINE
-    */
-
-    const { error: linesDeleteError } = await supabase
+    const {
+      error: linesDeleteError,
+    } = await supabase
       .from("order_items")
       .delete()
-      .eq("order_id", orderId);
+      .eq(
+        "order_id",
+        orderId
+      );
 
     if (linesDeleteError) {
       setMessage(
         "Errore eliminazione righe ordine: " +
           linesDeleteError.message
       );
+
       setMessageType("error");
       setDeleting(false);
+
       return;
     }
 
-    /*
-      3. CANCELLIAMO L'ORDINE
-    */
-
-    const { error: orderDeleteError } = await supabase
+    const {
+      error: orderDeleteError,
+    } = await supabase
       .from("orders")
       .delete()
       .eq("id", orderId);
@@ -494,14 +618,18 @@ export default function OrderDetailPage() {
         "Errore eliminazione ordine: " +
           orderDeleteError.message
       );
+
       setMessageType("error");
       setDeleting(false);
+
       return;
     }
 
     setDeleting(false);
 
-    alert("Ordine eliminato correttamente.");
+    alert(
+      "Ordine eliminato correttamente."
+    );
 
     router.push("/orders");
   }
@@ -534,7 +662,17 @@ export default function OrderDetailPage() {
     );
   }
 
-  const isReceived = order.status === "received";
+  const isReceived =
+    order.status ===
+    "received";
+
+  const isCancelled =
+    order.status ===
+    "cancelled";
+
+  const canReceive =
+    !isReceived &&
+    !isCancelled;
 
   return (
     <div
@@ -544,13 +682,22 @@ export default function OrderDetailPage() {
         margin: "0 auto",
       }}
     >
+      {/* TESTATA */}
+
       <div
         style={{
           marginBottom: 25,
+
           display: "flex",
-          justifyContent: "space-between",
-          alignItems: "flex-start",
+
+          justifyContent:
+            "space-between",
+
+          alignItems:
+            "flex-start",
+
           gap: 20,
+
           flexWrap: "wrap",
         }}
       >
@@ -560,7 +707,10 @@ export default function OrderDetailPage() {
               fontSize: 13,
               opacity: 0.55,
               marginBottom: 4,
-              textTransform: "uppercase",
+
+              textTransform:
+                "uppercase",
+
               letterSpacing: 1.2,
               fontWeight: 700,
             }}
@@ -586,7 +736,9 @@ export default function OrderDetailPage() {
               Dettaglio ordine
             </h1>
 
-            <StatusBadge status={order.status} />
+            <StatusBadge
+              status={order.status}
+            />
           </div>
 
           <div
@@ -596,7 +748,10 @@ export default function OrderDetailPage() {
               opacity: 0.6,
             }}
           >
-            Ordine del {formatDate(order.order_date)}
+            Ordine del{" "}
+            {formatDate(
+              order.order_date
+            )}
           </div>
         </div>
 
@@ -612,7 +767,9 @@ export default function OrderDetailPage() {
               href={order.pdf_url}
               target="_blank"
               rel="noreferrer"
-              style={secondaryButtonStyle}
+              style={
+                secondaryButtonStyle
+              }
             >
               Apri PDF
             </a>
@@ -620,103 +777,172 @@ export default function OrderDetailPage() {
 
           <button
             type="button"
-            disabled={saving || deleting}
-            onClick={deleteOrder}
+            disabled={
+              saving ||
+              deleting
+            }
+            onClick={
+              deleteOrder
+            }
             style={{
-              padding: "10px 14px",
+              padding:
+                "10px 14px",
+
               borderRadius: 8,
-              border: "1px solid rgba(239,68,68,0.4)",
-              background: "rgba(239,68,68,0.08)",
-              color: "#ef4444",
+
+              border:
+                "1px solid rgba(239,68,68,0.4)",
+
+              background:
+                "rgba(239,68,68,0.08)",
+
+              color:
+                "#ef4444",
+
               cursor:
-                saving || deleting ? "not-allowed" : "pointer",
+                saving ||
+                deleting
+                  ? "not-allowed"
+                  : "pointer",
+
               fontWeight: 800,
-              opacity: saving || deleting ? 0.5 : 1,
+
+              opacity:
+                saving ||
+                deleting
+                  ? 0.5
+                  : 1,
             }}
           >
-            {deleting ? "Eliminazione..." : "Elimina ordine"}
+            {deleting
+              ? "Eliminazione..."
+              : "Elimina ordine"}
           </button>
 
           <button
             type="button"
-            disabled={saving || deleting}
-            onClick={() => router.push("/orders")}
-            style={secondaryButtonStyle}
+            disabled={
+              saving ||
+              deleting
+            }
+            onClick={() =>
+              router.push(
+                "/orders"
+              )
+            }
+            style={
+              secondaryButtonStyle
+            }
           >
             ← Torna agli ordini
           </button>
         </div>
       </div>
 
+      {/* MESSAGGIO */}
+
       {message && (
         <div
           style={{
-            padding: "13px 15px",
+            padding:
+              "13px 15px",
+
             marginBottom: 18,
+
             borderRadius: 10,
+
             border:
-              messageType === "success"
+              messageType ===
+              "success"
                 ? "1px solid rgba(34,197,94,0.4)"
                 : "1px solid rgba(239,68,68,0.45)",
+
             background:
-              messageType === "success"
+              messageType ===
+              "success"
                 ? "rgba(34,197,94,0.08)"
                 : "rgba(239,68,68,0.08)",
+
             fontSize: 13,
             fontWeight: 700,
           }}
         >
-          {messageType === "success" ? "✓ " : ""}
+          {messageType ===
+            "success" &&
+            "✓ "}
+
           {message}
         </div>
       )}
 
+      {/* RIEPILOGO */}
+
       <div
         style={{
           display: "grid",
+
           gridTemplateColumns:
             "repeat(auto-fit, minmax(190px, 1fr))",
+
           gap: 14,
+
           marginBottom: 22,
         }}
       >
         <SummaryCard
           title="Articoli"
-          value={String(lines.length)}
+          value={String(
+            lines.length
+          )}
           subtitle="Codici presenti nell'ordine"
         />
 
         <SummaryCard
           title="Pezzi ordinati"
-          value={String(totalOrderedQty)}
+          value={String(
+            totalOrderedQty
+          )}
           subtitle="Quantità totale ordine"
         />
 
         <SummaryCard
           title="Già ricevuti"
-          value={String(totalReceivedQty)}
+          value={String(
+            totalReceivedQty
+          )}
           subtitle="Pezzi già entrati in magazzino"
         />
 
         <SummaryCard
           title="Da ricevere"
-          value={String(totalRemainingQty)}
+          value={String(
+            totalRemainingQty
+          )}
           subtitle="Pezzi ancora in ordine"
         />
 
         <SummaryCard
           title="Valore ordine"
-          value={formatEuro(totalOrderValue)}
+          value={formatEuro(
+            totalOrderValue
+          )}
           subtitle="Valore originale"
         />
       </div>
 
+      {/* TABELLA */}
+
       <div style={cardStyle}>
         <div
           style={{
-            padding: "16px 18px",
-            background: "var(--table-head)",
-            borderBottom: "1px solid var(--border-color)",
+            padding:
+              "16px 18px",
+
+            background:
+              "var(--table-head)",
+
+            borderBottom:
+              "1px solid var(--border-color)",
           }}
         >
           <div
@@ -739,107 +965,211 @@ export default function OrderDetailPage() {
           </div>
         </div>
 
-        <div style={{ overflowX: "auto" }}>
+        <div
+          style={{
+            overflowX: "auto",
+          }}
+        >
           <table style={tableStyle}>
             <thead>
               <tr>
-                <TableHead>Codice articolo</TableHead>
-                <TableHead>Codice scanner</TableHead>
-                <TableHead>Descrizione</TableHead>
-                <TableHead align="right">Ordinato</TableHead>
-                <TableHead align="right">Già ricevuto</TableHead>
-                <TableHead align="right">Da ricevere</TableHead>
-                <TableHead align="right">Giacenza</TableHead>
-                <TableHead align="right">Arrivato ora</TableHead>
+                <TableHead>
+                  Codice articolo
+                </TableHead>
+
+                <TableHead>
+                  Codice scanner
+                </TableHead>
+
+                <TableHead>
+                  Descrizione
+                </TableHead>
+
+                <TableHead align="right">
+                  Ordinato
+                </TableHead>
+
+                <TableHead align="right">
+                  Già ricevuto
+                </TableHead>
+
+                <TableHead align="right">
+                  Da ricevere
+                </TableHead>
+
+                <TableHead align="right">
+                  Giacenza
+                </TableHead>
+
+                <TableHead align="right">
+                  Arrivato ora
+                </TableHead>
               </tr>
             </thead>
 
             <tbody>
-              {lines.map((line) => (
-                <tr
-                  key={line.id}
-                  style={{
-                    borderTop: "1px solid var(--border-color)",
-                  }}
-                >
-                  <TableCell>
-                    <strong>{line.supplier_code || "-"}</strong>
-                  </TableCell>
+              {lines.map(
+                (line) => (
+                  <tr
+                    key={line.id}
+                    style={{
+                      borderTop:
+                        "1px solid var(--border-color)",
+                    }}
+                  >
+                    <TableCell>
+                      <strong>
+                        {line.supplier_code ||
+                          "-"}
+                      </strong>
+                    </TableCell>
 
-                  <TableCell>{line.code}</TableCell>
+                    <TableCell>
+                      {line.code}
+                    </TableCell>
 
-                  <TableCell>{line.description}</TableCell>
+                    <TableCell>
+                      {line.description}
+                    </TableCell>
 
-                  <TableCell align="right">{line.qty}</TableCell>
+                    <TableCell align="right">
+                      {line.qty}
+                    </TableCell>
 
-                  <TableCell align="right">
-                    {line.received_qty}
-                  </TableCell>
+                    <TableCell align="right">
+                      {
+                        line.received_qty
+                      }
+                    </TableCell>
 
-                  <TableCell align="right">
-                    <strong>{line.remaining_qty}</strong>
-                  </TableCell>
-
-                  <TableCell align="right">{line.stock}</TableCell>
-
-                  <TableCell align="right">
-                    {isReceived ? (
-                      <span
-                        style={{
-                          color: "#22c55e",
-                          fontWeight: 800,
-                        }}
-                      >
-                        Completo
-                      </span>
-                    ) : (
-                      <input
-                        type="number"
-                        min="0"
-                        max={line.remaining_qty}
-                        step="1"
-                        value={incomingQty[line.id] || 0}
-                        disabled={line.remaining_qty === 0}
-                        onChange={(e) =>
-                          changeIncomingQty(
-                            line.id,
-                            Number(e.target.value)
-                          )
+                    <TableCell align="right">
+                      <strong>
+                        {
+                          line.remaining_qty
                         }
-                        style={{
-                          width: 95,
-                          padding: "8px 9px",
-                          border: "1px solid var(--border-color)",
-                          borderRadius: 7,
-                          background: "var(--input-bg)",
-                          color: "var(--foreground)",
-                          textAlign: "right",
-                          fontWeight: 800,
-                          opacity:
-                            line.remaining_qty === 0 ? 0.5 : 1,
-                        }}
-                      />
-                    )}
-                  </TableCell>
-                </tr>
-              ))}
+                      </strong>
+                    </TableCell>
+
+                    <TableCell align="right">
+                      {line.stock}
+                    </TableCell>
+
+                    <TableCell align="right">
+                      {!canReceive ? (
+                        <span
+                          style={{
+                            color:
+                              isReceived
+                                ? "#22c55e"
+                                : "#ef4444",
+
+                            fontWeight: 800,
+                          }}
+                        >
+                          {isReceived
+                            ? "Completo"
+                            : "Annullato"}
+                        </span>
+                      ) : (
+                        <input
+                          type="number"
+                          min="0"
+
+                          max={
+                            line.remaining_qty
+                          }
+
+                          step="1"
+
+                          value={
+                            incomingQty[
+                              line.id
+                            ] || 0
+                          }
+
+                          disabled={
+                            line.remaining_qty ===
+                              0 ||
+                            saving
+                          }
+
+                          onChange={(
+                            e
+                          ) =>
+                            changeIncomingQty(
+                              line.id,
+                              Number(
+                                e.target
+                                  .value
+                              )
+                            )
+                          }
+
+                          style={{
+                            width: 95,
+
+                            padding:
+                              "8px 9px",
+
+                            border:
+                              "1px solid var(--border-color)",
+
+                            borderRadius: 7,
+
+                            background:
+                              "var(--input-bg)",
+
+                            color:
+                              "var(--foreground)",
+
+                            textAlign:
+                              "right",
+
+                            fontWeight: 800,
+
+                            opacity:
+                              line.remaining_qty ===
+                                0 ||
+                              saving
+                                ? 0.5
+                                : 1,
+                          }}
+                        />
+                      )}
+                    </TableCell>
+                  </tr>
+                )
+              )}
             </tbody>
           </table>
         </div>
       </div>
 
-      {!isReceived && (
+      {/* RICEZIONE */}
+
+      {canReceive && (
         <div
           style={{
             marginTop: 22,
             padding: 20,
-            border: "1px solid var(--border-color)",
+
+            border:
+              "1px solid var(--border-color)",
+
             borderRadius: 12,
-            background: "var(--card)",
+
+            background:
+              "var(--card)",
+
             display: "flex",
-            justifyContent: "space-between",
+
+            justifyContent:
+              "space-between",
+
             alignItems: "center",
+
             gap: 20,
+
             flexWrap: "wrap",
           }}
         >
@@ -856,15 +1186,19 @@ export default function OrderDetailPage() {
             <div
               style={{
                 marginTop: 5,
+
                 fontSize: 13,
+
                 opacity: 0.6,
-                maxWidth: 650,
+
+                maxWidth: 700,
               }}
             >
-              Se il DDT corrisponde completamente all&apos;ordine usa
-              “Ordine completo”. Se manca qualcosa, inserisci le quantità
-              realmente arrivate nella tabella e registra l&apos;arrivo
-              parziale.
+              Se il DDT corrisponde completamente
+              all&apos;ordine usa “Ordine completo”.
+              Se manca qualcosa, inserisci le quantità
+              realmente arrivate e registra
+              l&apos;arrivo parziale.
             </div>
           </div>
 
@@ -877,39 +1211,78 @@ export default function OrderDetailPage() {
           >
             <button
               type="button"
-              disabled={saving || deleting}
-              onClick={() => registerArrival("partial")}
-              style={secondaryButtonStyle}
+
+              disabled={
+                saving ||
+                deleting
+              }
+
+              onClick={() =>
+                registerArrival(
+                  "partial"
+                )
+              }
+
+              style={
+                secondaryButtonStyle
+              }
             >
-              {saving ? "Salvataggio..." : "Registra arrivo parziale"}
+              {saving
+                ? "Salvataggio..."
+                : "Registra arrivo parziale"}
             </button>
 
             <button
               type="button"
-              disabled={saving || deleting}
-              onClick={() => registerArrival("complete")}
-              style={primaryButtonStyle(saving || deleting)}
+
+              disabled={
+                saving ||
+                deleting
+              }
+
+              onClick={() =>
+                registerArrival(
+                  "complete"
+                )
+              }
+
+              style={primaryButtonStyle(
+                saving ||
+                  deleting
+              )}
             >
-              {saving ? "Salvataggio..." : "Ordine completo"}
+              {saving
+                ? "Salvataggio..."
+                : "Ordine completo"}
             </button>
           </div>
         </div>
       )}
 
+      {/* ORDINE RICEVUTO */}
+
       {isReceived && (
         <div
           style={{
             marginTop: 22,
+
             padding: 22,
-            border: "1px solid rgba(34,197,94,0.35)",
+
+            border:
+              "1px solid rgba(34,197,94,0.35)",
+
             borderRadius: 12,
-            background: "rgba(34,197,94,0.08)",
+
+            background:
+              "rgba(34,197,94,0.08)",
           }}
         >
           <div
             style={{
               fontSize: 18,
+
               fontWeight: 850,
+
               color: "#22c55e",
             }}
           >
@@ -923,8 +1296,8 @@ export default function OrderDetailPage() {
               opacity: 0.7,
             }}
           >
-            Tutte le quantità dell&apos;ordine risultano entrate in
-            magazzino.
+            Tutte le quantità dell&apos;ordine risultano
+            entrate in magazzino.
           </div>
         </div>
       )}
@@ -932,41 +1305,78 @@ export default function OrderDetailPage() {
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
+/* ---------------- COMPONENTI ---------------- */
+
+function StatusBadge({
+  status,
+}: {
+  status: string;
+}) {
   let label = "IN ORDINE";
   let color = "#3b82f6";
-  let background = "rgba(59,130,246,0.12)";
-  let border = "1px solid rgba(59,130,246,0.35)";
+
+  let background =
+    "rgba(59,130,246,0.12)";
+
+  let border =
+    "1px solid rgba(59,130,246,0.35)";
+
+  if (status === "draft") {
+    label = "BOZZA";
+    color = "#9ca3af";
+
+    background =
+      "rgba(156,163,175,0.12)";
+
+    border =
+      "1px solid rgba(156,163,175,0.35)";
+  }
 
   if (status === "partial") {
     label = "PARZIALE";
     color = "#f59e0b";
-    background = "rgba(245,158,11,0.12)";
-    border = "1px solid rgba(245,158,11,0.35)";
+
+    background =
+      "rgba(245,158,11,0.12)";
+
+    border =
+      "1px solid rgba(245,158,11,0.35)";
   }
 
   if (status === "received") {
     label = "RICEVUTO";
     color = "#22c55e";
-    background = "rgba(34,197,94,0.12)";
-    border = "1px solid rgba(34,197,94,0.35)";
+
+    background =
+      "rgba(34,197,94,0.12)";
+
+    border =
+      "1px solid rgba(34,197,94,0.35)";
   }
 
   if (status === "cancelled") {
     label = "ANNULLATO";
     color = "#ef4444";
-    background = "rgba(239,68,68,0.12)";
-    border = "1px solid rgba(239,68,68,0.35)";
+
+    background =
+      "rgba(239,68,68,0.12)";
+
+    border =
+      "1px solid rgba(239,68,68,0.35)";
   }
 
   return (
     <span
       style={{
-        padding: "5px 9px",
+        padding:
+          "5px 9px",
+
         borderRadius: 20,
+
         background,
         border,
         color,
+
         fontSize: 11,
         fontWeight: 850,
       }}
@@ -989,17 +1399,27 @@ function SummaryCard({
     <div
       style={{
         padding: 18,
-        border: "1px solid var(--border-color)",
+
+        border:
+          "1px solid var(--border-color)",
+
         borderRadius: 12,
-        background: "var(--card)",
+
+        background:
+          "var(--card)",
       }}
     >
       <div
         style={{
           fontSize: 11,
+
           opacity: 0.55,
-          textTransform: "uppercase",
+
+          textTransform:
+            "uppercase",
+
           letterSpacing: 0.8,
+
           fontWeight: 700,
         }}
       >
@@ -1034,19 +1454,32 @@ function TableHead({
   align = "left",
 }: {
   children: React.ReactNode;
-  align?: "left" | "right";
+
+  align?:
+    | "left"
+    | "right";
 }) {
   return (
     <th
       style={{
-        padding: "11px 12px",
+        padding:
+          "11px 12px",
+
         textAlign: align,
+
         fontSize: 10,
-        textTransform: "uppercase",
+
+        textTransform:
+          "uppercase",
+
         letterSpacing: 0.5,
+
         opacity: 0.6,
+
         fontWeight: 800,
-        whiteSpace: "nowrap",
+
+        whiteSpace:
+          "nowrap",
       }}
     >
       {children}
@@ -1059,15 +1492,22 @@ function TableCell({
   align = "left",
 }: {
   children: React.ReactNode;
-  align?: "left" | "right";
+
+  align?:
+    | "left"
+    | "right";
 }) {
   return (
     <td
       style={{
         padding: "12px",
+
         textAlign: align,
+
         fontSize: 13,
-        verticalAlign: "middle",
+
+        verticalAlign:
+          "middle",
       }}
     >
       {children}
@@ -1075,66 +1515,118 @@ function TableCell({
   );
 }
 
-function formatEuro(value: number) {
-  return new Intl.NumberFormat("it-IT", {
-    style: "currency",
-    currency: "EUR",
-    minimumFractionDigits: 2,
-  }).format(Number(value || 0));
+/* ---------------- FORMATI ---------------- */
+
+function formatEuro(
+  value: number
+) {
+  return new Intl.NumberFormat(
+    "it-IT",
+    {
+      style: "currency",
+      currency: "EUR",
+      minimumFractionDigits: 2,
+    }
+  ).format(
+    Number(value || 0)
+  );
 }
 
-function formatDate(value: string | null) {
+function formatDate(
+  value: string | null
+) {
   if (!value) return "-";
 
-  const safeValue = value.includes("T")
-    ? value
-    : `${value}T00:00:00`;
+  const safeValue =
+    value.includes("T")
+      ? value
+      : `${value}T00:00:00`;
 
-  return new Intl.DateTimeFormat("it-IT").format(
+  return new Intl.DateTimeFormat(
+    "it-IT"
+  ).format(
     new Date(safeValue)
   );
 }
 
+/* ---------------- STILI ---------------- */
+
 const cardStyle = {
-  border: "1px solid var(--border-color)",
+  border:
+    "1px solid var(--border-color)",
+
   borderRadius: 12,
+
   overflow: "hidden",
-  background: "var(--card)",
+
+  background:
+    "var(--card)",
 };
 
 const tableStyle = {
   width: "100%",
+
   minWidth: 1100,
-  borderCollapse: "collapse" as const,
+
+  borderCollapse:
+    "collapse" as const,
 };
 
 const secondaryButtonStyle = {
   display: "inline-block",
-  padding: "10px 14px",
+
+  padding:
+    "10px 14px",
+
   borderRadius: 8,
-  border: "1px solid var(--border-color)",
-  background: "var(--input-bg)",
-  color: "var(--foreground)",
+
+  border:
+    "1px solid var(--border-color)",
+
+  background:
+    "var(--input-bg)",
+
+  color:
+    "var(--foreground)",
+
   cursor: "pointer",
+
   fontWeight: 800,
-  textDecoration: "none",
+
+  textDecoration:
+    "none",
 };
 
-function primaryButtonStyle(disabled: boolean) {
+function primaryButtonStyle(
+  disabled: boolean
+) {
   return {
-    padding: "11px 17px",
+    padding:
+      "11px 17px",
+
     borderRadius: 8,
+
     border: disabled
       ? "1px solid var(--border-color)"
       : "1px solid var(--foreground)",
+
     background: disabled
       ? "var(--card-2)"
       : "var(--foreground)",
+
     color: disabled
       ? "var(--foreground)"
       : "var(--background)",
-    cursor: disabled ? "not-allowed" : "pointer",
+
+    cursor: disabled
+      ? "not-allowed"
+      : "pointer",
+
     fontWeight: 850,
-    opacity: disabled ? 0.5 : 1,
+
+    opacity:
+      disabled
+        ? 0.5
+        : 1,
   };
 }

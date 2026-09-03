@@ -29,14 +29,6 @@ type Order = {
   created_at: string | null;
 };
 
-type Movement = {
-  movement_type: string;
-  code: string | null;
-  qty: number;
-  note: string | null;
-  movement_date: string | null;
-};
-
 type LowStockItem = Item & {
   qty_to_order: number;
 };
@@ -47,7 +39,6 @@ export default function Home() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [items, setItems] = useState<Item[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
-  const [movements, setMovements] = useState<Movement[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
@@ -74,6 +65,7 @@ export default function Home() {
         "Errore caricamento fornitori: " +
           suppliersError.message
       );
+
       setLoading(false);
       return;
     }
@@ -93,6 +85,7 @@ export default function Home() {
         "Errore caricamento articoli: " +
           itemsError.message
       );
+
       setLoading(false);
       return;
     }
@@ -115,29 +108,7 @@ export default function Home() {
         "Errore caricamento ordini: " +
           ordersError.message
       );
-      setLoading(false);
-      return;
-    }
 
-    /*
-      ULTIMI MOVIMENTI
-    */
-    const { data: movementsData, error: movementsError } =
-      await supabase
-        .from("movements")
-        .select(
-          "movement_type,code,qty,note,movement_date"
-        )
-        .order("movement_date", {
-          ascending: false,
-        })
-        .limit(8);
-
-    if (movementsError) {
-      setErrorMessage(
-        "Errore caricamento movimenti: " +
-          movementsError.message
-      );
       setLoading(false);
       return;
     }
@@ -151,52 +122,58 @@ export default function Home() {
     const cleanItems: Item[] =
       (itemsData || []).map((row) => ({
         id: String(row.id),
-        supplier_id: String(row.supplier_id),
-        code: String(row.code || ""),
-        supplier_code: row.supplier_code
-          ? String(row.supplier_code)
-          : null,
-        description: String(row.description || ""),
-        price: Number(row.price || 0),
-        stock: Number(row.stock || 0),
-        min_stock: Number(row.min_stock || 0),
-        on_order: Number(row.on_order || 0),
+
+        supplier_id:
+          String(row.supplier_id),
+
+        code:
+          String(row.code || ""),
+
+        supplier_code:
+          row.supplier_code
+            ? String(row.supplier_code)
+            : null,
+
+        description:
+          String(row.description || ""),
+
+        price:
+          Number(row.price || 0),
+
+        stock:
+          Number(row.stock || 0),
+
+        min_stock:
+          Number(row.min_stock || 0),
+
+        on_order:
+          Number(row.on_order || 0),
       }));
 
     const cleanOrders: Order[] =
       (ordersData || []).map((row) => ({
         id: String(row.id),
-        supplier_id: String(row.supplier_id),
-        status: String(row.status || ""),
-        order_date: row.order_date
-          ? String(row.order_date)
-          : null,
-        created_at: row.created_at
-          ? String(row.created_at)
-          : null,
-      }));
 
-    const cleanMovements: Movement[] =
-      (movementsData || []).map((row) => ({
-        movement_type: String(
-          row.movement_type || ""
-        ),
-        code: row.code
-          ? String(row.code)
-          : null,
-        qty: Number(row.qty || 0),
-        note: row.note
-          ? String(row.note)
-          : null,
-        movement_date: row.movement_date
-          ? String(row.movement_date)
-          : null,
+        supplier_id:
+          String(row.supplier_id),
+
+        status:
+          String(row.status || ""),
+
+        order_date:
+          row.order_date
+            ? String(row.order_date)
+            : null,
+
+        created_at:
+          row.created_at
+            ? String(row.created_at)
+            : null,
       }));
 
     setSuppliers(cleanSuppliers);
     setItems(cleanItems);
     setOrders(cleanOrders);
-    setMovements(cleanMovements);
 
     setLoading(false);
   }
@@ -224,74 +201,79 @@ export default function Home() {
     - Giacenza
     - Già in ordine
   */
-  const lowStockItems = useMemo<LowStockItem[]>(() => {
-    return items
-      .map((item) => ({
-        ...item,
+  const lowStockItems =
+    useMemo<LowStockItem[]>(() => {
+      return items
+        .map((item) => ({
+          ...item,
 
-        qty_to_order: Math.max(
-          0,
-          item.min_stock -
-            item.stock -
-            item.on_order
-        ),
-      }))
-      .filter(
-        (item) =>
-          item.qty_to_order > 0
-      )
-      .sort(
-        (a, b) =>
-          b.qty_to_order -
-          a.qty_to_order
-      );
-  }, [items]);
+          qty_to_order: Math.max(
+            0,
+            item.min_stock -
+              item.stock -
+              item.on_order
+          ),
+        }))
+        .filter(
+          (item) =>
+            item.qty_to_order > 0
+        )
+        .sort(
+          (a, b) =>
+            b.qty_to_order -
+            a.qty_to_order
+        );
+    }, [items]);
 
   /*
     ORDINI APERTI
   */
-  const openOrders = useMemo(() => {
-    return orders.filter(
-      (order) =>
-        order.status === "ordered" ||
-        order.status === "partial"
-    );
-  }, [orders]);
+  const openOrders =
+    useMemo(() => {
+      return orders.filter(
+        (order) =>
+          order.status === "ordered" ||
+          order.status === "partial"
+      );
+    }, [orders]);
 
   /*
     MERCE IN ARRIVO
   */
-  const totalOnOrder = useMemo(() => {
-    return items.reduce(
-      (sum, item) =>
-        sum + item.on_order,
-      0
-    );
-  }, [items]);
+  const totalOnOrder =
+    useMemo(() => {
+      return items.reduce(
+        (sum, item) =>
+          sum + item.on_order,
+        0
+      );
+    }, [items]);
 
   /*
     VALORE MAGAZZINO
   */
-  const warehouseValue = useMemo(() => {
-    return items.reduce(
-      (sum, item) =>
-        sum +
-        item.stock *
-          item.price,
-      0
-    );
-  }, [items]);
+  const warehouseValue =
+    useMemo(() => {
+      return items.reduce(
+        (sum, item) =>
+          sum +
+          item.stock *
+            item.price,
+        0
+      );
+    }, [items]);
 
   /*
     PEZZI TOTALI IN MAGAZZINO
   */
-  const totalStockPieces = useMemo(() => {
-    return items.reduce(
-      (sum, item) =>
-        sum + item.stock,
-      0
-    );
-  }, [items]);
+  const totalStockPieces =
+    useMemo(() => {
+      return items.reduce(
+        (sum, item) =>
+          sum + item.stock,
+        0
+      );
+    }, [items]);
 
   if (loading) {
     return (
@@ -355,7 +337,7 @@ export default function Home() {
           }}
         >
           Situazione aggiornata di magazzino,
-          scorte, ordini e movimenti.
+          scorte e ordini.
         </div>
       </div>
 
@@ -365,13 +347,20 @@ export default function Home() {
         <div
           style={{
             marginBottom: 20,
-            padding: "14px 16px",
+
+            padding:
+              "14px 16px",
+
             borderRadius: 10,
+
             border:
               "1px solid rgba(239,68,68,0.4)",
+
             background:
               "rgba(239,68,68,0.08)",
+
             color: "#ef4444",
+
             fontWeight: 700,
           }}
         >
@@ -384,9 +373,12 @@ export default function Home() {
       <div
         style={{
           display: "grid",
+
           gridTemplateColumns:
             "repeat(auto-fit, minmax(230px, 1fr))",
+
           gap: 15,
+
           marginBottom: 18,
         }}
       >
@@ -412,7 +404,9 @@ export default function Home() {
           subtitle="Quantità già ordinate"
           icon="↓"
           onClick={() =>
-            router.push("/orders")
+            router.push(
+              "/orders"
+            )
           }
         />
 
@@ -424,7 +418,9 @@ export default function Home() {
           subtitle="In ordine o parziali"
           icon="□"
           onClick={() =>
-            router.push("/orders")
+            router.push(
+              "/orders"
+            )
           }
         />
 
@@ -443,9 +439,12 @@ export default function Home() {
       <div
         style={{
           display: "grid",
+
           gridTemplateColumns:
             "repeat(auto-fit, minmax(180px, 1fr))",
+
           gap: 12,
+
           marginBottom: 25,
         }}
       >
@@ -476,9 +475,12 @@ export default function Home() {
       <div
         style={{
           display: "grid",
+
           gridTemplateColumns:
             "repeat(auto-fit, minmax(470px, 1fr))",
+
           gap: 18,
+
           alignItems: "start",
         }}
       >
@@ -496,9 +498,10 @@ export default function Home() {
             }
           />
 
-          {lowStockItems.length ===
-          0 ? (
-            <EmptyBox text="Nessun articolo da riordinare." />
+          {lowStockItems.length === 0 ? (
+            <EmptyBox
+              text="Nessun articolo da riordinare."
+            />
           ) : (
             <div>
               {lowStockItems
@@ -506,9 +509,7 @@ export default function Home() {
                 .map((item) => (
                   <div
                     key={item.id}
-                    style={
-                      rowStyle
-                    }
+                    style={rowStyle}
                   >
                     <div
                       style={{
@@ -531,12 +532,10 @@ export default function Home() {
                           marginTop: 3,
                           fontSize: 12,
                           opacity: 0.65,
-                          overflow:
-                            "hidden",
+                          overflow: "hidden",
                           textOverflow:
                             "ellipsis",
-                          whiteSpace:
-                            "nowrap",
+                          whiteSpace: "nowrap",
                         }}
                       >
                         {item.description}
@@ -566,8 +565,7 @@ export default function Home() {
                         style={{
                           fontSize: 20,
                           fontWeight: 900,
-                          color:
-                            "#f59e0b",
+                          color: "#f59e0b",
                         }}
                       >
                         +
@@ -599,12 +597,16 @@ export default function Home() {
             subtitle="Ordini ancora aperti"
             buttonText="Tutti gli ordini"
             onClick={() =>
-              router.push("/orders")
+              router.push(
+                "/orders"
+              )
             }
           />
 
           {openOrders.length === 0 ? (
-            <EmptyBox text="Nessun ordine aperto." />
+            <EmptyBox
+              text="Nessun ordine aperto."
+            />
           ) : (
             <div>
               {openOrders
@@ -625,8 +627,7 @@ export default function Home() {
                   >
                     <div
                       style={{
-                        textAlign:
-                          "left",
+                        textAlign: "left",
                       }}
                     >
                       <div
@@ -666,124 +667,6 @@ export default function Home() {
           )}
         </div>
       </div>
-
-      {/* ULTIMI MOVIMENTI */}
-
-      <div
-        style={{
-          ...panelStyle,
-          marginTop: 18,
-        }}
-      >
-        <PanelHeader
-          title="Ultimi movimenti"
-          subtitle="Le ultime operazioni registrate"
-          buttonText="Vai ai movimenti"
-          onClick={() =>
-            router.push(
-              "/movements"
-            )
-          }
-        />
-
-        {movements.length === 0 ? (
-          <EmptyBox text="Nessun movimento registrato." />
-        ) : (
-          <div
-            style={{
-              overflowX: "auto",
-            }}
-          >
-            <table
-              style={{
-                width: "100%",
-                borderCollapse:
-                  "collapse",
-                minWidth: 750,
-              }}
-            >
-              <thead>
-                <tr>
-                  <TableHead>
-                    Data
-                  </TableHead>
-
-                  <TableHead>
-                    Tipo
-                  </TableHead>
-
-                  <TableHead>
-                    Codice
-                  </TableHead>
-
-                  <TableHead align="right">
-                    Quantità
-                  </TableHead>
-
-                  <TableHead>
-                    Nota
-                  </TableHead>
-                </tr>
-              </thead>
-
-              <tbody>
-                {movements.map(
-                  (
-                    movement,
-                    index
-                  ) => (
-                    <tr
-                      key={`${movement.code}-${movement.movement_date}-${index}`}
-                      style={{
-                        borderTop:
-                          "1px solid var(--border-color)",
-                      }}
-                    >
-                      <TableCell>
-                        {formatDate(
-                          movement.movement_date
-                        )}
-                      </TableCell>
-
-                      <TableCell>
-                        <MovementBadge
-                          type={
-                            movement.movement_type
-                          }
-                        />
-                      </TableCell>
-
-                      <TableCell>
-                        <strong>
-                          {movement.code ||
-                            "-"}
-                        </strong>
-                      </TableCell>
-
-                      <TableCell align="right">
-                        <strong>
-                          {movement.movement_type.toUpperCase() ===
-                          "SCARICO"
-                            ? "-"
-                            : "+"}
-                          {formatNumber(
-                            movement.qty
-                          )}
-                        </strong>
-                      </TableCell>
-
-                      <TableCell>
-                        {movement.note ||
-                          "-"}
-                      </TableCell>
-                    </tr>
-                  )
-                )}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
     </div>
   );
 }
@@ -810,34 +693,51 @@ function DashboardCard({
       disabled={!onClick}
       style={{
         padding: 20,
+
         border:
           "1px solid var(--border-color)",
+
         borderRadius: 14,
-        background: "var(--card)",
-        color: "var(--foreground)",
+
+        background:
+          "var(--card)",
+
+        color:
+          "var(--foreground)",
+
         textAlign: "left",
+
         cursor: onClick
           ? "pointer"
           : "default",
+
         width: "100%",
       }}
     >
       <div
         style={{
           display: "flex",
+
           justifyContent:
             "space-between",
-          alignItems: "flex-start",
+
+          alignItems:
+            "flex-start",
+
           gap: 12,
         }}
       >
         <div
           style={{
             fontSize: 11,
+
             opacity: 0.55,
+
             textTransform:
               "uppercase",
+
             letterSpacing: 0.9,
+
             fontWeight: 800,
           }}
         >
@@ -848,15 +748,23 @@ function DashboardCard({
           style={{
             width: 36,
             height: 36,
+
             borderRadius: 10,
+
             border:
               "1px solid var(--border-color)",
+
             display: "flex",
+
             alignItems: "center",
+
             justifyContent:
               "center",
+
             fontSize: 17,
+
             fontWeight: 900,
+
             background:
               "var(--input-bg)",
           }}
@@ -868,9 +776,13 @@ function DashboardCard({
       <div
         style={{
           marginTop: 12,
+
           fontSize: 28,
+
           fontWeight: 900,
-          letterSpacing: "-0.4px",
+
+          letterSpacing:
+            "-0.4px",
         }}
       >
         {value}
@@ -879,7 +791,9 @@ function DashboardCard({
       <div
         style={{
           marginTop: 5,
+
           fontSize: 12,
+
           opacity: 0.5,
         }}
       >
@@ -899,15 +813,25 @@ function SmallInfoCard({
   return (
     <div
       style={{
-        padding: "13px 16px",
+        padding:
+          "13px 16px",
+
         border:
           "1px solid var(--border-color)",
+
         borderRadius: 10,
-        background: "var(--card)",
+
+        background:
+          "var(--card)",
+
         display: "flex",
+
         justifyContent:
           "space-between",
-        alignItems: "center",
+
+        alignItems:
+          "center",
+
         gap: 15,
       }}
     >
@@ -946,14 +870,22 @@ function PanelHeader({
   return (
     <div
       style={{
-        padding: "16px 18px",
+        padding:
+          "16px 18px",
+
         display: "flex",
+
         justifyContent:
           "space-between",
-        alignItems: "center",
+
+        alignItems:
+          "center",
+
         gap: 15,
+
         borderBottom:
           "1px solid var(--border-color)",
+
         background:
           "var(--table-head)",
       }}
@@ -971,7 +903,9 @@ function PanelHeader({
         <div
           style={{
             marginTop: 3,
+
             fontSize: 11,
+
             opacity: 0.5,
           }}
         >
@@ -983,16 +917,24 @@ function PanelHeader({
         type="button"
         onClick={onClick}
         style={{
-          padding: "8px 11px",
+          padding:
+            "8px 11px",
+
           borderRadius: 7,
+
           border:
             "1px solid var(--border-color)",
+
           background:
             "var(--input-bg)",
+
           color:
             "var(--foreground)",
+
           cursor: "pointer",
+
           fontSize: 11,
+
           fontWeight: 800,
         }}
       >
@@ -1007,14 +949,19 @@ function StatusBadge({
 }: {
   status: string;
 }) {
-  if (status === "partial") {
+  if (
+    status === "partial"
+  ) {
     return (
       <span
         style={{
           ...badgeStyle,
+
           color: "#f59e0b",
+
           border:
             "1px solid rgba(245,158,11,0.35)",
+
           background:
             "rgba(245,158,11,0.10)",
         }}
@@ -1028,43 +975,17 @@ function StatusBadge({
     <span
       style={{
         ...badgeStyle,
+
         color: "#3b82f6",
+
         border:
           "1px solid rgba(59,130,246,0.35)",
+
         background:
           "rgba(59,130,246,0.10)",
       }}
     >
       IN ORDINE
-    </span>
-  );
-}
-
-function MovementBadge({
-  type,
-}: {
-  type: string;
-}) {
-  const isLoad =
-    type.toUpperCase() ===
-    "CARICO";
-
-  return (
-    <span
-      style={{
-        ...badgeStyle,
-        color: isLoad
-          ? "#22c55e"
-          : "#ef4444",
-        border: isLoad
-          ? "1px solid rgba(34,197,94,0.35)"
-          : "1px solid rgba(239,68,68,0.35)",
-        background: isLoad
-          ? "rgba(34,197,94,0.10)"
-          : "rgba(239,68,68,0.10)",
-      }}
-    >
-      {type.toUpperCase()}
     </span>
   );
 }
@@ -1078,59 +999,17 @@ function EmptyBox({
     <div
       style={{
         padding: 35,
-        textAlign: "center",
+
+        textAlign:
+          "center",
+
         opacity: 0.5,
+
         fontSize: 13,
       }}
     >
       {text}
     </div>
-  );
-}
-
-function TableHead({
-  children,
-  align = "left",
-}: {
-  children: React.ReactNode;
-  align?: "left" | "right";
-}) {
-  return (
-    <th
-      style={{
-        padding: "11px 14px",
-        textAlign: align,
-        fontSize: 10,
-        textTransform:
-          "uppercase",
-        letterSpacing: 0.6,
-        opacity: 0.55,
-        fontWeight: 800,
-        whiteSpace: "nowrap",
-      }}
-    >
-      {children}
-    </th>
-  );
-}
-
-function TableCell({
-  children,
-  align = "left",
-}: {
-  children: React.ReactNode;
-  align?: "left" | "right";
-}) {
-  return (
-    <td
-      style={{
-        padding: "12px 14px",
-        textAlign: align,
-        fontSize: 12,
-      }}
-    >
-      {children}
-    </td>
   );
 }
 
@@ -1199,43 +1078,74 @@ function formatDate(
 const panelStyle = {
   border:
     "1px solid var(--border-color)",
+
   borderRadius: 13,
+
   overflow: "hidden",
-  background: "var(--card)",
+
+  background:
+    "var(--card)",
 };
 
 const rowStyle = {
-  padding: "13px 16px",
+  padding:
+    "13px 16px",
+
   display: "flex",
+
   justifyContent:
     "space-between",
-  alignItems: "center",
+
+  alignItems:
+    "center",
+
   gap: 18,
+
   borderTop:
     "1px solid var(--border-color)",
 };
 
 const rowButtonStyle = {
-  padding: "13px 16px",
+  padding:
+    "13px 16px",
+
   display: "flex",
+
   justifyContent:
     "space-between",
-  alignItems: "center",
+
+  alignItems:
+    "center",
+
   gap: 18,
+
   border: "none",
+
   borderTop:
     "1px solid var(--border-color)",
-  background: "transparent",
-  color: "var(--foreground)",
+
+  background:
+    "transparent",
+
+  color:
+    "var(--foreground)",
+
   cursor: "pointer",
 };
 
 const badgeStyle = {
-  display: "inline-block",
-  padding: "5px 8px",
+  display:
+    "inline-block",
+
+  padding:
+    "5px 8px",
+
   borderRadius: 999,
+
   fontSize: 10,
+
   fontWeight: 850,
+
   whiteSpace:
     "nowrap" as const,
 };

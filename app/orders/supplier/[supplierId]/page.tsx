@@ -25,7 +25,15 @@ type Item = {
 type OrderLine = {
   item: Item;
   qty: number;
-  automatic: boolean;
+};
+
+type AtomicOrderResult = {
+  success?: boolean;
+  order_id?: string;
+  status?: string;
+  articles?: number;
+  pieces?: number;
+  total?: number;
 };
 
 export default function SupplierOrderPage() {
@@ -36,13 +44,13 @@ export default function SupplierOrderPage() {
 
   const [supplier, setSupplier] = useState<Supplier | null>(null);
   const [items, setItems] = useState<Item[]>([]);
-  const [orderLines, setOrderLines] = useState<OrderLine[]>([]);
+  const [lines, setLines] = useState<OrderLine[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  const [search, setSearch] = useState("");
   const [showAddItems, setShowAddItems] = useState(false);
+  const [search, setSearch] = useState("");
 
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState<
@@ -58,6 +66,9 @@ export default function SupplierOrderPage() {
     setMessage("");
     setMessageType("");
 
+    /*
+      FORNITORE
+    */
     const { data: supplierData, error: supplierError } =
       await supabase
         .from("suppliers")
@@ -70,11 +81,15 @@ export default function SupplierOrderPage() {
         "Errore caricamento fornitore: " +
           (supplierError?.message || "Fornitore non trovato")
       );
+
       setMessageType("error");
       setLoading(false);
       return;
     }
 
+    /*
+      ARTICOLI DEL FORNITORE
+    */
     const { data: itemsData, error: itemsError } =
       await supabase
         .from("items")
@@ -85,14 +100,23 @@ export default function SupplierOrderPage() {
         .order("description");
 
     if (itemsError) {
-      setMessage("Errore articoli: " + itemsError.message);
+      setMessage(
+        "Errore caricamento articoli: " + itemsError.message
+      );
+
       setMessageType("error");
       setLoading(false);
       return;
     }
 
     const cleanItems: Item[] = (itemsData || []).map((item) => ({
-      ...item,
+      id: String(item.id),
+      supplier_id: String(item.supplier_id),
+      code: String(item.code || ""),
+      supplier_code: item.supplier_code
+        ? String(item.supplier_code)
+        : null,
+      description: String(item.description || ""),
       price: Number(item.price || 0),
       stock: Number(item.stock || 0),
       min_stock: Number(item.min_stock || 0),
@@ -100,233 +124,485 @@ export default function SupplierOrderPage() {
     }));
 
     /*
-      PROPOSTA AUTOMATICA
+      BOZZA AUTOMATICA
 
       Quantità suggerita =
-      scorta minima - giacenza - quantità già in ordine
-
-      Esempio:
-      scorta minima 10
-      giacenza 3
-      già in ordine 2
-
-      suggerito = 5
+      scorta minima
+      - giacenza
+      - già in ordine
     */
-
     const automaticLines: OrderLine[] = cleanItems
       .map((item) => {
         const suggestedQty = Math.max(
           0,
-          item.min_stock - item.stock - item.on_order
+          Number(item.min_stock || 0) -
+            Number(item.stock || 0) -
+            Number(item.on_order || 0)
         );
 
         return {
           item,
           qty: suggestedQty,
-          automatic: true,
         };
       })
       .filter((line) => line.qty > 0);
 
     setSupplier(supplierData);
     setItems(cleanItems);
-    setOrderLines(automaticLines);
+    setLines(automaticLines);
     setLoading(false);
   }
 
-  const availableItems = useMemo(() => {
-    const selectedIds = new Set(
-      orderLines.map((line) => line.item.id)
-    );
-
-    const term = search.trim().toLowerCase();
-
-    return items.filter((item) => {
-      if (selectedIds.has(item.id)) {
-        return false;
-      }
-
-      if (!term) {
-        return true;
-      }
-
-      return (
-        item.description.toLowerCase().includes(term) ||
-        item.code.toLowerCase().includes(term) ||
-        (item.supplier_code || "")
-          .toLowerCase()
-          .includes(term)
-      );
-    });
-  }, [items, orderLines, search]);
-
-  const totalValue = useMemo(() => {
-    return orderLines.reduce((sum, line) => {
-      return sum + line.qty * line.item.price;
-    }, 0);
-  }, [orderLines]);
+  /*
+    TOTALI
+  */
+  const totalArticles = lines.length;
 
   const totalPieces = useMemo(() => {
-    return orderLines.reduce((sum, line) => {
-      return sum + Number(line.qty || 0);
-    }, 0);
-  }, [orderLines]);
+    return lines.reduce(
+      (sum, line) => sum + Number(line.qty || 0),
+      0
+    );
+  }, [lines]);
 
-  function changeQuantity(itemId: string, qty: number) {
-    setOrderLines((current) =>
+  const totalValue = useMemo(() => {
+    return lines.reduce(
+      (sum, line) =>
+        sum +
+        Number(line.qty || 0) *
+          Number(line.item.price || 0),
+      0
+    );
+  }, [lines]);
+
+  /*
+    ARTICOLI DISPONIBILI DA AGGIUNGERE
+  */
+  const availableItems = useMemo(() => {
+    const usedIds = new Set(
+      lines.map((line) => line.item.id)
+    );
+
+    const text = search.trim().toLowerCase();
+
+    return items
+      .filter((item) => !usedIds.has(item.id))
+      .filter((item) => {
+        if (!text) return true;
+
+        return (
+          item.description
+            .toLowerCase()
+            .includes(text) ||
+          item.code
+            .toLowerCase()
+            .includes(text) ||
+          item.supplier_code
+            ?.toLowerCase()
+            .includes(text)
+        );
+      });
+  }, [items, lines, search]);
+
+  function changeQty(itemId: string, value: number) {
+    const safeQty = Math.max(
+      1,
+      Math.floor(Number(value || 1))
+    );
+
+    setLines((current) =>
       current.map((line) =>
         line.item.id === itemId
           ? {
               ...line,
-              qty: Math.max(0, Math.floor(qty || 0)),
+              qty: safeQty,
             }
           : line
       )
     );
   }
 
-  function removeItem(itemId: string) {
-    setOrderLines((current) =>
-      current.filter((line) => line.item.id !== itemId)
+  function removeLine(itemId: string) {
+    setLines((current) =>
+      current.filter(
+        (line) => line.item.id !== itemId
+      )
     );
   }
 
   function addItem(item: Item) {
-    setOrderLines((current) => [
-      ...current,
-      {
-        item,
-        qty: 1,
-        automatic: false,
-      },
-    ]);
-  }
+    setLines((current) => {
+      const alreadyExists = current.some(
+        (line) => line.item.id === item.id
+      );
 
-  function generatePdfBlob(
-    orderId: string,
-    supplierName: string,
-    lines: OrderLine[]
-  ) {
-    const doc = new jsPDF();
-
-    const today = new Intl.DateTimeFormat("it-IT").format(
-      new Date()
-    );
-
-    doc.setFontSize(20);
-    doc.text("ORDINE FORNITORE", 14, 18);
-
-    doc.setFontSize(12);
-    doc.text(`Fornitore: ${supplierName}`, 14, 29);
-    doc.text(`Data: ${today}`, 14, 36);
-
-    doc.setFontSize(8);
-    doc.text(`ID ordine: ${orderId}`, 14, 43);
-
-    let y = 56;
-
-    doc.setFontSize(9);
-    doc.setFont("helvetica", "bold");
-
-    doc.text("Cod. articolo", 14, y);
-    doc.text("Descrizione", 50, y);
-    doc.text("Qta", 145, y, { align: "right" });
-    doc.text("Prezzo", 170, y, { align: "right" });
-    doc.text("Totale", 198, y, { align: "right" });
-
-    doc.line(14, y + 3, 198, y + 3);
-
-    doc.setFont("helvetica", "normal");
-
-    y += 10;
-
-    lines.forEach((line) => {
-      if (y > 275) {
-        doc.addPage();
-        y = 20;
+      if (alreadyExists) {
+        return current;
       }
 
-      const supplierCode =
-        line.item.supplier_code || line.item.code || "-";
+      return [
+        ...current,
+        {
+          item,
+          qty: 1,
+        },
+      ];
+    });
+  }
 
-      const description =
-        line.item.description.length > 48
-          ? line.item.description.substring(0, 45) + "..."
-          : line.item.description;
+  /*
+    CREA PDF ORDINE
 
-      const lineTotal =
-        Number(line.qty) * Number(line.item.price);
+    Il PDF è separato dalla transazione SQL.
 
-      doc.text(supplierCode.substring(0, 20), 14, y);
+    Se il PDF fallisce:
+    - l'ordine rimane comunque corretto
+    - order_items rimangono corretti
+    - on_order rimane corretto
+  */
+  function createOrderPdf(
+    orderId: string,
+    orderLines: OrderLine[]
+  ) {
+    if (!supplier) {
+      throw new Error("Fornitore non disponibile");
+    }
 
-      doc.text(description, 50, y);
-
-      doc.text(String(line.qty), 145, y, {
-        align: "right",
-      });
-
-      doc.text(formatNumber(line.item.price), 170, y, {
-        align: "right",
-      });
-
-      doc.text(formatNumber(lineTotal), 198, y, {
-        align: "right",
-      });
-
-      y += 8;
+    const doc = new jsPDF({
+      orientation: "portrait",
+      unit: "mm",
+      format: "a4",
     });
 
-    doc.line(14, y, 198, y);
+    const pageWidth =
+      doc.internal.pageSize.getWidth();
+
+    const pageHeight =
+      doc.internal.pageSize.getHeight();
+
+    const marginLeft = 14;
+    const marginRight = 14;
+
+    let y = 17;
+
+    /*
+      TITOLO
+    */
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(18);
+
+    doc.text(
+      "ORDINE FORNITORE",
+      marginLeft,
+      y
+    );
 
     y += 9;
 
-    const total = lines.reduce(
-      (sum, line) =>
-        sum +
-        Number(line.qty) * Number(line.item.price),
-      0
+    doc.setFontSize(12);
+
+    doc.text(
+      supplier.name,
+      marginLeft,
+      y
     );
 
-    doc.setFont("helvetica", "bold");
+    y += 7;
+
+    doc.setFont(
+      "helvetica",
+      "normal"
+    );
+
+    doc.setFontSize(9);
+
+    doc.text(
+      `Data: ${formatDateForPdf(new Date())}`,
+      marginLeft,
+      y
+    );
+
+    y += 5;
+
+    doc.text(
+      `ID ordine: ${orderId}`,
+      marginLeft,
+      y
+    );
+
+    y += 8;
+
+    doc.setDrawColor(180);
+
+    doc.line(
+      marginLeft,
+      y,
+      pageWidth - marginRight,
+      y
+    );
+
+    y += 7;
+
+    /*
+      INTESTAZIONE TABELLA
+    */
+    const columns = {
+      code: marginLeft,
+      description: 48,
+      qty: 137,
+      price: 153,
+      total: 177,
+    };
+
+    function drawTableHeader() {
+      doc.setFont(
+        "helvetica",
+        "bold"
+      );
+
+      doc.setFontSize(8);
+
+      doc.text(
+        "CODICE",
+        columns.code,
+        y
+      );
+
+      doc.text(
+        "DESCRIZIONE",
+        columns.description,
+        y
+      );
+
+      doc.text(
+        "QTA",
+        columns.qty,
+        y,
+        {
+          align: "right",
+        }
+      );
+
+      doc.text(
+        "PREZZO",
+        columns.price,
+        y,
+        {
+          align: "right",
+        }
+      );
+
+      doc.text(
+        "TOTALE",
+        columns.total,
+        y,
+        {
+          align: "right",
+        }
+      );
+
+      y += 3;
+
+      doc.line(
+        marginLeft,
+        y,
+        pageWidth - marginRight,
+        y
+      );
+
+      y += 5;
+
+      doc.setFont(
+        "helvetica",
+        "normal"
+      );
+    }
+
+    drawTableHeader();
+
+    doc.setFontSize(8);
+
+    let totalOrder = 0;
+
+    orderLines.forEach((line) => {
+      const lineTotal =
+        Number(line.qty || 0) *
+        Number(line.item.price || 0);
+
+      totalOrder += lineTotal;
+
+      const descriptionLines =
+        doc.splitTextToSize(
+          line.item.description || "-",
+          78
+        );
+
+      const rowHeight =
+        Math.max(
+          6,
+          descriptionLines.length * 4
+        );
+
+      /*
+        NUOVA PAGINA SE SERVE
+      */
+      if (
+        y + rowHeight >
+        pageHeight - 25
+      ) {
+        doc.addPage();
+
+        y = 18;
+
+        doc.setFont(
+          "helvetica",
+          "bold"
+        );
+
+        doc.setFontSize(12);
+
+        doc.text(
+          `ORDINE - ${supplier.name}`,
+          marginLeft,
+          y
+        );
+
+        y += 9;
+
+        drawTableHeader();
+      }
+
+      doc.setFontSize(8);
+      doc.setFont(
+        "helvetica",
+        "normal"
+      );
+
+      doc.text(
+        line.item.supplier_code || "-",
+        columns.code,
+        y
+      );
+
+      doc.text(
+        descriptionLines,
+        columns.description,
+        y
+      );
+
+      doc.text(
+        String(line.qty),
+        columns.qty,
+        y,
+        {
+          align: "right",
+        }
+      );
+
+      doc.text(
+        formatPdfEuro(line.item.price),
+        columns.price,
+        y,
+        {
+          align: "right",
+        }
+      );
+
+      doc.text(
+        formatPdfEuro(lineTotal),
+        columns.total,
+        y,
+        {
+          align: "right",
+        }
+      );
+
+      y += rowHeight + 2;
+
+      doc.setDrawColor(225);
+
+      doc.line(
+        marginLeft,
+        y,
+        pageWidth - marginRight,
+        y
+      );
+
+      y += 3;
+    });
+
+    /*
+      TOTALE
+    */
+    if (y > pageHeight - 30) {
+      doc.addPage();
+      y = 20;
+    }
+
+    y += 5;
+
+    doc.setFont(
+      "helvetica",
+      "bold"
+    );
+
     doc.setFontSize(11);
 
     doc.text(
-      `TOTALE ORDINE: EUR ${formatNumber(total)}`,
-      198,
+      `TOTALE ORDINE: ${formatPdfEuro(totalOrder)}`,
+      pageWidth - marginRight,
       y,
       {
         align: "right",
       }
     );
 
-    return doc.output("blob");
+    return doc;
   }
 
+  /*
+    CONFERMA ORDINE ATOMICA
+  */
   async function confirmOrder() {
-    setMessage("");
-    setMessageType("");
-
-    const validLines = orderLines.filter(
-      (line) => Number(line.qty) > 0
-    );
-
     if (!supplier) {
       return;
     }
 
-    if (validLines.length === 0) {
+    if (lines.length === 0) {
       setMessage(
-        "L'ordine è vuoto. Aggiungi almeno un articolo."
+        "Aggiungi almeno un articolo all'ordine."
       );
+
+      setMessageType("error");
+      return;
+    }
+
+    /*
+      CONTROLLO QUANTITÀ
+    */
+    const invalidLine =
+      lines.find(
+        (line) =>
+          !Number.isFinite(
+            Number(line.qty)
+          ) ||
+          Number(line.qty) <= 0
+      );
+
+    if (invalidLine) {
+      setMessage(
+        "Tutte le quantità devono essere maggiori di zero."
+      );
+
       setMessageType("error");
       return;
     }
 
     const confirmed = confirm(
-      `Confermare l'ordine per ${supplier.name}?\n\n` +
-        `${validLines.length} articoli\n` +
-        `${totalPieces} pezzi\n` +
-        `Totale ${formatEuro(totalValue)}`
+      `Confermi l'ordine a ${supplier.name}?\n\n` +
+        `Articoli: ${totalArticles}\n` +
+        `Pezzi: ${totalPieces}\n` +
+        `Totale: ${formatEuro(totalValue)}`
     );
 
     if (!confirmed) {
@@ -334,197 +610,208 @@ export default function SupplierOrderPage() {
     }
 
     setSaving(true);
+    setMessage("");
+    setMessageType("");
 
     /*
-      1. CREAZIONE TESTATA ORDINE
+      PREPARIAMO LE RIGHE DA MANDARE
+      ALLA FUNZIONE SQL
     */
-
-    const { data: orderData, error: orderError } =
-      await supabase
-        .from("orders")
-        .insert({
-          supplier_id: supplier.id,
-          status: "ordered",
-        })
-        .select("id")
-        .single();
-
-    if (orderError || !orderData) {
-      setMessage(
-        "Errore creazione ordine: " +
-          (orderError?.message || "ID ordine non disponibile")
-      );
-      setMessageType("error");
-      setSaving(false);
-      return;
-    }
-
-    const orderId = orderData.id;
-
-    /*
-      2. SALVATAGGIO RIGHE
-    */
-
-    const rowsToInsert = validLines.map((line) => ({
-      order_id: orderId,
-      item_id: line.item.id,
-      qty: Number(line.qty),
-      received_qty: 0,
-      unit_price: Number(line.item.price || 0),
-    }));
-
-    const { error: linesError } = await supabase
-      .from("order_items")
-      .insert(rowsToInsert);
-
-    if (linesError) {
-      await supabase
-        .from("orders")
-        .delete()
-        .eq("id", orderId);
-
-      setMessage(
-        "Errore salvataggio righe ordine: " +
-          linesError.message
-      );
-      setMessageType("error");
-      setSaving(false);
-      return;
-    }
-
-    /*
-      3. GENERAZIONE PDF
-    */
-
-    const pdfBlob = generatePdfBlob(
-      orderId,
-      supplier.name,
-      validLines
-    );
-
-    const safeSupplierName = supplier.name
-      .replace(/[^a-zA-Z0-9]/g, "_")
-      .toLowerCase();
-
-    const fileName =
-      `${safeSupplierName}_${Date.now()}_${orderId}.pdf`;
-
-    const pdfPath =
-      `${supplier.id}/${fileName}`;
-
-    /*
-      4. UPLOAD PDF SU SUPABASE STORAGE
-    */
-
-    const { error: uploadError } = await supabase.storage
-      .from("orders-pdf")
-      .upload(pdfPath, pdfBlob, {
-        contentType: "application/pdf",
-        upsert: false,
-      });
-
-    if (uploadError) {
-      /*
-        L'ordine rimane comunque salvato.
-        Mostriamo l'errore PDF.
-      */
-
-      setMessage(
-        "Ordine salvato, ma il PDF non è stato caricato: " +
-          uploadError.message
-      );
-      setMessageType("error");
-      setSaving(false);
-      return;
-    }
-
-    /*
-      5. OTTENIAMO URL PUBBLICO PDF
-    */
-
-    const { data: publicUrlData } = supabase.storage
-      .from("orders-pdf")
-      .getPublicUrl(pdfPath);
-
-    const pdfUrl =
-      publicUrlData?.publicUrl || null;
-
-    /*
-      6. SALVIAMO PDF NELL'ORDINE
-    */
-
-    const { error: pdfUpdateError } = await supabase
-      .from("orders")
-      .update({
-        pdf_path: pdfPath,
-        pdf_url: pdfUrl,
+    const rpcLines = lines.map(
+      (line) => ({
+        item_id: line.item.id,
+        qty: Number(line.qty),
       })
-      .eq("id", orderId);
+    );
 
-    if (pdfUpdateError) {
-      setMessage(
-        "Ordine e PDF creati, ma errore collegamento PDF: " +
-          pdfUpdateError.message
+    /*
+      CREAZIONE ATOMICA:
+
+      - orders
+      - order_items
+      - items.on_order
+
+      tutto insieme.
+    */
+    const { data, error } =
+      await supabase.rpc(
+        "create_order_atomic",
+        {
+          p_supplier_id:
+            supplier.id,
+
+          p_lines:
+            rpcLines,
+        }
       );
+
+    if (error) {
+      console.error(
+        "Errore creazione ordine atomico:",
+        error
+      );
+
+      setMessage(
+        "Ordine NON creato: " +
+          error.message
+      );
+
       setMessageType("error");
       setSaving(false);
+
+      return;
+    }
+
+    const result =
+      data as AtomicOrderResult | null;
+
+    const orderId =
+      result?.order_id;
+
+    if (!orderId) {
+      setMessage(
+        "Ordine creato, ma non è stato restituito l'ID ordine."
+      );
+
+      setMessageType("error");
+      setSaving(false);
+
       return;
     }
 
     /*
-      7. AGGIORNIAMO LE QUANTITÀ IN ORDINE
+      A QUESTO PUNTO L'ORDINE È GIÀ SICURO.
+
+      Anche se il PDF fallisce:
+      NON dobbiamo ricreare l'ordine.
     */
-
-    for (const line of validLines) {
-      const { data: currentItem, error: readError } =
-        await supabase
-          .from("items")
-          .select("on_order")
-          .eq("id", line.item.id)
-          .single();
-
-      if (readError || !currentItem) {
-        setMessage(
-          "Ordine creato, ma errore aggiornamento quantità in ordine."
+    try {
+      const doc =
+        createOrderPdf(
+          orderId,
+          lines
         );
-        setMessageType("error");
-        setSaving(false);
-        return;
+
+      const pdfBlob =
+        doc.output("blob");
+
+      const safeSupplierName =
+        supplier.name
+          .trim()
+          .replace(
+            /[\\/:*?"<>|]/g,
+            "-"
+          )
+          .replace(
+            /\s+/g,
+            "_"
+          );
+
+      const pdfPath =
+        `${supplier.id}/${orderId}_${safeSupplierName}.pdf`;
+
+      /*
+        UPLOAD PDF
+      */
+      const {
+        error: uploadError,
+      } = await supabase.storage
+        .from("orders-pdf")
+        .upload(
+          pdfPath,
+          pdfBlob,
+          {
+            contentType:
+              "application/pdf",
+
+            upsert: false,
+          }
+        );
+
+      if (uploadError) {
+        throw new Error(
+          uploadError.message
+        );
       }
 
-      const currentOnOrder = Number(
-        currentItem.on_order || 0
+      /*
+        URL PUBBLICO
+      */
+      const {
+        data: publicUrlData,
+      } = supabase.storage
+        .from("orders-pdf")
+        .getPublicUrl(
+          pdfPath
+        );
+
+      const pdfUrl =
+        publicUrlData.publicUrl;
+
+      /*
+        SALVIAMO URL E PATH NELL'ORDINE
+      */
+      const {
+        error: pdfUpdateError,
+      } = await supabase
+        .from("orders")
+        .update({
+          pdf_path:
+            pdfPath,
+
+          pdf_url:
+            pdfUrl,
+        })
+        .eq(
+          "id",
+          orderId
+        );
+
+      if (pdfUpdateError) {
+        throw new Error(
+          pdfUpdateError.message
+        );
+      }
+
+      alert(
+        "Ordine creato correttamente."
       );
 
-      const newOnOrder =
-        currentOnOrder + Number(line.qty);
+      router.push(
+        `/orders/${orderId}`
+      );
 
-      const { error: updateError } = await supabase
-        .from("items")
-        .update({
-          on_order: newOnOrder,
-        })
-        .eq("id", line.item.id);
+      return;
+    } catch (pdfError: any) {
+      console.error(
+        "Errore PDF ordine:",
+        pdfError
+      );
 
-      if (updateError) {
-        setMessage(
-          "Ordine creato, ma errore aggiornamento articolo: " +
-            updateError.message
-        );
-        setMessageType("error");
-        setSaving(false);
-        return;
-      }
+      /*
+        IMPORTANTE:
+
+        NON cancelliamo l'ordine
+        e NON proviamo a ricrearlo.
+
+        L'ordine è già stato creato
+        correttamente dalla funzione atomica.
+      */
+      alert(
+        "L'ordine è stato creato correttamente, " +
+          "ma il PDF non è stato salvato.\n\n" +
+          "Ordine ID:\n" +
+          orderId
+      );
+
+      router.push(
+        `/orders/${orderId}`
+      );
+
+      return;
+    } finally {
+      setSaving(false);
     }
-
-    setSaving(false);
-
-    alert(
-      `Ordine ${supplier.name} creato correttamente.\n\n` +
-        `Il PDF è stato salvato nello storico ordini.`
-    );
-
-    router.push("/orders");
   }
 
   if (loading) {
@@ -537,7 +824,7 @@ export default function SupplierOrderPage() {
           opacity: 0.6,
         }}
       >
-        Caricamento ordine...
+        Preparazione ordine...
       </div>
     );
   }
@@ -563,16 +850,18 @@ export default function SupplierOrderPage() {
         margin: "0 auto",
       }}
     >
-      {/* HEADER */}
+      {/* TESTATA */}
 
       <div
         style={{
-          marginBottom: 25,
           display: "flex",
-          justifyContent: "space-between",
-          alignItems: "flex-start",
+          justifyContent:
+            "space-between",
+          alignItems:
+            "flex-start",
           gap: 20,
           flexWrap: "wrap",
+          marginBottom: 25,
         }}
       >
         <div>
@@ -581,12 +870,13 @@ export default function SupplierOrderPage() {
               fontSize: 13,
               opacity: 0.55,
               marginBottom: 4,
-              textTransform: "uppercase",
+              textTransform:
+                "uppercase",
               letterSpacing: 1.2,
               fontWeight: 700,
             }}
           >
-            Ordini / {supplier.name}
+            Ordini / Nuovo ordine
           </div>
 
           <h1
@@ -594,99 +884,135 @@ export default function SupplierOrderPage() {
               margin: 0,
               fontSize: 34,
               fontWeight: 850,
+              letterSpacing:
+                "-0.5px",
             }}
           >
-            Nuovo ordine
+            {supplier.name}
           </h1>
 
           <div
             style={{
-              marginTop: 6,
+              marginTop: 7,
               fontSize: 14,
               opacity: 0.6,
             }}
           >
-            Il gestionale ha preparato automaticamente gli
-            articoli da riordinare. Puoi modificare liberamente
-            l&apos;ordine prima di confermarlo.
+            Controlla la proposta automatica,
+            modifica le quantità e conferma
+            l&apos;ordine.
           </div>
         </div>
 
         <button
           type="button"
-          onClick={() => router.push("/orders")}
+          onClick={() =>
+            router.push(
+              "/orders"
+            )
+          }
+          disabled={saving}
           style={secondaryButtonStyle}
         >
           ← Torna agli ordini
         </button>
       </div>
 
+      {/* MESSAGGIO */}
+
       {message && (
         <div
           style={{
-            padding: "13px 15px",
+            padding:
+              "13px 15px",
+
             marginBottom: 18,
+
             borderRadius: 10,
+
             border:
-              messageType === "success"
+              messageType ===
+              "success"
                 ? "1px solid rgba(34,197,94,0.4)"
                 : "1px solid rgba(239,68,68,0.45)",
+
             background:
-              messageType === "success"
+              messageType ===
+              "success"
                 ? "rgba(34,197,94,0.08)"
                 : "rgba(239,68,68,0.08)",
-            fontWeight: 650,
+
             fontSize: 13,
+            fontWeight: 700,
           }}
         >
           {message}
         </div>
       )}
 
-      {/* RIASSUNTO */}
+      {/* RIEPILOGO */}
 
       <div
         style={{
           display: "grid",
+
           gridTemplateColumns:
-            "repeat(auto-fit, minmax(200px, 1fr))",
+            "repeat(auto-fit, minmax(210px, 1fr))",
+
           gap: 14,
           marginBottom: 22,
         }}
       >
         <SummaryCard
           title="Articoli"
-          value={String(orderLines.length)}
+          value={String(
+            totalArticles
+          )}
           subtitle="Codici presenti nell'ordine"
         />
 
         <SummaryCard
           title="Pezzi"
-          value={String(totalPieces)}
+          value={String(
+            totalPieces
+          )}
           subtitle="Quantità totale"
         />
 
         <SummaryCard
           title="Totale ordine"
-          value={formatEuro(totalValue)}
-          subtitle="Valore previsto"
+          value={formatEuro(
+            totalValue
+          )}
+          subtitle="Valore complessivo"
         />
       </div>
 
-      {/* ORDINE */}
+      {/* RIGHE ORDINE */}
 
       <div style={cardStyle}>
         <div
           style={{
-            padding: "16px 18px",
+            padding:
+              "16px 18px",
+
+            display: "flex",
+
+            justifyContent:
+              "space-between",
+
+            alignItems:
+              "center",
+
+            gap: 15,
+
+            flexWrap: "wrap",
+
+            background:
+              "var(--table-head)",
+
             borderBottom:
               "1px solid var(--border-color)",
-            background: "var(--table-head)",
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            gap: 15,
-            flexWrap: "wrap",
           }}
         >
           <div>
@@ -696,86 +1022,109 @@ export default function SupplierOrderPage() {
                 fontWeight: 850,
               }}
             >
-              {supplier.name}
+              Articoli ordine
             </div>
 
             <div
               style={{
+                marginTop: 3,
                 fontSize: 12,
                 opacity: 0.55,
-                marginTop: 3,
               }}
             >
-              Bozza ordine
+              La proposta automatica considera
+              giacenza, scorta minima e merce
+              già in ordine.
             </div>
           </div>
 
           <button
             type="button"
             onClick={() =>
-              setShowAddItems((current) => !current)
+              setShowAddItems(
+                !showAddItems
+              )
             }
-            style={secondaryButtonStyle}
+            disabled={saving}
+            style={
+              secondaryButtonStyle
+            }
           >
-            + Aggiungi articolo
+            {showAddItems
+              ? "Chiudi aggiunta articoli"
+              : "+ Aggiungi articolo"}
           </button>
         </div>
 
-        {orderLines.length === 0 ? (
-          <div
-            style={{
-              padding: 40,
-              textAlign: "center",
-            }}
-          >
-            <div
-              style={{
-                fontSize: 18,
-                fontWeight: 800,
-              }}
-            >
-              Nessun articolo da ordinare
-            </div>
+        <div
+          style={{
+            overflowX: "auto",
+          }}
+        >
+          <table style={tableStyle}>
+            <thead>
+              <tr>
+                <TableHead>
+                  Codice articolo
+                </TableHead>
 
-            <div
-              style={{
-                marginTop: 6,
-                opacity: 0.55,
-                fontSize: 13,
-              }}
-            >
-              Puoi comunque aggiungere manualmente degli
-              articoli.
-            </div>
-          </div>
-        ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table style={tableStyle}>
-              <thead>
+                <TableHead>
+                  Codice scanner
+                </TableHead>
+
+                <TableHead>
+                  Descrizione
+                </TableHead>
+
+                <TableHead align="right">
+                  Prezzo
+                </TableHead>
+
+                <TableHead align="right">
+                  Giacenza
+                </TableHead>
+
+                <TableHead align="right">
+                  Scorta min.
+                </TableHead>
+
+                <TableHead align="right">
+                  Già in ordine
+                </TableHead>
+
+                <TableHead align="right">
+                  Quantità
+                </TableHead>
+
+                <TableHead align="right">
+                  Totale
+                </TableHead>
+
+                <TableHead>
+                  Azione
+                </TableHead>
+              </tr>
+            </thead>
+
+            <tbody>
+              {lines.length === 0 ? (
                 <tr>
-                  <TableHead>Codice articolo</TableHead>
-                  <TableHead>Codice scanner</TableHead>
-                  <TableHead>Descrizione</TableHead>
-                  <TableHead align="right">Prezzo</TableHead>
-                  <TableHead align="right">Giacenza</TableHead>
-                  <TableHead align="right">
-                    Scorta min.
-                  </TableHead>
-                  <TableHead align="right">
-                    Già in ordine
-                  </TableHead>
-                  <TableHead align="right">
-                    Quantità
-                  </TableHead>
-                  <TableHead align="right">
-                    Totale
-                  </TableHead>
-                  <TableHead />
+                  <td
+                    colSpan={10}
+                    style={{
+                      padding: 40,
+                      textAlign:
+                        "center",
+                      opacity: 0.55,
+                    }}
+                  >
+                    Nessun articolo nella proposta.
+                    Puoi aggiungerli manualmente con
+                    “+ Aggiungi articolo”.
+                  </td>
                 </tr>
-              </thead>
-
-              <tbody>
-                {orderLines.map((line) => (
+              ) : (
+                lines.map((line) => (
                   <tr
                     key={line.item.id}
                     style={{
@@ -784,82 +1133,96 @@ export default function SupplierOrderPage() {
                     }}
                   >
                     <TableCell>
-                      <div
-                        style={{
-                          display: "flex",
-                          gap: 7,
-                          alignItems: "center",
-                        }}
-                      >
-                        <strong>
-                          {line.item.supplier_code || "-"}
-                        </strong>
-
-                        {line.automatic && (
-                          <span
-                            style={{
-                              fontSize: 9,
-                              padding: "3px 5px",
-                              borderRadius: 10,
-                              background:
-                                "rgba(245,158,11,0.12)",
-                              color: "#f59e0b",
-                              fontWeight: 800,
-                            }}
-                          >
-                            AUTO
-                          </span>
-                        )}
-                      </div>
+                      <strong>
+                        {line.item
+                          .supplier_code ||
+                          "-"}
+                      </strong>
                     </TableCell>
 
                     <TableCell>
-                      {line.item.code}
+                      {line.item.code ||
+                        "-"}
                     </TableCell>
 
                     <TableCell>
-                      {line.item.description}
+                      {
+                        line.item
+                          .description
+                      }
                     </TableCell>
 
                     <TableCell align="right">
-                      {formatEuro(line.item.price)}
+                      {formatEuro(
+                        line.item.price
+                      )}
                     </TableCell>
 
                     <TableCell align="right">
-                      {line.item.stock}
+                      {
+                        line.item
+                          .stock
+                      }
                     </TableCell>
 
                     <TableCell align="right">
-                      {line.item.min_stock}
+                      {
+                        line.item
+                          .min_stock
+                      }
                     </TableCell>
 
                     <TableCell align="right">
-                      {line.item.on_order}
+                      {
+                        line.item
+                          .on_order
+                      }
                     </TableCell>
 
                     <TableCell align="right">
                       <input
                         type="number"
-                        min="0"
+                        min="1"
                         step="1"
-                        value={line.qty}
+
+                        value={
+                          line.qty
+                        }
+
+                        disabled={
+                          saving
+                        }
+
                         onChange={(e) =>
-                          changeQuantity(
+                          changeQty(
                             line.item.id,
-                            Number(e.target.value)
+                            Number(
+                              e.target
+                                .value
+                            )
                           )
                         }
+
                         style={{
                           width: 90,
-                          padding: "8px 9px",
+
+                          padding:
+                            "8px 9px",
+
                           border:
                             "1px solid var(--border-color)",
+
                           borderRadius: 7,
+
                           background:
                             "var(--input-bg)",
+
                           color:
                             "var(--foreground)",
-                          textAlign: "right",
+
+                          textAlign:
+                            "right",
+
                           fontWeight: 800,
                         }}
                       />
@@ -868,170 +1231,229 @@ export default function SupplierOrderPage() {
                     <TableCell align="right">
                       <strong>
                         {formatEuro(
-                          line.qty * line.item.price
+                          line.qty *
+                            line.item
+                              .price
                         )}
                       </strong>
                     </TableCell>
 
-                    <TableCell align="right">
+                    <TableCell>
                       <button
                         type="button"
+                        disabled={
+                          saving
+                        }
                         onClick={() =>
-                          removeItem(line.item.id)
+                          removeLine(
+                            line.item.id
+                          )
                         }
                         style={{
+                          padding:
+                            "7px 10px",
+
+                          borderRadius: 7,
+
                           border:
                             "1px solid rgba(239,68,68,0.35)",
+
                           background:
                             "rgba(239,68,68,0.08)",
-                          color: "#ef4444",
-                          borderRadius: 7,
-                          padding: "6px 9px",
-                          cursor: "pointer",
-                          fontWeight: 800,
+
+                          color:
+                            "#ef4444",
+
+                          cursor:
+                            saving
+                              ? "not-allowed"
+                              : "pointer",
+
+                          fontWeight: 750,
                         }}
                       >
                         Togli
                       </button>
                     </TableCell>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      {/* AGGIUNGI ARTICOLI */}
+      {/* AGGIUNTA ARTICOLI */}
 
       {showAddItems && (
         <div
           style={{
-            ...cardStyle,
             marginTop: 18,
+
+            padding: 18,
+
+            border:
+              "1px solid var(--border-color)",
+
+            borderRadius: 12,
+
+            background:
+              "var(--card)",
           }}
         >
           <div
             style={{
-              padding: 17,
-              borderBottom:
-                "1px solid var(--border-color)",
-              background: "var(--table-head)",
+              fontSize: 18,
+              fontWeight: 850,
+              marginBottom: 12,
             }}
           >
-            <div
-              style={{
-                fontSize: 17,
-                fontWeight: 850,
-              }}
-            >
-              Aggiungi articolo
-            </div>
-
-            <div
-              style={{
-                marginTop: 4,
-                fontSize: 12,
-                opacity: 0.55,
-              }}
-            >
-              Puoi aggiungere qualsiasi articolo di{" "}
-              {supplier.name}.
-            </div>
-
-            <input
-              type="text"
-              placeholder="Cerca codice o descrizione..."
-              value={search}
-              onChange={(e) =>
-                setSearch(e.target.value)
-              }
-              style={{
-                width: "100%",
-                marginTop: 13,
-                padding: "10px 12px",
-                borderRadius: 8,
-                border:
-                  "1px solid var(--border-color)",
-                background: "var(--input-bg)",
-                color: "var(--foreground)",
-                outline: "none",
-              }}
-            />
+            Aggiungi articolo
           </div>
+
+          <input
+            value={search}
+            onChange={(e) =>
+              setSearch(
+                e.target.value
+              )
+            }
+            placeholder="Cerca codice articolo, scanner o descrizione..."
+            style={{
+              width: "100%",
+              boxSizing:
+                "border-box",
+
+              padding:
+                "12px 14px",
+
+              borderRadius: 8,
+
+              border:
+                "1px solid var(--border-color)",
+
+              background:
+                "var(--input-bg)",
+
+              color:
+                "var(--foreground)",
+
+              outline: "none",
+
+              fontSize: 14,
+
+              marginBottom: 12,
+            }}
+          />
 
           <div
             style={{
-              maxHeight: 380,
+              maxHeight: 350,
               overflowY: "auto",
+
+              border:
+                "1px solid var(--border-color)",
+
+              borderRadius: 9,
             }}
           >
-            {availableItems.length === 0 ? (
+            {availableItems.length ===
+            0 ? (
               <div
                 style={{
-                  padding: 30,
-                  textAlign: "center",
+                  padding: 25,
+                  textAlign:
+                    "center",
                   opacity: 0.55,
                 }}
               >
-                Nessun altro articolo disponibile.
+                Nessun articolo disponibile.
               </div>
             ) : (
-              availableItems.map((item) => (
-                <div
-                  key={item.id}
-                  style={{
-                    padding: "12px 16px",
-                    borderBottom:
-                      "1px solid var(--border-color)",
-                    display: "flex",
-                    justifyContent:
-                      "space-between",
-                    alignItems: "center",
-                    gap: 15,
-                  }}
-                >
-                  <div>
-                    <div
-                      style={{
-                        fontWeight: 800,
-                      }}
-                    >
-                      {item.supplier_code ||
-                        item.code}
-                    </div>
+              availableItems.map(
+                (item) => (
+                  <div
+                    key={item.id}
+                    style={{
+                      padding:
+                        "12px 14px",
 
-                    <div
-                      style={{
-                        fontSize: 13,
-                        marginTop: 3,
-                      }}
-                    >
-                      {item.description}
-                    </div>
+                      display: "flex",
 
-                    <div
-                      style={{
-                        fontSize: 11,
-                        opacity: 0.5,
-                        marginTop: 3,
-                      }}
-                    >
-                      Giacenza {item.stock} ·
-                      Scorta min. {item.min_stock} ·{" "}
-                      {formatEuro(item.price)}
-                    </div>
-                  </div>
+                      justifyContent:
+                        "space-between",
 
-                  <button
-                    type="button"
-                    onClick={() => addItem(item)}
-                    style={secondaryButtonStyle}
+                      alignItems:
+                        "center",
+
+                      gap: 15,
+
+                      borderBottom:
+                        "1px solid var(--border-color)",
+                    }}
                   >
-                    + Aggiungi
-                  </button>
-                </div>
-              ))
+                    <div>
+                      <div
+                        style={{
+                          fontWeight: 850,
+                        }}
+                      >
+                        {item.supplier_code ||
+                          "-"}
+                      </div>
+
+                      <div
+                        style={{
+                          marginTop: 3,
+                          fontSize: 13,
+                        }}
+                      >
+                        {item.description}
+                      </div>
+
+                      <div
+                        style={{
+                          marginTop: 3,
+                          fontSize: 11,
+                          opacity: 0.55,
+                        }}
+                      >
+                        Scanner:{" "}
+                        {item.code ||
+                          "-"}{" "}
+                        · Giacenza:{" "}
+                        {item.stock} ·
+                        Scorta min.:{" "}
+                        {
+                          item.min_stock
+                        }{" "}
+                        · €{" "}
+                        {Number(
+                          item.price
+                        ).toFixed(2)}
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+
+                      disabled={
+                        saving
+                      }
+
+                      onClick={() =>
+                        addItem(item)
+                      }
+
+                      style={
+                        primarySmallButton
+                      }
+                    >
+                      Aggiungi
+                    </button>
+                  </div>
+                )
+              )
             )}
           </div>
         </div>
@@ -1042,70 +1464,80 @@ export default function SupplierOrderPage() {
       <div
         style={{
           marginTop: 22,
+
           padding: 20,
+
           border:
             "1px solid var(--border-color)",
+
           borderRadius: 12,
-          background: "var(--card)",
+
+          background:
+            "var(--card)",
+
           display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
+
+          justifyContent:
+            "space-between",
+
+          alignItems:
+            "center",
+
           gap: 20,
+
           flexWrap: "wrap",
         }}
       >
         <div>
           <div
             style={{
-              fontSize: 12,
-              opacity: 0.55,
-              fontWeight: 700,
-              textTransform: "uppercase",
+              fontSize: 18,
+              fontWeight: 850,
             }}
           >
-            Totale ordine
+            Conferma ordine
           </div>
 
           <div
             style={{
-              fontSize: 27,
-              fontWeight: 900,
-              marginTop: 4,
+              marginTop: 5,
+              fontSize: 13,
+              opacity: 0.6,
             }}
           >
-            {formatEuro(totalValue)}
-          </div>
-
-          <div
-            style={{
-              fontSize: 12,
-              opacity: 0.55,
-              marginTop: 3,
-            }}
-          >
-            {orderLines.length} articoli ·{" "}
-            {totalPieces} pezzi
+            L&apos;ordine, le righe e le quantità
+            “in ordine” verranno registrati insieme
+            in un&apos;unica operazione sicura.
           </div>
         </div>
 
         <button
           type="button"
-          disabled={
-            saving || orderLines.length === 0
+
+          onClick={
+            confirmOrder
           }
-          onClick={confirmOrder}
+
+          disabled={
+            saving ||
+            lines.length === 0
+          }
+
           style={primaryButtonStyle(
-            saving || orderLines.length === 0
+            saving ||
+              lines.length === 0
           )}
         >
           {saving
             ? "Creazione ordine..."
-            : "Conferma ordine e genera PDF"}
+            : "Conferma ordine"}
         </button>
       </div>
     </div>
   );
 }
+
+/* ---------------- COMPONENTI ---------------- */
 
 function SummaryCard({
   title,
@@ -1120,18 +1552,26 @@ function SummaryCard({
     <div
       style={{
         padding: 18,
+
         border:
           "1px solid var(--border-color)",
+
         borderRadius: 12,
-        background: "var(--card)",
+
+        background:
+          "var(--card)",
       }}
     >
       <div
         style={{
           fontSize: 11,
           opacity: 0.55,
-          textTransform: "uppercase",
+
+          textTransform:
+            "uppercase",
+
           letterSpacing: 0.8,
+
           fontWeight: 700,
         }}
       >
@@ -1165,20 +1605,30 @@ function TableHead({
   children,
   align = "left",
 }: {
-  children?: React.ReactNode;
+  children: React.ReactNode;
   align?: "left" | "right";
 }) {
   return (
     <th
       style={{
-        padding: "11px 12px",
+        padding:
+          "11px 12px",
+
         textAlign: align,
+
         fontSize: 10,
-        textTransform: "uppercase",
+
+        textTransform:
+          "uppercase",
+
         letterSpacing: 0.5,
+
         opacity: 0.6,
+
         fontWeight: 800,
-        whiteSpace: "nowrap",
+
+        whiteSpace:
+          "nowrap",
       }}
     >
       {children}
@@ -1196,10 +1646,11 @@ function TableCell({
   return (
     <td
       style={{
-        padding: "11px 12px",
+        padding: "12px",
         textAlign: align,
         fontSize: 13,
-        verticalAlign: "middle",
+        verticalAlign:
+          "middle",
       }}
     >
       {children}
@@ -1207,62 +1658,148 @@ function TableCell({
   );
 }
 
-function formatEuro(value: number) {
-  return new Intl.NumberFormat("it-IT", {
-    style: "currency",
-    currency: "EUR",
-    minimumFractionDigits: 2,
-  }).format(Number(value || 0));
+/* ---------------- FORMATTAZIONE ---------------- */
+
+function formatEuro(
+  value: number
+) {
+  return new Intl.NumberFormat(
+    "it-IT",
+    {
+      style: "currency",
+      currency: "EUR",
+      minimumFractionDigits: 2,
+    }
+  ).format(
+    Number(value || 0)
+  );
 }
 
-function formatNumber(value: number) {
-  return Number(value || 0)
-    .toFixed(2)
-    .replace(".", ",");
+function formatPdfEuro(
+  value: number
+) {
+  return (
+    new Intl.NumberFormat(
+      "it-IT",
+      {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }
+    ).format(
+      Number(value || 0)
+    ) + " EUR"
+  );
 }
+
+function formatDateForPdf(
+  date: Date
+) {
+  return new Intl.DateTimeFormat(
+    "it-IT",
+    {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    }
+  ).format(date);
+}
+
+/* ---------------- STILI ---------------- */
 
 const cardStyle = {
-  border: "1px solid var(--border-color)",
+  border:
+    "1px solid var(--border-color)",
+
   borderRadius: 12,
+
   overflow: "hidden",
-  background: "var(--card)",
+
+  background:
+    "var(--card)",
 };
 
 const tableStyle = {
   width: "100%",
-  minWidth: 1100,
-  borderCollapse: "collapse" as const,
+  minWidth: 1300,
+
+  borderCollapse:
+    "collapse" as const,
 };
 
 const secondaryButtonStyle = {
-  padding: "9px 13px",
+  display: "inline-block",
+
+  padding:
+    "10px 14px",
+
   borderRadius: 8,
-  border: "1px solid var(--border-color)",
-  background: "var(--input-bg)",
-  color: "var(--foreground)",
+
+  border:
+    "1px solid var(--border-color)",
+
+  background:
+    "var(--input-bg)",
+
+  color:
+    "var(--foreground)",
+
   cursor: "pointer",
-  fontWeight: 750,
+
+  fontWeight: 800,
+
+  textDecoration:
+    "none",
+};
+
+const primarySmallButton = {
+  padding:
+    "8px 12px",
+
+  borderRadius: 7,
+
+  border:
+    "1px solid var(--foreground)",
+
+  background:
+    "var(--foreground)",
+
+  color:
+    "var(--background)",
+
+  cursor: "pointer",
+
+  fontWeight: 800,
 };
 
 function primaryButtonStyle(
   disabled: boolean
 ) {
   return {
-    padding: "12px 18px",
-    borderRadius: 8,
+    padding:
+      "12px 19px",
+
+    borderRadius: 9,
+
     border: disabled
       ? "1px solid var(--border-color)"
       : "1px solid var(--foreground)",
+
     background: disabled
       ? "var(--card-2)"
       : "var(--foreground)",
+
     color: disabled
       ? "var(--foreground)"
       : "var(--background)",
+
     cursor: disabled
       ? "not-allowed"
       : "pointer",
+
     fontWeight: 850,
-    opacity: disabled ? 0.5 : 1,
+
+    opacity: disabled
+      ? 0.5
+      : 1,
   };
 }

@@ -17,6 +17,11 @@ type Item = {
   image_url: string | null;
 };
 
+type WarehouseSort =
+  | "supplier_code"
+  | "description"
+  | "stock";
+
 export default function SupplierDetail({
   params,
 }: {
@@ -35,6 +40,9 @@ export default function SupplierDetail({
 
   const [search, setSearch] = useState("");
   const [onlyLowStock, setOnlyLowStock] = useState(false);
+
+  const [warehouseSort, setWarehouseSort] =
+    useState<WarehouseSort>("supplier_code");
 
   useEffect(() => {
     async function loadData() {
@@ -134,10 +142,12 @@ export default function SupplierDetail({
   }
 
   function formatPdfEuro(value: number) {
-    return new Intl.NumberFormat("it-IT", {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }).format(Number(value || 0)) + " EUR";
+    return (
+      new Intl.NumberFormat("it-IT", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }).format(Number(value || 0)) + " EUR"
+    );
   }
 
   function drawPdfHeader(
@@ -160,6 +170,106 @@ export default function SupplierDetail({
     doc.line(14, 32, 283, 32);
   }
 
+  /*
+    ORDINAMENTO NATURALE.
+
+    Serve per evitare ordinamenti tipo:
+
+    1
+    10
+    100
+    2
+    20
+
+    e ottenere invece:
+
+    1
+    2
+    10
+    20
+    100
+  */
+  const naturalCollator = new Intl.Collator("it", {
+    numeric: true,
+    sensitivity: "base",
+  });
+
+  function compareSupplierCode(a: Item, b: Item) {
+    const codeA = (a.supplier_code || "").trim();
+    const codeB = (b.supplier_code || "").trim();
+
+    /*
+      Se manca il codice articolo,
+      lo mettiamo alla fine.
+    */
+    if (!codeA && codeB) return 1;
+    if (codeA && !codeB) return -1;
+
+    const comparison = naturalCollator.compare(
+      codeA,
+      codeB
+    );
+
+    if (comparison !== 0) {
+      return comparison;
+    }
+
+    return naturalCollator.compare(
+      a.description || "",
+      b.description || ""
+    );
+  }
+
+  function getWarehouseSortedItems() {
+    const sorted = [...items];
+
+    if (warehouseSort === "supplier_code") {
+      sorted.sort(compareSupplierCode);
+    }
+
+    if (warehouseSort === "description") {
+      sorted.sort((a, b) => {
+        const comparison = naturalCollator.compare(
+          a.description || "",
+          b.description || ""
+        );
+
+        if (comparison !== 0) {
+          return comparison;
+        }
+
+        return compareSupplierCode(a, b);
+      });
+    }
+
+    if (warehouseSort === "stock") {
+      sorted.sort((a, b) => {
+        const stockComparison =
+          Number(a.stock || 0) - Number(b.stock || 0);
+
+        if (stockComparison !== 0) {
+          return stockComparison;
+        }
+
+        return compareSupplierCode(a, b);
+      });
+    }
+
+    return sorted;
+  }
+
+  function getWarehouseSortLabel() {
+    if (warehouseSort === "description") {
+      return "Descrizione A-Z";
+    }
+
+    if (warehouseSort === "stock") {
+      return "Giacenza crescente";
+    }
+
+    return "Codice articolo crescente";
+  }
+
   function generateDetailedPdf() {
     if (items.length === 0) {
       alert("Non ci sono articoli da stampare.");
@@ -172,11 +282,9 @@ export default function SupplierDetail({
       format: "a4",
     });
 
-    const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
 
     const marginLeft = 10;
-    const marginRight = 10;
 
     const columns = [
       { label: "Codice articolo", width: 30 },
@@ -206,6 +314,7 @@ export default function SupplierDetail({
       y = 38;
 
       doc.setFillColor(235, 235, 235);
+
       doc.rect(
         marginLeft,
         y,
@@ -270,6 +379,7 @@ export default function SupplierDetail({
       }
 
       doc.setDrawColor(215);
+
       doc.line(
         marginLeft,
         y + rowHeight,
@@ -373,13 +483,21 @@ export default function SupplierDetail({
       return;
     }
 
+    /*
+      Qui applichiamo l'ordinamento scelto
+      dall'utente prima di creare il PDF.
+    */
+    const warehouseItems =
+      getWarehouseSortedItems();
+
     const doc = new jsPDF({
       orientation: "landscape",
       unit: "mm",
       format: "a4",
     });
 
-    const pageHeight = doc.internal.pageSize.getHeight();
+    const pageHeight =
+      doc.internal.pageSize.getHeight();
 
     const marginLeft = 14;
 
@@ -403,7 +521,7 @@ export default function SupplierDetail({
       drawPdfHeader(
         doc,
         `MAGAZZINO - ${supplierName.toUpperCase()}`,
-        "Lista operativa magazziniere"
+        `Lista operativa magazziniere - Ordine: ${getWarehouseSortLabel()}`
       );
 
       y = 38;
@@ -446,18 +564,22 @@ export default function SupplierDetail({
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8.5);
 
-    items.forEach((item) => {
-      const descriptionLines = doc.splitTextToSize(
-        item.description || "-",
-        columns[2].width - 4
-      );
+    warehouseItems.forEach((item) => {
+      const descriptionLines =
+        doc.splitTextToSize(
+          item.description || "-",
+          columns[2].width - 4
+        );
 
       const rowHeight = Math.max(
         9,
         descriptionLines.length * 4.3 + 3
       );
 
-      if (y + rowHeight > pageHeight - 18) {
+      if (
+        y + rowHeight >
+        pageHeight - 18
+      ) {
         newPage();
       }
 
@@ -482,7 +604,9 @@ export default function SupplierDetail({
         y + rowHeight
       );
 
-      const values: Array<string | string[]> = [
+      const values: Array<
+        string | string[]
+      > = [
         item.supplier_code || "-",
         item.code || "-",
         descriptionLines,
@@ -518,7 +642,10 @@ export default function SupplierDetail({
       y += rowHeight;
     });
 
-    if (y + 15 > pageHeight - 10) {
+    if (
+      y + 15 >
+      pageHeight - 10
+    ) {
       doc.addPage();
 
       drawPdfHeader(
@@ -536,17 +663,27 @@ export default function SupplierDetail({
     doc.setFontSize(10);
 
     doc.text(
-      `Articoli totali: ${items.length}`,
+      `Articoli totali: ${warehouseItems.length}`,
       marginLeft,
       y
     );
 
     addPageNumbers(doc);
 
+    let sortFileName = "codice";
+
+    if (warehouseSort === "description") {
+      sortFileName = "descrizione";
+    }
+
+    if (warehouseSort === "stock") {
+      sortFileName = "giacenza";
+    }
+
     doc.save(
       `Magazzino_${safeFileName(
         supplierName
-      )}_magazziniere.pdf`
+      )}_magazziniere_${sortFileName}.pdf`
     );
   }
 
@@ -637,6 +774,7 @@ export default function SupplierDetail({
             display: "flex",
             gap: 10,
             flexWrap: "wrap",
+            alignItems: "center",
           }}
         >
           <Link
@@ -646,11 +784,57 @@ export default function SupplierDetail({
             ← Fornitori
           </Link>
 
+          {/* ORDINAMENTO PDF MAGAZZINIERE */}
+
+          <select
+            value={warehouseSort}
+            onChange={(e) =>
+              setWarehouseSort(
+                e.target.value as WarehouseSort
+              )
+            }
+            disabled={loading}
+            title="Scegli come ordinare il PDF magazziniere"
+            style={{
+              padding: "11px 12px",
+              borderRadius: 8,
+              border:
+                "1px solid var(--border-color)",
+              background:
+                "var(--input-bg)",
+              color:
+                "var(--foreground)",
+              fontWeight: 700,
+              cursor: loading
+                ? "not-allowed"
+                : "pointer",
+              outline: "none",
+            }}
+          >
+            <option value="supplier_code">
+              Codice articolo crescente
+            </option>
+
+            <option value="description">
+              Descrizione A → Z
+            </option>
+
+            <option value="stock">
+              Giacenza crescente
+            </option>
+          </select>
+
           <button
             type="button"
             onClick={generateWarehousePdf}
             disabled={loading}
-            style={warehousePdfButton}
+            style={{
+              ...warehousePdfButton,
+              opacity: loading ? 0.5 : 1,
+              cursor: loading
+                ? "not-allowed"
+                : "pointer",
+            }}
           >
             PDF magazziniere
           </button>
@@ -659,7 +843,13 @@ export default function SupplierDetail({
             type="button"
             onClick={generateDetailedPdf}
             disabled={loading}
-            style={detailedPdfButton}
+            style={{
+              ...detailedPdfButton,
+              opacity: loading ? 0.5 : 1,
+              cursor: loading
+                ? "not-allowed"
+                : "pointer",
+            }}
           >
             PDF dettagliato
           </button>
@@ -719,7 +909,8 @@ export default function SupplierDetail({
           padding: 14,
           marginBottom: 16,
           background: "var(--card)",
-          border: "1px solid var(--border-color)",
+          border:
+            "1px solid var(--border-color)",
           borderRadius: 12,
         }}
       >
@@ -743,15 +934,21 @@ export default function SupplierDetail({
 
           <input
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) =>
+              setSearch(e.target.value)
+            }
             placeholder="Cerca codice, scanner o descrizione..."
             style={{
               width: "100%",
               boxSizing: "border-box",
-              padding: "11px 14px 11px 38px",
-              background: "var(--input-bg)",
-              color: "var(--foreground)",
-              border: "1px solid var(--border-color)",
+              padding:
+                "11px 14px 11px 38px",
+              background:
+                "var(--input-bg)",
+              color:
+                "var(--foreground)",
+              border:
+                "1px solid var(--border-color)",
               borderRadius: 8,
               outline: "none",
               fontSize: 14,
@@ -761,7 +958,9 @@ export default function SupplierDetail({
 
         <button
           type="button"
-          onClick={() => setOnlyLowStock(!onlyLowStock)}
+          onClick={() =>
+            setOnlyLowStock(!onlyLowStock)
+          }
           style={{
             padding: "11px 15px",
             borderRadius: 8,
@@ -774,7 +973,8 @@ export default function SupplierDetail({
               ? "rgba(239, 68, 68, 0.15)"
               : "var(--input-bg)",
 
-            color: "var(--foreground)",
+            color:
+              "var(--foreground)",
             cursor: "pointer",
             fontWeight: 700,
             whiteSpace: "nowrap",
@@ -799,7 +999,8 @@ export default function SupplierDetail({
 
       <div
         style={{
-          border: "1px solid var(--border-color)",
+          border:
+            "1px solid var(--border-color)",
           borderRadius: 12,
           overflow: "hidden",
           background: "var(--card)",
@@ -814,13 +1015,15 @@ export default function SupplierDetail({
             style={{
               width: "100%",
               minWidth: 1200,
-              borderCollapse: "collapse",
+              borderCollapse:
+                "collapse",
             }}
           >
             <thead>
               <tr
                 style={{
-                  background: "var(--table-head)",
+                  background:
+                    "var(--table-head)",
                 }}
               >
                 <th style={headerStyle}>
@@ -878,7 +1081,8 @@ export default function SupplierDetail({
                 </tr>
               ) : (
                 filteredItems.map((item) => {
-                  const lowStock = isLowStock(item);
+                  const lowStock =
+                    isLowStock(item);
 
                   return (
                     <tr
@@ -887,9 +1091,10 @@ export default function SupplierDetail({
                         borderBottom:
                           "1px solid var(--border-color)",
 
-                        background: lowStock
-                          ? "rgba(239, 68, 68, 0.08)"
-                          : "transparent",
+                        background:
+                          lowStock
+                            ? "rgba(239, 68, 68, 0.08)"
+                            : "transparent",
                       }}
                     >
                       <td style={cellStyle}>
@@ -897,20 +1102,24 @@ export default function SupplierDetail({
                           href={`/items/${item.id}`}
                           style={{
                             color: "inherit",
-                            textDecoration: "none",
+                            textDecoration:
+                              "none",
                             fontWeight: 750,
                           }}
                         >
-                          {item.supplier_code || "-"}
+                          {item.supplier_code ||
+                            "-"}
                         </Link>
                       </td>
 
                       <td style={cellStyle}>
                         <span
                           style={{
-                            fontFamily: "monospace",
+                            fontFamily:
+                              "monospace",
                             fontSize: 13,
-                            padding: "4px 7px",
+                            padding:
+                              "4px 7px",
                             border:
                               "1px solid var(--border-color)",
                             borderRadius: 5,
@@ -927,21 +1136,27 @@ export default function SupplierDetail({
                           href={`/items/${item.id}`}
                           style={{
                             color: "inherit",
-                            textDecoration: "none",
+                            textDecoration:
+                              "none",
                           }}
                         >
-                          {item.description || "-"}
+                          {item.description ||
+                            "-"}
                         </Link>
                       </td>
 
                       <td style={rightCellStyle}>
-                        {formatEuro(item.price)}
+                        {formatEuro(
+                          item.price
+                        )}
                       </td>
 
                       <td style={centerCellStyle}>
                         <StockBadge
                           stock={item.stock}
-                          minStock={item.min_stock}
+                          minStock={
+                            item.min_stock
+                          }
                         />
                       </td>
 
@@ -955,9 +1170,11 @@ export default function SupplierDetail({
                         {item.on_order > 0 ? (
                           <span
                             style={{
-                              display: "inline-block",
+                              display:
+                                "inline-block",
                               minWidth: 34,
-                              padding: "4px 9px",
+                              padding:
+                                "4px 9px",
                               borderRadius: 20,
                               background:
                                 "rgba(59, 130, 246, 0.15)",
@@ -980,7 +1197,8 @@ export default function SupplierDetail({
                       <td style={rightCellStyle}>
                         <strong>
                           {formatEuro(
-                            item.stock * item.price
+                            item.stock *
+                              item.price
                           )}
                         </strong>
                       </td>
@@ -1039,7 +1257,8 @@ function SummaryCard({
       <div
         style={{
           fontSize: 12,
-          textTransform: "uppercase",
+          textTransform:
+            "uppercase",
           letterSpacing: 0.8,
           fontWeight: 700,
           opacity: 0.55,
@@ -1144,10 +1363,16 @@ function formatEuro(value: number) {
 const primaryButton = {
   display: "inline-block",
   padding: "11px 16px",
+
   borderRadius: 8,
-  border: "1px solid var(--foreground)",
-  background: "var(--foreground)",
-  color: "var(--background)",
+  border:
+    "1px solid var(--foreground)",
+
+  background:
+    "var(--foreground)",
+  color:
+    "var(--background)",
+
   textDecoration: "none",
   fontWeight: 750,
 };
@@ -1155,10 +1380,16 @@ const primaryButton = {
 const secondaryButton = {
   display: "inline-block",
   padding: "11px 16px",
+
   borderRadius: 8,
-  border: "1px solid var(--border-color)",
-  background: "var(--card)",
-  color: "var(--foreground)",
+  border:
+    "1px solid var(--border-color)",
+
+  background:
+    "var(--card)",
+  color:
+    "var(--foreground)",
+
   textDecoration: "none",
   fontWeight: 650,
 };
@@ -1166,10 +1397,16 @@ const secondaryButton = {
 const warehousePdfButton = {
   display: "inline-block",
   padding: "11px 16px",
+
   borderRadius: 8,
-  border: "1px solid var(--border-color)",
-  background: "var(--card)",
-  color: "var(--foreground)",
+  border:
+    "1px solid var(--border-color)",
+
+  background:
+    "var(--card)",
+  color:
+    "var(--foreground)",
+
   cursor: "pointer",
   fontWeight: 750,
 };
@@ -1177,10 +1414,17 @@ const warehousePdfButton = {
 const detailedPdfButton = {
   display: "inline-block",
   padding: "11px 16px",
+
   borderRadius: 8,
-  border: "1px solid rgba(59,130,246,0.45)",
-  background: "rgba(59,130,246,0.12)",
-  color: "var(--foreground)",
+  border:
+    "1px solid rgba(59,130,246,0.45)",
+
+  background:
+    "rgba(59,130,246,0.12)",
+
+  color:
+    "var(--foreground)",
+
   cursor: "pointer",
   fontWeight: 750,
 };
@@ -1190,7 +1434,8 @@ const headerStyle = {
   textAlign: "left" as const,
 
   fontSize: 12,
-  textTransform: "uppercase" as const,
+  textTransform:
+    "uppercase" as const,
   letterSpacing: 0.5,
 
   opacity: 0.7,
@@ -1198,7 +1443,8 @@ const headerStyle = {
   borderBottom:
     "1px solid var(--border-color)",
 
-  whiteSpace: "nowrap" as const,
+  whiteSpace:
+    "nowrap" as const,
 };
 
 const headerCenterStyle = {
@@ -1224,7 +1470,8 @@ const centerCellStyle = {
 const rightCellStyle = {
   ...cellStyle,
   textAlign: "right" as const,
-  whiteSpace: "nowrap" as const,
+  whiteSpace:
+    "nowrap" as const,
 };
 
 const emptyStyle = {

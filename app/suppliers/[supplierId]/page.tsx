@@ -2,6 +2,7 @@
 
 import React, { use, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import jsPDF from "jspdf";
 import { supabase } from "../../../lib/supabaseClient";
 
 type Item = {
@@ -117,6 +118,464 @@ export default function SupplierDetail({
     });
   }, [items, search, onlyLowStock]);
 
+  function getPdfDate() {
+    return new Intl.DateTimeFormat("it-IT", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    }).format(new Date());
+  }
+
+  function safeFileName(value: string) {
+    return value
+      .trim()
+      .replace(/[\\/:*?"<>|]/g, "-")
+      .replace(/\s+/g, "_");
+  }
+
+  function formatPdfEuro(value: number) {
+    return new Intl.NumberFormat("it-IT", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(Number(value || 0)) + " EUR";
+  }
+
+  function drawPdfHeader(
+    doc: jsPDF,
+    title: string,
+    subtitle: string
+  ) {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(18);
+
+    doc.text(title, 14, 16);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+
+    doc.text(subtitle, 14, 23);
+    doc.text(`Data: ${getPdfDate()}`, 14, 28);
+
+    doc.setDrawColor(180);
+    doc.line(14, 32, 283, 32);
+  }
+
+  function generateDetailedPdf() {
+    if (items.length === 0) {
+      alert("Non ci sono articoli da stampare.");
+      return;
+    }
+
+    const doc = new jsPDF({
+      orientation: "landscape",
+      unit: "mm",
+      format: "a4",
+    });
+
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+
+    const marginLeft = 10;
+    const marginRight = 10;
+
+    const columns = [
+      { label: "Codice articolo", width: 30 },
+      { label: "Codice scanner", width: 34 },
+      { label: "Descrizione", width: 78 },
+      { label: "Prezzo", width: 27 },
+      { label: "Giacenza", width: 23 },
+      { label: "Scorta min.", width: 24 },
+      { label: "In ordine", width: 23 },
+      { label: "Valore", width: 31 },
+    ];
+
+    const totalTableWidth = columns.reduce(
+      (sum, column) => sum + column.width,
+      0
+    );
+
+    let y = 38;
+
+    function drawHeader() {
+      drawPdfHeader(
+        doc,
+        `MAGAZZINO - ${supplierName.toUpperCase()}`,
+        "Report dettagliato con valori economici"
+      );
+
+      y = 38;
+
+      doc.setFillColor(235, 235, 235);
+      doc.rect(
+        marginLeft,
+        y,
+        totalTableWidth,
+        9,
+        "F"
+      );
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(7.5);
+
+      let x = marginLeft;
+
+      columns.forEach((column) => {
+        doc.text(
+          column.label,
+          x + 1.5,
+          y + 5.7
+        );
+
+        x += column.width;
+      });
+
+      y += 9;
+    }
+
+    function newPage() {
+      doc.addPage();
+      drawHeader();
+    }
+
+    drawHeader();
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.5);
+
+    items.forEach((item) => {
+      const descriptionLines = doc.splitTextToSize(
+        item.description || "-",
+        columns[2].width - 3
+      );
+
+      const rowHeight = Math.max(
+        8,
+        descriptionLines.length * 4 + 3
+      );
+
+      if (y + rowHeight > pageHeight - 20) {
+        newPage();
+      }
+
+      if (isLowStock(item)) {
+        doc.setFillColor(255, 242, 242);
+
+        doc.rect(
+          marginLeft,
+          y,
+          totalTableWidth,
+          rowHeight,
+          "F"
+        );
+      }
+
+      doc.setDrawColor(215);
+      doc.line(
+        marginLeft,
+        y + rowHeight,
+        marginLeft + totalTableWidth,
+        y + rowHeight
+      );
+
+      const values: Array<string | string[]> = [
+        item.supplier_code || "-",
+        item.code || "-",
+        descriptionLines,
+        formatPdfEuro(item.price),
+        String(item.stock),
+        item.min_stock > 0
+          ? String(item.min_stock)
+          : "-",
+        item.on_order > 0
+          ? String(item.on_order)
+          : "-",
+        formatPdfEuro(item.stock * item.price),
+      ];
+
+      let x = marginLeft;
+
+      values.forEach((value, index) => {
+        if (Array.isArray(value)) {
+          doc.text(
+            value,
+            x + 1.5,
+            y + 4.7
+          );
+        } else {
+          doc.text(
+            value,
+            x + 1.5,
+            y + 4.7
+          );
+        }
+
+        x += columns[index].width;
+      });
+
+      y += rowHeight;
+    });
+
+    if (y + 30 > pageHeight - 10) {
+      doc.addPage();
+
+      drawPdfHeader(
+        doc,
+        `MAGAZZINO - ${supplierName.toUpperCase()}`,
+        "Riepilogo"
+      );
+
+      y = 42;
+    } else {
+      y += 8;
+    }
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+
+    doc.text(
+      `Articoli totali: ${items.length}`,
+      marginLeft,
+      y
+    );
+
+    y += 6;
+
+    doc.text(
+      `Valore totale magazzino: ${formatPdfEuro(
+        totals.totalMagazzino
+      )}`,
+      marginLeft,
+      y
+    );
+
+    y += 6;
+
+    doc.text(
+      `Valore totale merce in ordine: ${formatPdfEuro(
+        totals.totalOrdine
+      )}`,
+      marginLeft,
+      y
+    );
+
+    addPageNumbers(doc);
+
+    doc.save(
+      `Magazzino_${safeFileName(
+        supplierName
+      )}_dettagliato.pdf`
+    );
+  }
+
+  function generateWarehousePdf() {
+    if (items.length === 0) {
+      alert("Non ci sono articoli da stampare.");
+      return;
+    }
+
+    const doc = new jsPDF({
+      orientation: "landscape",
+      unit: "mm",
+      format: "a4",
+    });
+
+    const pageHeight = doc.internal.pageSize.getHeight();
+
+    const marginLeft = 14;
+
+    const columns = [
+      { label: "Codice articolo", width: 38 },
+      { label: "Codice scanner", width: 44 },
+      { label: "Descrizione", width: 112 },
+      { label: "Giacenza", width: 28 },
+      { label: "Scorta min.", width: 30 },
+      { label: "In ordine", width: 29 },
+    ];
+
+    const totalTableWidth = columns.reduce(
+      (sum, column) => sum + column.width,
+      0
+    );
+
+    let y = 38;
+
+    function drawHeader() {
+      drawPdfHeader(
+        doc,
+        `MAGAZZINO - ${supplierName.toUpperCase()}`,
+        "Lista operativa magazziniere"
+      );
+
+      y = 38;
+
+      doc.setFillColor(235, 235, 235);
+
+      doc.rect(
+        marginLeft,
+        y,
+        totalTableWidth,
+        10,
+        "F"
+      );
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8.5);
+
+      let x = marginLeft;
+
+      columns.forEach((column) => {
+        doc.text(
+          column.label,
+          x + 2,
+          y + 6.3
+        );
+
+        x += column.width;
+      });
+
+      y += 10;
+    }
+
+    function newPage() {
+      doc.addPage();
+      drawHeader();
+    }
+
+    drawHeader();
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.5);
+
+    items.forEach((item) => {
+      const descriptionLines = doc.splitTextToSize(
+        item.description || "-",
+        columns[2].width - 4
+      );
+
+      const rowHeight = Math.max(
+        9,
+        descriptionLines.length * 4.3 + 3
+      );
+
+      if (y + rowHeight > pageHeight - 18) {
+        newPage();
+      }
+
+      if (isLowStock(item)) {
+        doc.setFillColor(255, 242, 242);
+
+        doc.rect(
+          marginLeft,
+          y,
+          totalTableWidth,
+          rowHeight,
+          "F"
+        );
+      }
+
+      doc.setDrawColor(215);
+
+      doc.line(
+        marginLeft,
+        y + rowHeight,
+        marginLeft + totalTableWidth,
+        y + rowHeight
+      );
+
+      const values: Array<string | string[]> = [
+        item.supplier_code || "-",
+        item.code || "-",
+        descriptionLines,
+        String(item.stock),
+        item.min_stock > 0
+          ? String(item.min_stock)
+          : "-",
+        item.on_order > 0
+          ? String(item.on_order)
+          : "-",
+      ];
+
+      let x = marginLeft;
+
+      values.forEach((value, index) => {
+        if (Array.isArray(value)) {
+          doc.text(
+            value,
+            x + 2,
+            y + 5.2
+          );
+        } else {
+          doc.text(
+            value,
+            x + 2,
+            y + 5.2
+          );
+        }
+
+        x += columns[index].width;
+      });
+
+      y += rowHeight;
+    });
+
+    if (y + 15 > pageHeight - 10) {
+      doc.addPage();
+
+      drawPdfHeader(
+        doc,
+        `MAGAZZINO - ${supplierName.toUpperCase()}`,
+        "Riepilogo"
+      );
+
+      y = 42;
+    } else {
+      y += 8;
+    }
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+
+    doc.text(
+      `Articoli totali: ${items.length}`,
+      marginLeft,
+      y
+    );
+
+    addPageNumbers(doc);
+
+    doc.save(
+      `Magazzino_${safeFileName(
+        supplierName
+      )}_magazziniere.pdf`
+    );
+  }
+
+  function addPageNumbers(doc: jsPDF) {
+    const pages = doc.getNumberOfPages();
+
+    for (let i = 1; i <= pages; i++) {
+      doc.setPage(i);
+
+      const pageWidth =
+        doc.internal.pageSize.getWidth();
+
+      const pageHeight =
+        doc.internal.pageSize.getHeight();
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+
+      doc.text(
+        `Pagina ${i} di ${pages}`,
+        pageWidth - 14,
+        pageHeight - 7,
+        {
+          align: "right",
+        }
+      );
+    }
+  }
+
   return (
     <div
       style={{
@@ -187,6 +646,24 @@ export default function SupplierDetail({
             ← Fornitori
           </Link>
 
+          <button
+            type="button"
+            onClick={generateWarehousePdf}
+            disabled={loading}
+            style={warehousePdfButton}
+          >
+            PDF magazziniere
+          </button>
+
+          <button
+            type="button"
+            onClick={generateDetailedPdf}
+            disabled={loading}
+            style={detailedPdfButton}
+          >
+            PDF dettagliato
+          </button>
+
           <Link
             href={`/suppliers/${supplierId}/new-item`}
             style={primaryButton}
@@ -209,13 +686,13 @@ export default function SupplierDetail({
       >
         <SummaryCard
           title="Valore magazzino"
-          value={`${formatEuro(totals.totalMagazzino)}`}
+          value={formatEuro(totals.totalMagazzino)}
           subtitle="Valore della giacenza attuale"
         />
 
         <SummaryCard
           title="Valore in ordine"
-          value={`${formatEuro(totals.totalOrdine)}`}
+          value={formatEuro(totals.totalOrdine)}
           subtitle="Merce attualmente in ordine"
         />
 
@@ -239,10 +716,8 @@ export default function SupplierDetail({
           gap: 12,
           alignItems: "center",
           flexWrap: "wrap",
-
           padding: 14,
           marginBottom: 16,
-
           background: "var(--card)",
           border: "1px solid var(--border-color)",
           borderRadius: 12,
@@ -274,13 +749,10 @@ export default function SupplierDetail({
               width: "100%",
               boxSizing: "border-box",
               padding: "11px 14px 11px 38px",
-
               background: "var(--input-bg)",
               color: "var(--foreground)",
-
               border: "1px solid var(--border-color)",
               borderRadius: 8,
-
               outline: "none",
               fontSize: 14,
             }}
@@ -420,8 +892,6 @@ export default function SupplierDetail({
                           : "transparent",
                       }}
                     >
-                      {/* CODICE ARTICOLO */}
-
                       <td style={cellStyle}>
                         <Link
                           href={`/items/${item.id}`}
@@ -435,21 +905,15 @@ export default function SupplierDetail({
                         </Link>
                       </td>
 
-                      {/* SCANNER */}
-
                       <td style={cellStyle}>
                         <span
                           style={{
                             fontFamily: "monospace",
                             fontSize: 13,
-
                             padding: "4px 7px",
-
                             border:
                               "1px solid var(--border-color)",
-
                             borderRadius: 5,
-
                             background:
                               "var(--input-bg)",
                           }}
@@ -457,8 +921,6 @@ export default function SupplierDetail({
                           {item.code || "-"}
                         </span>
                       </td>
-
-                      {/* DESCRIZIONE */}
 
                       <td style={cellStyle}>
                         <Link
@@ -472,13 +934,9 @@ export default function SupplierDetail({
                         </Link>
                       </td>
 
-                      {/* PREZZO */}
-
                       <td style={rightCellStyle}>
                         {formatEuro(item.price)}
                       </td>
-
-                      {/* GIACENZA */}
 
                       <td style={centerCellStyle}>
                         <StockBadge
@@ -487,15 +945,11 @@ export default function SupplierDetail({
                         />
                       </td>
 
-                      {/* MIN STOCK */}
-
                       <td style={centerCellStyle}>
                         {item.min_stock > 0
                           ? item.min_stock
                           : "—"}
                       </td>
-
-                      {/* IN ORDINE */}
 
                       <td style={centerCellStyle}>
                         {item.on_order > 0 ? (
@@ -505,10 +959,8 @@ export default function SupplierDetail({
                               minWidth: 34,
                               padding: "4px 9px",
                               borderRadius: 20,
-
                               background:
                                 "rgba(59, 130, 246, 0.15)",
-
                               fontWeight: 800,
                             }}
                           >
@@ -524,8 +976,6 @@ export default function SupplierDetail({
                           </span>
                         )}
                       </td>
-
-                      {/* VALORE */}
 
                       <td style={rightCellStyle}>
                         <strong>
@@ -694,13 +1144,10 @@ function formatEuro(value: number) {
 const primaryButton = {
   display: "inline-block",
   padding: "11px 16px",
-
   borderRadius: 8,
   border: "1px solid var(--foreground)",
-
   background: "var(--foreground)",
   color: "var(--background)",
-
   textDecoration: "none",
   fontWeight: 750,
 };
@@ -708,15 +1155,34 @@ const primaryButton = {
 const secondaryButton = {
   display: "inline-block",
   padding: "11px 16px",
-
   borderRadius: 8,
   border: "1px solid var(--border-color)",
-
   background: "var(--card)",
   color: "var(--foreground)",
-
   textDecoration: "none",
   fontWeight: 650,
+};
+
+const warehousePdfButton = {
+  display: "inline-block",
+  padding: "11px 16px",
+  borderRadius: 8,
+  border: "1px solid var(--border-color)",
+  background: "var(--card)",
+  color: "var(--foreground)",
+  cursor: "pointer",
+  fontWeight: 750,
+};
+
+const detailedPdfButton = {
+  display: "inline-block",
+  padding: "11px 16px",
+  borderRadius: 8,
+  border: "1px solid rgba(59,130,246,0.45)",
+  background: "rgba(59,130,246,0.12)",
+  color: "var(--foreground)",
+  cursor: "pointer",
+  fontWeight: 750,
 };
 
 const headerStyle = {

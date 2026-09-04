@@ -38,6 +38,12 @@ export default function CatalogoPage() {
   const [selectedSupplier, setSelectedSupplier] =
     useState<Supplier | null>(null);
 
+  /*
+    RICERCA GLOBALE
+
+    Cerca sempre dentro TUTTO il catalogo,
+    indipendentemente dal fornitore aperto.
+  */
   const [search, setSearch] = useState("");
 
   const [loading, setLoading] = useState(true);
@@ -126,7 +132,9 @@ export default function CatalogoPage() {
       const cleanItems: Item[] =
         (itemsData || []).map((item) => ({
           id: String(item.id),
+
           supplier_id: String(item.supplier_id),
+
           code: String(item.code || ""),
 
           supplier_code: item.supplier_code
@@ -190,9 +198,6 @@ export default function CatalogoPage() {
 
   /*
     SCARICA FISICAMENTE LE FOTO NELLA CACHE
-
-    mode: "no-cors" è importante perché molte
-    immagini arrivano da siti esterni.
   */
   async function downloadAllPhotos(allItems: Item[]) {
     if (!("caches" in window)) {
@@ -226,7 +231,11 @@ export default function CatalogoPage() {
     let saved = 0;
     let failed = 0;
 
-    for (let index = 0; index < imageUrls.length; index++) {
+    for (
+      let index = 0;
+      index < imageUrls.length;
+      index++
+    ) {
       const url = imageUrls[index];
 
       setPhotoProgress(
@@ -234,10 +243,6 @@ export default function CatalogoPage() {
       );
 
       try {
-        /*
-          Se la foto è già presente,
-          non la riscarichiamo.
-        */
         const existing = await cache.match(url, {
           ignoreVary: true,
         });
@@ -247,13 +252,6 @@ export default function CatalogoPage() {
           continue;
         }
 
-        /*
-          Richiesta NO-CORS.
-
-          Permette di salvare anche immagini
-          provenienti da siti che non consentono
-          normali richieste JavaScript cross-domain.
-        */
         const request = new Request(url, {
           method: "GET",
           mode: "no-cors",
@@ -263,11 +261,6 @@ export default function CatalogoPage() {
 
         const response = await fetch(request);
 
-        /*
-          Una risposta "opaque" è normale
-          con mode no-cors e può essere salvata
-          nella Cache Storage.
-        */
         if (
           response.ok ||
           response.type === "opaque"
@@ -299,14 +292,132 @@ export default function CatalogoPage() {
   }
 
   /*
-    ARTICOLI DEL FORNITORE + RICERCA
+    MAPPA FORNITORI
+
+    Serve per sapere subito a quale fornitore
+    appartiene ogni articolo.
+  */
+  const supplierMap = useMemo(() => {
+    const map = new Map<string, Supplier>();
+
+    suppliers.forEach((supplier) => {
+      map.set(supplier.id, supplier);
+    });
+
+    return map;
+  }, [suppliers]);
+
+  /*
+    RICERCA GLOBALE
+
+    Cerca:
+    - codice articolo fornitore
+    - codice scanner
+    - descrizione
+
+    SU TUTTI I FORNITORI.
+  */
+  const globalSearchResults = useMemo(() => {
+    const text =
+      search.trim().toLowerCase();
+
+    if (!text) {
+      return [];
+    }
+
+    const collator = new Intl.Collator("it", {
+      numeric: true,
+      sensitivity: "base",
+    });
+
+    return items
+      .filter((item) => {
+        return (
+          item.supplier_code
+            ?.toLowerCase()
+            .includes(text) ||
+
+          item.code
+            .toLowerCase()
+            .includes(text) ||
+
+          item.description
+            .toLowerCase()
+            .includes(text)
+        );
+      })
+      .sort((a, b) => {
+        const supplierA =
+          supplierMap.get(a.supplier_id)?.name || "";
+
+        const supplierB =
+          supplierMap.get(b.supplier_id)?.name || "";
+
+        const supplierCompare =
+          collator.compare(
+            supplierA,
+            supplierB
+          );
+
+        if (supplierCompare !== 0) {
+          return supplierCompare;
+        }
+
+        return collator.compare(
+          a.supplier_code || a.code,
+          b.supplier_code || b.code
+        );
+      });
+  }, [items, search, supplierMap]);
+
+  /*
+    RISULTATI GLOBALI RAGGRUPPATI
+    PER FORNITORE
+  */
+  const groupedGlobalResults = useMemo(() => {
+    const groups = new Map<
+      string,
+      {
+        supplier: Supplier;
+        items: Item[];
+      }
+    >();
+
+    globalSearchResults.forEach((item) => {
+      const supplier =
+        supplierMap.get(item.supplier_id);
+
+      if (!supplier) {
+        return;
+      }
+
+      const existing =
+        groups.get(supplier.id);
+
+      if (existing) {
+        existing.items.push(item);
+      } else {
+        groups.set(supplier.id, {
+          supplier,
+          items: [item],
+        });
+      }
+    });
+
+    return Array.from(groups.values());
+  }, [globalSearchResults, supplierMap]);
+
+  /*
+    ARTICOLI DEL FORNITORE SELEZIONATO
+
+    Qui NON usiamo la ricerca globale.
+    Quando la barra di ricerca è vuota,
+    mostriamo tutti gli articoli del fornitore.
   */
   const supplierItems = useMemo(() => {
     if (!selectedSupplier) {
       return [];
     }
-
-    const text = search.trim().toLowerCase();
 
     const collator = new Intl.Collator("it", {
       numeric: true,
@@ -318,32 +429,13 @@ export default function CatalogoPage() {
         (item) =>
           item.supplier_id === selectedSupplier.id
       )
-      .filter((item) => {
-        if (!text) {
-          return true;
-        }
-
-        return (
-          item.supplier_code
-            ?.toLowerCase()
-            .includes(text) ||
-
-          item.code
-            ?.toLowerCase()
-            .includes(text) ||
-
-          item.description
-            ?.toLowerCase()
-            .includes(text)
-        );
-      })
       .sort((a, b) =>
         collator.compare(
           a.supplier_code || "",
           b.supplier_code || ""
         )
       );
-  }, [items, selectedSupplier, search]);
+  }, [items, selectedSupplier]);
 
   /*
     CONTEGGIO ARTICOLI PER FORNITORE
@@ -359,18 +451,6 @@ export default function CatalogoPage() {
     return counts;
   }, [items]);
 
-  /*
-    APERTURA FOTO
-
-    NON facciamo fetch qui.
-
-    L'immagine viene mostrata direttamente
-    usando il suo URL originale.
-
-    Se siamo offline, il service worker
-    intercetta la richiesta e restituisce
-    la foto salvata sul PC.
-  */
   function openItemPhoto(item: Item) {
     setSelectedItem(item);
   }
@@ -381,6 +461,9 @@ export default function CatalogoPage() {
 
   function goBackToSuppliers() {
     setSelectedSupplier(null);
+  }
+
+  function clearSearch() {
     setSearch("");
   }
 
@@ -394,6 +477,9 @@ export default function CatalogoPage() {
     );
   }
 
+  const isSearching =
+    search.trim().length > 0;
+
   return (
     <div style={pageStyle}>
       {/* TESTATA */}
@@ -405,7 +491,7 @@ export default function CatalogoPage() {
           alignItems: "flex-start",
           gap: 20,
           flexWrap: "wrap",
-          marginBottom: 28,
+          marginBottom: 22,
         }}
       >
         <div>
@@ -481,6 +567,123 @@ export default function CatalogoPage() {
         </button>
       </div>
 
+      {/* RICERCA GLOBALE */}
+
+      <div
+        style={{
+          marginBottom: 22,
+          padding: 16,
+
+          border:
+            "1px solid var(--border-color)",
+
+          background:
+            "var(--card)",
+
+          borderRadius: 14,
+        }}
+      >
+        <div
+          style={{
+            fontSize: 13,
+            fontWeight: 850,
+            marginBottom: 8,
+          }}
+        >
+          Cerca in tutto il magazzino
+        </div>
+
+        <div
+          style={{
+            position: "relative",
+          }}
+        >
+          <input
+            value={search}
+            onChange={(e) =>
+              setSearch(e.target.value)
+            }
+            placeholder="Cerca codice articolo, codice scanner o descrizione..."
+            style={{
+              width: "100%",
+              boxSizing: "border-box",
+
+              padding: search
+                ? "15px 50px 15px 16px"
+                : "15px 16px",
+
+              borderRadius: 10,
+
+              border:
+                "1px solid var(--border-color)",
+
+              background:
+                "var(--input-bg)",
+
+              color:
+                "var(--foreground)",
+
+              fontSize: 17,
+              fontWeight: 650,
+
+              outline: "none",
+            }}
+          />
+
+          {search && (
+            <button
+              type="button"
+              onClick={clearSearch}
+              title="Cancella ricerca"
+              style={{
+                position: "absolute",
+                right: 10,
+                top: "50%",
+                transform:
+                  "translateY(-50%)",
+
+                width: 34,
+                height: 34,
+
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+
+                borderRadius: 8,
+
+                border:
+                  "1px solid var(--border-color)",
+
+                background:
+                  "var(--card)",
+
+                color:
+                  "var(--foreground)",
+
+                cursor: "pointer",
+
+                fontSize: 18,
+                fontWeight: 900,
+              }}
+            >
+              ×
+            </button>
+          )}
+        </div>
+
+        <div
+          style={{
+            marginTop: 8,
+            fontSize: 12,
+            opacity: 0.55,
+          }}
+        >
+          {isSearching
+            ? `${globalSearchResults.length} articoli trovati in ${groupedGlobalResults.length} fornitori`
+            : `${items.length} articoli disponibili offline`}
+        </div>
+      </div>
+
       {/* PROGRESSO FOTO */}
 
       {photoProgress && (
@@ -527,9 +730,235 @@ export default function CatalogoPage() {
         </div>
       )}
 
-      {!selectedSupplier ? (
+      {/* =====================================================
+          RICERCA GLOBALE
+      ===================================================== */}
+
+      {isSearching ? (
         <>
-          {/* FORNITORI */}
+          <div
+            style={{
+              marginBottom: 14,
+            }}
+          >
+            <div
+              style={{
+                fontSize: 20,
+                fontWeight: 900,
+              }}
+            >
+              Risultati ricerca
+            </div>
+
+            <div
+              style={{
+                marginTop: 4,
+                fontSize: 13,
+                opacity: 0.55,
+              }}
+            >
+              Ricerca effettuata su tutti i fornitori
+            </div>
+          </div>
+
+          {globalSearchResults.length === 0 ? (
+            <div style={emptyStyle}>
+              <div
+                style={{
+                  fontSize: 19,
+                  fontWeight: 850,
+                  marginBottom: 7,
+                }}
+              >
+                Nessun articolo trovato
+              </div>
+
+              <div
+                style={{
+                  fontSize: 14,
+                  opacity: 0.6,
+                }}
+              >
+                Prova con un altro codice o una parte
+                della descrizione.
+              </div>
+            </div>
+          ) : (
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 18,
+              }}
+            >
+              {groupedGlobalResults.map(
+                (group) => (
+                  <div
+                    key={group.supplier.id}
+                    style={{
+                      border:
+                        "1px solid var(--border-color)",
+
+                      borderRadius: 13,
+
+                      overflow: "hidden",
+
+                      background:
+                        "var(--card)",
+                    }}
+                  >
+                    {/* FORNITORE */}
+
+                    <div
+                      style={{
+                        padding:
+                          "14px 17px",
+
+                        display: "flex",
+
+                        alignItems: "center",
+
+                        justifyContent:
+                          "space-between",
+
+                        gap: 15,
+
+                        background:
+                          "var(--table-head)",
+
+                        borderBottom:
+                          "1px solid var(--border-color)",
+                      }}
+                    >
+                      <div>
+                        <div
+                          style={{
+                            fontSize: 18,
+                            fontWeight: 900,
+                          }}
+                        >
+                          {group.supplier.name}
+                        </div>
+
+                        <div
+                          style={{
+                            marginTop: 3,
+                            fontSize: 11,
+                            opacity: 0.5,
+                          }}
+                        >
+                          {group.items.length}{" "}
+                          {group.items.length === 1
+                            ? "risultato"
+                            : "risultati"}
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSearch("");
+                          setSelectedSupplier(
+                            group.supplier
+                          );
+                        }}
+                        style={smallButtonStyle}
+                      >
+                        Apri fornitore
+                      </button>
+                    </div>
+
+                    {/* RISULTATI */}
+
+                    <div
+                      style={{
+                        overflowX: "auto",
+                      }}
+                    >
+                      <table
+                        style={{
+                          width: "100%",
+                          minWidth: 850,
+
+                          borderCollapse:
+                            "collapse",
+                        }}
+                      >
+                        <thead>
+                          <tr>
+                            <th style={headerStyle}>
+                              Codice articolo
+                            </th>
+
+                            <th style={headerStyle}>
+                              Codice scanner
+                            </th>
+
+                            <th style={headerStyle}>
+                              Descrizione
+                            </th>
+                          </tr>
+                        </thead>
+
+                        <tbody>
+                          {group.items.map(
+                            (item) => (
+                              <tr
+                                key={item.id}
+                                style={{
+                                  borderBottom:
+                                    "1px solid var(--border-color)",
+                                }}
+                              >
+                                <td style={cellStyle}>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      openItemPhoto(
+                                        item
+                                      )
+                                    }
+                                    style={articleButtonStyle}
+                                  >
+                                    {item.supplier_code ||
+                                      "-"}
+                                  </button>
+                                </td>
+
+                                <td style={cellStyle}>
+                                  <span
+                                    style={{
+                                      fontFamily:
+                                        "monospace",
+
+                                      fontWeight: 750,
+                                    }}
+                                  >
+                                    {item.code || "-"}
+                                  </span>
+                                </td>
+
+                                <td style={cellStyle}>
+                                  {item.description ||
+                                    "-"}
+                                </td>
+                              </tr>
+                            )
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )
+              )}
+            </div>
+          )}
+        </>
+      ) : !selectedSupplier ? (
+        <>
+          {/* =================================================
+              FORNITORI
+          ================================================= */}
 
           <div
             style={{
@@ -579,8 +1008,9 @@ export default function CatalogoPage() {
                   key={supplier.id}
                   type="button"
                   onClick={() => {
-                    setSelectedSupplier(supplier);
-                    setSearch("");
+                    setSelectedSupplier(
+                      supplier
+                    );
                   }}
                   style={{
                     textAlign: "left",
@@ -615,7 +1045,9 @@ export default function CatalogoPage() {
                       opacity: 0.55,
                     }}
                   >
-                    {supplierCounts[supplier.id] || 0}{" "}
+                    {supplierCounts[
+                      supplier.id
+                    ] || 0}{" "}
                     articoli
                   </div>
                 </button>
@@ -625,7 +1057,9 @@ export default function CatalogoPage() {
         </>
       ) : (
         <>
-          {/* FORNITORE SELEZIONATO */}
+          {/* =================================================
+              FORNITORE SELEZIONATO
+          ================================================= */}
 
           <button
             type="button"
@@ -634,9 +1068,15 @@ export default function CatalogoPage() {
               marginBottom: 18,
               padding: 0,
               border: 0,
-              background: "transparent",
-              color: "var(--foreground)",
+
+              background:
+                "transparent",
+
+              color:
+                "var(--foreground)",
+
               cursor: "pointer",
+
               fontWeight: 750,
               fontSize: 14,
             }}
@@ -652,7 +1092,9 @@ export default function CatalogoPage() {
             <h2
               style={{
                 margin: 0,
+
                 fontSize: 30,
+
                 fontWeight: 900,
               }}
             >
@@ -662,76 +1104,17 @@ export default function CatalogoPage() {
             <div
               style={{
                 marginTop: 5,
+
                 opacity: 0.55,
+
                 fontSize: 13,
               }}
             >
-              {
-                items.filter(
-                  (item) =>
-                    item.supplier_id ===
-                    selectedSupplier.id
-                ).length
-              }{" "}
-              articoli
+              {supplierItems.length} articoli
             </div>
           </div>
 
-          {/* RICERCA */}
-
-          <div
-            style={{
-              marginBottom: 18,
-              padding: 14,
-
-              border:
-                "1px solid var(--border-color)",
-
-              background:
-                "var(--card)",
-
-              borderRadius: 12,
-            }}
-          >
-            <input
-              autoFocus
-              value={search}
-              onChange={(e) =>
-                setSearch(e.target.value)
-              }
-              placeholder="Cerca codice articolo, codice scanner o descrizione..."
-              style={{
-                width: "100%",
-                boxSizing: "border-box",
-                padding: "14px 16px",
-                borderRadius: 9,
-
-                border:
-                  "1px solid var(--border-color)",
-
-                background:
-                  "var(--input-bg)",
-
-                color:
-                  "var(--foreground)",
-
-                fontSize: 16,
-                outline: "none",
-              }}
-            />
-
-            <div
-              style={{
-                marginTop: 8,
-                fontSize: 12,
-                opacity: 0.55,
-              }}
-            >
-              {supplierItems.length} risultati
-            </div>
-          </div>
-
-          {/* TABELLA */}
+          {/* TABELLA FORNITORE */}
 
           <div
             style={{
@@ -739,6 +1122,7 @@ export default function CatalogoPage() {
                 "1px solid var(--border-color)",
 
               borderRadius: 12,
+
               overflow: "hidden",
 
               background:
@@ -753,6 +1137,7 @@ export default function CatalogoPage() {
               <table
                 style={{
                   width: "100%",
+
                   minWidth: 760,
 
                   borderCollapse:
@@ -787,7 +1172,7 @@ export default function CatalogoPage() {
                         colSpan={3}
                         style={tableEmptyStyle}
                       >
-                        Nessun articolo trovato.
+                        Nessun articolo presente.
                       </td>
                     </tr>
                   ) : (
@@ -799,41 +1184,18 @@ export default function CatalogoPage() {
                             "1px solid var(--border-color)",
                         }}
                       >
-                        {/* CODICE ARTICOLO */}
-
                         <td style={cellStyle}>
                           <button
                             type="button"
                             onClick={() =>
                               openItemPhoto(item)
                             }
-                            style={{
-                              padding: 0,
-                              border: 0,
-
-                              background:
-                                "transparent",
-
-                              color:
-                                "var(--foreground)",
-
-                              cursor: "pointer",
-
-                              fontWeight: 900,
-
-                              textDecoration:
-                                "underline",
-
-                              textUnderlineOffset: 3,
-
-                              fontSize: 15,
-                            }}
+                            style={articleButtonStyle}
                           >
-                            {item.supplier_code || "-"}
+                            {item.supplier_code ||
+                              "-"}
                           </button>
                         </td>
-
-                        {/* SCANNER */}
 
                         <td style={cellStyle}>
                           <span
@@ -848,10 +1210,9 @@ export default function CatalogoPage() {
                           </span>
                         </td>
 
-                        {/* DESCRIZIONE */}
-
                         <td style={cellStyle}>
-                          {item.description || "-"}
+                          {item.description ||
+                            "-"}
                         </td>
                       </tr>
                     ))
@@ -906,8 +1267,6 @@ export default function CatalogoPage() {
                 "1px solid var(--border-color)",
             }}
           >
-            {/* TESTATA FOTO */}
-
             <div
               style={{
                 display: "flex",
@@ -927,7 +1286,8 @@ export default function CatalogoPage() {
                     fontWeight: 900,
                   }}
                 >
-                  {selectedItem.supplier_code || "-"}
+                  {selectedItem.supplier_code ||
+                    "-"}
                 </div>
 
                 <div
@@ -948,7 +1308,8 @@ export default function CatalogoPage() {
                   }}
                 >
                   Scanner:{" "}
-                  {selectedItem.code || "-"}
+                  {selectedItem.code ||
+                    "-"}
                 </div>
               </div>
 
@@ -972,6 +1333,7 @@ export default function CatalogoPage() {
                     "var(--foreground)",
 
                   cursor: "pointer",
+
                   fontSize: 20,
                   fontWeight: 900,
                 }}
@@ -979,8 +1341,6 @@ export default function CatalogoPage() {
                 ×
               </button>
             </div>
-
-            {/* FOTO */}
 
             <div
               style={{
@@ -1003,8 +1363,12 @@ export default function CatalogoPage() {
             >
               {selectedItem.image_url ? (
                 <img
-                  src={selectedItem.image_url}
-                  alt={selectedItem.description}
+                  src={
+                    selectedItem.image_url
+                  }
+                  alt={
+                    selectedItem.description
+                  }
                   style={{
                     display: "block",
                     width: "100%",
@@ -1015,7 +1379,8 @@ export default function CatalogoPage() {
                     const image =
                       event.currentTarget;
 
-                    image.style.display = "none";
+                    image.style.display =
+                      "none";
 
                     const parent =
                       image.parentElement;
@@ -1080,12 +1445,14 @@ const headerStyle = {
     "left" as const,
 
   fontSize: 12,
+
   fontWeight: 850,
 
   textTransform:
     "uppercase" as const,
 
   letterSpacing: 0.6,
+
   opacity: 0.65,
 
   whiteSpace:
@@ -1094,6 +1461,7 @@ const headerStyle = {
 
 const cellStyle = {
   padding: "15px 16px",
+
   fontSize: 15,
 
   verticalAlign:
@@ -1122,4 +1490,49 @@ const tableEmptyStyle = {
     "center" as const,
 
   opacity: 0.55,
+};
+
+const articleButtonStyle = {
+  padding: 0,
+
+  border: 0,
+
+  background:
+    "transparent",
+
+  color:
+    "var(--foreground)",
+
+  cursor: "pointer",
+
+  fontWeight: 900,
+
+  textDecoration:
+    "underline",
+
+  textUnderlineOffset: 3,
+
+  fontSize: 15,
+};
+
+const smallButtonStyle = {
+  padding:
+    "8px 11px",
+
+  borderRadius: 8,
+
+  border:
+    "1px solid var(--border-color)",
+
+  background:
+    "var(--input-bg)",
+
+  color:
+    "var(--foreground)",
+
+  cursor: "pointer",
+
+  fontWeight: 800,
+
+  fontSize: 11,
 };

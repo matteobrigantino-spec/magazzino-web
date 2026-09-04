@@ -1,9 +1,15 @@
-import type { Metadata, Viewport } from "next";
+import type {
+  Metadata,
+  Viewport,
+} from "next";
+
 import PwaRegister from "./PwaRegister";
+import CatalogoNav from "./CatalogoNav";
 
 export const metadata: Metadata = {
   title: "Catalogo Magazzino",
-  description: "Catalogo offline articoli del magazzino",
+  description:
+    "Catalogo offline articoli del magazzino",
   manifest: "/manifest.webmanifest",
 };
 
@@ -19,7 +25,16 @@ export default function CatalogoLayout({
   return (
     <>
       <PwaRegister />
-      {children}
+
+      <CatalogoNav />
+
+      <main
+        style={{
+          padding: "28px 20px 45px",
+        }}
+      >
+        {children}
+      </main>
     </>
   );
 }

@@ -407,6 +407,41 @@ export default function TopBar() {
   ]);
 
   /*
+    RESET RICERCA AD OGNI CAMBIO PAGINA
+
+    Serve anche a evitare che il browser/password manager
+    riutilizzi il nome utente dentro la ricerca globale.
+  */
+  useEffect(() => {
+    if (hideTopBar) {
+      return;
+    }
+
+    setSearch("");
+    setSearchOpen(false);
+
+    setSupplierMenuOpen(
+      false
+    );
+
+    setWarehouseMenuOpen(
+      false
+    );
+
+    if (
+      searchInputRef.current
+    ) {
+      searchInputRef.current.value =
+        "";
+
+      searchInputRef.current.blur();
+    }
+  }, [
+    pathname,
+    hideTopBar,
+  ]);
+
+  /*
     MAPPA FORNITORI
   */
   const supplierMap =
@@ -867,9 +902,18 @@ export default function TopBar() {
                 ref={
                   searchInputRef
                 }
-                type="text"
+                type="search"
+                name="magazzino-global-search"
                 value={
                   search
+                }
+                readOnly={
+                  !searchOpen
+                }
+                onMouseDown={() =>
+                  setSearchOpen(
+                    true
+                  )
                 }
                 onFocus={() =>
                   setSearchOpen(
@@ -896,7 +940,12 @@ export default function TopBar() {
                   );
                 }}
                 placeholder="Cerca articolo, descrizione o fornitore..."
-                autoComplete="off"
+                autoComplete="one-time-code"
+                aria-autocomplete="none"
+                spellCheck={false}
+                data-lpignore="true"
+                data-1p-ignore="true"
+                data-form-type="other"
               />
 
               {search ? (
@@ -1074,6 +1123,32 @@ export default function TopBar() {
                   ? "active"
                   : ""
               }`}
+              onClick={() => {
+                setSearch(
+                  ""
+                );
+
+                setSearchOpen(
+                  false
+                );
+
+                setSupplierMenuOpen(
+                  false
+                );
+
+                setWarehouseMenuOpen(
+                  false
+                );
+
+                if (
+                  searchInputRef.current
+                ) {
+                  searchInputRef.current.value =
+                    "";
+
+                  searchInputRef.current.blur();
+                }
+              }}
             >
               <SettingsIcon />
             </Link>
@@ -1325,6 +1400,30 @@ export default function TopBar() {
 
         .topbar-v2-search input::placeholder {
           color: rgba(255, 255, 255, 0.42);
+        }
+
+        .topbar-v2-search input::-webkit-search-cancel-button {
+          display: none;
+        }
+
+        /*
+          Evita il giallo del browser/password manager
+          nel campo di ricerca globale.
+        */
+        .topbar-v2-search input:-webkit-autofill,
+        .topbar-v2-search input:-webkit-autofill:hover,
+        .topbar-v2-search input:-webkit-autofill:focus,
+        .topbar-v2-search input:autofill {
+          -webkit-text-fill-color: #ffffff !important;
+          caret-color: #ffffff;
+          box-shadow:
+            0 0 0 1000px
+            #0b1524 inset !important;
+          -webkit-box-shadow:
+            0 0 0 1000px
+            #0b1524 inset !important;
+          background-color: #0b1524 !important;
+          color: #ffffff !important;
         }
 
         .topbar-v2-shortcut {

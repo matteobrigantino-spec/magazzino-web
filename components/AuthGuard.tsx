@@ -39,7 +39,8 @@ type PermissionKey =
   | "create_orders"
   | "reminders"
   | "settings"
-  | "manage_users";
+  | "manage_users"
+  | "low_stock";
 
 type Permissions = Partial<
   Record<PermissionKey, boolean>
@@ -76,6 +77,8 @@ const PERMISSION_LABELS: Record<
   settings: "Impostazioni",
   manage_users:
     "Gestione utenti",
+  low_stock:
+    "Articoli da riordinare",
 };
 
 function readLocalPermissions():
@@ -267,6 +270,23 @@ function getRouteAccess(
 
   if (
     pathname.startsWith(
+      "/orders/supplier/"
+    )
+  ) {
+    return {
+      allowed:
+        hasPermission(
+          permissions,
+          role,
+          "create_orders"
+        ),
+      permission:
+        "create_orders",
+    };
+  }
+
+  if (
+    pathname.startsWith(
       "/orders"
     )
   ) {
@@ -284,13 +304,27 @@ function getRouteAccess(
 
   if (
     pathname.startsWith(
+      "/low-stock-report"
+    )
+  ) {
+    return {
+      allowed:
+        hasPermission(
+          permissions,
+          role,
+          "low_stock"
+        ),
+      permission:
+        "low_stock",
+    };
+  }
+
+  if (
+    pathname.startsWith(
       "/suppliers"
     ) ||
     pathname.startsWith(
       "/items"
-    ) ||
-    pathname.startsWith(
-      "/low-stock-report"
     )
   ) {
     return {
@@ -362,6 +396,12 @@ function getFirstAllowedPath(
       permission:
         "orders",
       path: "/orders",
+    },
+    {
+      permission:
+        "low_stock",
+      path:
+        "/low-stock-report",
     },
     {
       permission:

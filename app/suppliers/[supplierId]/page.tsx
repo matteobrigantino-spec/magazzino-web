@@ -127,28 +127,130 @@ export default function SupplierDetail({
         canViewPrices ||
         canViewInventoryValue;
 
-      const itemFields = shouldLoadPrice
-        ? "id, code, supplier_code, description, stock, min_stock, price, on_order, image_url"
-        : "id, code, supplier_code, description, stock, min_stock, on_order, image_url";
+      let itemsData: Item[] = [];
+      let itemsError:
+        { message: string } | null = null;
 
-      const { data: itemsData, error } = await supabase
-        .from("items")
-        .select(itemFields)
-        .eq("supplier_id", supplierId)
-        .order("description");
+      if (shouldLoadPrice) {
+        const response = await supabase
+          .from("items")
+          .select(
+            "id,code,supplier_code,description,stock,min_stock,price,on_order,image_url"
+          )
+          .eq(
+            "supplier_id",
+            supplierId
+          )
+          .order("description");
 
-      if (!error && itemsData) {
-        setItems(
-          itemsData.map((item) => ({
-            ...item,
-            stock: Number(item.stock ?? 0),
-            min_stock: Number(item.min_stock ?? 0),
-            price: shouldLoadPrice
-              ? Number((item as any).price ?? 0)
-              : 0,
-            on_order: Number(item.on_order ?? 0),
-          }))
+        itemsError = response.error;
+
+        itemsData =
+          (response.data || []).map(
+            (item) => ({
+              id:
+                String(item.id),
+              code:
+                String(
+                  item.code || ""
+                ),
+              supplier_code:
+                item.supplier_code
+                  ? String(
+                      item.supplier_code
+                    )
+                  : null,
+              description:
+                String(
+                  item.description || ""
+                ),
+              stock:
+                Number(
+                  item.stock || 0
+                ),
+              min_stock:
+                Number(
+                  item.min_stock || 0
+                ),
+              price:
+                Number(
+                  item.price || 0
+                ),
+              on_order:
+                Number(
+                  item.on_order || 0
+                ),
+              image_url:
+                item.image_url
+                  ? String(
+                      item.image_url
+                    )
+                  : null,
+            })
+          );
+      } else {
+        const response = await supabase
+          .from("items")
+          .select(
+            "id,code,supplier_code,description,stock,min_stock,on_order,image_url"
+          )
+          .eq(
+            "supplier_id",
+            supplierId
+          )
+          .order("description");
+
+        itemsError = response.error;
+
+        itemsData =
+          (response.data || []).map(
+            (item) => ({
+              id:
+                String(item.id),
+              code:
+                String(
+                  item.code || ""
+                ),
+              supplier_code:
+                item.supplier_code
+                  ? String(
+                      item.supplier_code
+                    )
+                  : null,
+              description:
+                String(
+                  item.description || ""
+                ),
+              stock:
+                Number(
+                  item.stock || 0
+                ),
+              min_stock:
+                Number(
+                  item.min_stock || 0
+                ),
+              price: 0,
+              on_order:
+                Number(
+                  item.on_order || 0
+                ),
+              image_url:
+                item.image_url
+                  ? String(
+                      item.image_url
+                    )
+                  : null,
+            })
+          );
+      }
+
+      if (itemsError) {
+        console.error(
+          "Errore caricamento articoli:",
+          itemsError.message
         );
+      } else {
+        setItems(itemsData);
       }
 
       setLoading(false);

@@ -1,940 +1,845 @@
 "use client";
 
-import React, { use, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
+import { supabase } from "../../../../lib/supabaseClient";
 import jsPDF from "jspdf";
-import { supabase } from "../../../lib/supabaseClient";
+
+type Supplier = {
+  id: string;
+  name: string;
+};
 
 type Item = {
   id: string;
+  supplier_id: string;
   code: string;
   supplier_code: string | null;
   description: string;
+  price: number;
   stock: number;
   min_stock: number;
-  price: number;
   on_order: number;
-  image_url: string | null;
 };
 
-type WarehouseSort =
-  | "supplier_code"
-  | "description"
-  | "stock";
-
-type UserPermissions = {
-  view_prices?: boolean;
-  view_inventory_value?: boolean;
-  [key: string]: boolean | undefined;
+type OrderLine = {
+  item: Item;
+  qty: number;
 };
 
-export default function SupplierDetail({
-  params,
-}: {
-  params: Promise<{ supplierId: string }> | { supplierId: string };
-}) {
-  const resolvedParams =
-    typeof (params as any)?.then === "function"
-      ? use(params as Promise<{ supplierId: string }>)
-      : (params as { supplierId: string });
+type AtomicOrderResult = {
+  success?: boolean;
+  order_id?: string;
+  status?: string;
+  articles?: number;
+  pieces?: number;
+  total?: number;
+};
 
-  const supplierId = resolvedParams.supplierId;
+export default function SupplierOrderPage() {
+  const params = useParams();
+  const router = useRouter();
 
-  const [supplierName, setSupplierName] = useState("Fornitore");
+  const supplierId = String(params.supplierId);
+
+  const [supplier, setSupplier] = useState<Supplier | null>(null);
   const [items, setItems] = useState<Item[]>([]);
+  const [lines, setLines] = useState<OrderLine[]>([]);
+
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
+  const [showAddItems, setShowAddItems] = useState(false);
   const [search, setSearch] = useState("");
-  const [onlyLowStock, setOnlyLowStock] = useState(false);
 
-  const [warehouseSort, setWarehouseSort] =
-    useState<WarehouseSort>("supplier_code");
-
-  const [canViewPrices, setCanViewPrices] =
-    useState(false);
-
-  const [
-    canViewInventoryValue,
-    setCanViewInventoryValue,
-  ] = useState(false);
-
-  const [permissionsReady, setPermissionsReady] =
-    useState(false);
-
-  /*
-    PERMESSI ECONOMICI
-
-    - view_prices:
-      mostra il prezzo unitario.
-
-    - view_inventory_value:
-      mostra i valori economici della giacenza
-      e della merce in ordine.
-
-    L'account admin mantiene accesso completo.
-  */
-  useEffect(() => {
-    const role =
-      localStorage.getItem("magazzino_role");
-
-    let permissions: UserPermissions = {};
-
-    try {
-      const saved =
-        localStorage.getItem("magazzino_permissions");
-
-      permissions = saved
-        ? JSON.parse(saved)
-        : {};
-    } catch {
-      permissions = {};
-    }
-
-    const isAdmin = role === "admin";
-
-    setCanViewPrices(
-      isAdmin ||
-        permissions.view_prices === true
-    );
-
-    setCanViewInventoryValue(
-      isAdmin ||
-        permissions.view_inventory_value === true
-    );
-
-    setPermissionsReady(true);
-  }, []);
+  const [message, setMessage] = useState("");
+  const [messageType, setMessageType] = useState<
+    "success" | "error" | ""
+  >("");
 
   useEffect(() => {
-    if (!permissionsReady) {
+    loadData();
+  }, [supplierId]);
+
+  async function loadData() {
+    setLoading(true);
+    setMessage("");
+    setMessageType("");
+
+    /*
+      FORNITORE
+    */
+    const { data: supplierData, error: supplierError } =
+      await supabase
+        .from("suppliers")
+        .select("id,name")
+        .eq("id", supplierId)
+        .single();
+
+    if (supplierError || !supplierData) {
+      setMessage(
+        "Errore caricamento fornitore: " +
+          (supplierError?.message || "Fornitore non trovato")
+      );
+
+      setMessageType("error");
+      setLoading(false);
       return;
     }
 
-    async function loadData() {
-      setLoading(true);
+    /*
+      ARTICOLI DEL FORNITORE
+    */
+    const { data: itemsData, error: itemsError } =
+      await supabase
+        .from("items")
+        .select(
+          "id,supplier_id,code,supplier_code,description,price,stock,min_stock,on_order"
+        )
+        .eq("supplier_id", supplierId)
+        .order("description");
 
-      const { data: supplier } = await supabase
-        .from("suppliers")
-        .select("name")
-        .eq("id", supplierId)
-        .maybeSingle();
+    if (itemsError) {
+      setMessage(
+        "Errore caricamento articoli: " + itemsError.message
+      );
 
-      if (supplier?.name) {
-        setSupplierName(supplier.name);
-      }
-
-      const shouldLoadPrice =
-        canViewPrices ||
-        canViewInventoryValue;
-
-      let itemsData: Item[] = [];
-      let itemsError:
-        { message: string } | null = null;
-
-      if (shouldLoadPrice) {
-        const response = await supabase
-          .from("items")
-          .select(
-            "id,code,supplier_code,description,stock,min_stock,price,on_order,image_url"
-          )
-          .eq(
-            "supplier_id",
-            supplierId
-          )
-          .order("description");
-
-        itemsError = response.error;
-
-        itemsData =
-          (response.data || []).map(
-            (item) => ({
-              id:
-                String(item.id),
-              code:
-                String(
-                  item.code || ""
-                ),
-              supplier_code:
-                item.supplier_code
-                  ? String(
-                      item.supplier_code
-                    )
-                  : null,
-              description:
-                String(
-                  item.description || ""
-                ),
-              stock:
-                Number(
-                  item.stock || 0
-                ),
-              min_stock:
-                Number(
-                  item.min_stock || 0
-                ),
-              price:
-                Number(
-                  item.price || 0
-                ),
-              on_order:
-                Number(
-                  item.on_order || 0
-                ),
-              image_url:
-                item.image_url
-                  ? String(
-                      item.image_url
-                    )
-                  : null,
-            })
-          );
-      } else {
-        const response = await supabase
-          .from("items")
-          .select(
-            "id,code,supplier_code,description,stock,min_stock,on_order,image_url"
-          )
-          .eq(
-            "supplier_id",
-            supplierId
-          )
-          .order("description");
-
-        itemsError = response.error;
-
-        itemsData =
-          (response.data || []).map(
-            (item) => ({
-              id:
-                String(item.id),
-              code:
-                String(
-                  item.code || ""
-                ),
-              supplier_code:
-                item.supplier_code
-                  ? String(
-                      item.supplier_code
-                    )
-                  : null,
-              description:
-                String(
-                  item.description || ""
-                ),
-              stock:
-                Number(
-                  item.stock || 0
-                ),
-              min_stock:
-                Number(
-                  item.min_stock || 0
-                ),
-              price: 0,
-              on_order:
-                Number(
-                  item.on_order || 0
-                ),
-              image_url:
-                item.image_url
-                  ? String(
-                      item.image_url
-                    )
-                  : null,
-            })
-          );
-      }
-
-      if (itemsError) {
-        console.error(
-          "Errore caricamento articoli:",
-          itemsError.message
-        );
-      } else {
-        setItems(itemsData);
-      }
-
+      setMessageType("error");
       setLoading(false);
+      return;
     }
 
-    loadData();
-  }, [
-    supplierId,
-    permissionsReady,
-    canViewPrices,
-    canViewInventoryValue,
-  ]);
+    const cleanItems: Item[] = (itemsData || []).map((item) => ({
+      id: String(item.id),
+      supplier_id: String(item.supplier_id),
+      code: String(item.code || ""),
+      supplier_code: item.supplier_code
+        ? String(item.supplier_code)
+        : null,
+      description: String(item.description || ""),
+      price: Number(item.price || 0),
+      stock: Number(item.stock || 0),
+      min_stock: Number(item.min_stock || 0),
+      on_order: Number(item.on_order || 0),
+    }));
 
-  function isLowStock(item: Item) {
-    return item.min_stock > 0 && item.stock <= item.min_stock;
+    /*
+      BOZZA AUTOMATICA
+
+      Quantità suggerita =
+      scorta minima
+      - giacenza
+      - già in ordine
+    */
+    const automaticLines: OrderLine[] = cleanItems
+      .map((item) => {
+        const suggestedQty = Math.max(
+          0,
+          Number(item.min_stock || 0) -
+            Number(item.stock || 0) -
+            Number(item.on_order || 0)
+        );
+
+        return {
+          item,
+          qty: suggestedQty,
+        };
+      })
+      .filter((line) => line.qty > 0);
+
+    setSupplier(supplierData);
+    setItems(cleanItems);
+    setLines(automaticLines);
+    setLoading(false);
   }
 
-  const totals = useMemo(() => {
-    const totalMagazzino = items.reduce(
-      (sum, item) => sum + item.stock * item.price,
+  /*
+    TOTALI
+  */
+  const totalArticles = lines.length;
+
+  const totalPieces = useMemo(() => {
+    return lines.reduce(
+      (sum, line) => sum + Number(line.qty || 0),
       0
     );
+  }, [lines]);
 
-    const totalOrdine = items.reduce(
-      (sum, item) => sum + item.on_order * item.price,
+  const totalValue = useMemo(() => {
+    return lines.reduce(
+      (sum, line) =>
+        sum +
+        Number(line.qty || 0) *
+          Number(line.item.price || 0),
       0
     );
+  }, [lines]);
 
-    const lowStock = items.filter(isLowStock).length;
+  /*
+    ARTICOLI DISPONIBILI DA AGGIUNGERE
+  */
+  const availableItems = useMemo(() => {
+    const usedIds = new Set(
+      lines.map((line) => line.item.id)
+    );
 
-    return {
-      totalMagazzino,
-      totalOrdine,
-      lowStock,
-      totalItems: items.length,
-    };
-  }, [items]);
-
-  const filteredItems = useMemo(() => {
     const text = search.trim().toLowerCase();
 
-    return items.filter((item) => {
-      const matchesSearch =
-        !text ||
-        item.description?.toLowerCase().includes(text) ||
-        item.code?.toLowerCase().includes(text) ||
-        item.supplier_code?.toLowerCase().includes(text);
+    return items
+      .filter((item) => !usedIds.has(item.id))
+      .filter((item) => {
+        if (!text) return true;
 
-      const matchesLowStock =
-        !onlyLowStock || isLowStock(item);
+        return (
+          item.description
+            .toLowerCase()
+            .includes(text) ||
+          item.code
+            .toLowerCase()
+            .includes(text) ||
+          item.supplier_code
+            ?.toLowerCase()
+            .includes(text)
+        );
+      });
+  }, [items, lines, search]);
 
-      return matchesSearch && matchesLowStock;
-    });
-  }, [items, search, onlyLowStock]);
+  function changeQty(itemId: string, value: number) {
+    const safeQty = Math.max(
+      1,
+      Math.floor(Number(value || 1))
+    );
 
-  const tableColumnCount =
-    6 +
-    (canViewPrices ? 1 : 0) +
-    (canViewInventoryValue ? 1 : 0);
-
-  function getPdfDate() {
-    return new Intl.DateTimeFormat("it-IT", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-    }).format(new Date());
-  }
-
-  function safeFileName(value: string) {
-    return value
-      .trim()
-      .replace(/[\\/:*?"<>|]/g, "-")
-      .replace(/\s+/g, "_");
-  }
-
-  function formatPdfEuro(value: number) {
-    return (
-      new Intl.NumberFormat("it-IT", {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      }).format(Number(value || 0)) + " EUR"
+    setLines((current) =>
+      current.map((line) =>
+        line.item.id === itemId
+          ? {
+              ...line,
+              qty: safeQty,
+            }
+          : line
+      )
     );
   }
 
-  function drawPdfHeader(
-    doc: jsPDF,
-    title: string,
-    subtitle: string
-  ) {
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(18);
+  function removeLine(itemId: string) {
+    setLines((current) =>
+      current.filter(
+        (line) => line.item.id !== itemId
+      )
+    );
+  }
 
-    doc.text(title, 14, 16);
+  function addItem(item: Item) {
+    setLines((current) => {
+      const alreadyExists = current.some(
+        (line) => line.item.id === item.id
+      );
 
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(10);
+      if (alreadyExists) {
+        return current;
+      }
 
-    doc.text(subtitle, 14, 23);
-    doc.text(`Data: ${getPdfDate()}`, 14, 28);
-
-    doc.setDrawColor(180);
-    doc.line(14, 32, 283, 32);
+      return [
+        ...current,
+        {
+          item,
+          qty: 1,
+        },
+      ];
+    });
   }
 
   /*
-    ORDINAMENTO NATURALE.
+    CREA PDF ORDINE
 
-    Serve per evitare ordinamenti tipo:
+    Il PDF è separato dalla transazione SQL.
 
-    1
-    10
-    100
-    2
-    20
-
-    e ottenere invece:
-
-    1
-    2
-    10
-    20
-    100
+    Se il PDF fallisce:
+    - l'ordine rimane comunque corretto
+    - order_items rimangono corretti
+    - on_order rimane corretto
   */
-  const naturalCollator = new Intl.Collator("it", {
-    numeric: true,
-    sensitivity: "base",
-  });
-
-  function compareSupplierCode(a: Item, b: Item) {
-    const codeA = (a.supplier_code || "").trim();
-    const codeB = (b.supplier_code || "").trim();
-
-    /*
-      Se manca il codice articolo,
-      lo mettiamo alla fine.
-    */
-    if (!codeA && codeB) return 1;
-    if (codeA && !codeB) return -1;
-
-    const comparison = naturalCollator.compare(
-      codeA,
-      codeB
-    );
-
-    if (comparison !== 0) {
-      return comparison;
-    }
-
-    return naturalCollator.compare(
-      a.description || "",
-      b.description || ""
-    );
-  }
-
-  function getWarehouseSortedItems() {
-    const sorted = [...items];
-
-    if (warehouseSort === "supplier_code") {
-      sorted.sort(compareSupplierCode);
-    }
-
-    if (warehouseSort === "description") {
-      sorted.sort((a, b) => {
-        const comparison = naturalCollator.compare(
-          a.description || "",
-          b.description || ""
-        );
-
-        if (comparison !== 0) {
-          return comparison;
-        }
-
-        return compareSupplierCode(a, b);
-      });
-    }
-
-    if (warehouseSort === "stock") {
-      sorted.sort((a, b) => {
-        const stockComparison =
-          Number(a.stock || 0) - Number(b.stock || 0);
-
-        if (stockComparison !== 0) {
-          return stockComparison;
-        }
-
-        return compareSupplierCode(a, b);
-      });
-    }
-
-    return sorted;
-  }
-
-  function getWarehouseSortLabel() {
-    if (warehouseSort === "description") {
-      return "Descrizione A-Z";
-    }
-
-    if (warehouseSort === "stock") {
-      return "Giacenza crescente";
-    }
-
-    return "Codice articolo crescente";
-  }
-
-  function generateDetailedPdf() {
-    if (
-      !canViewPrices &&
-      !canViewInventoryValue
-    ) {
-      alert(
-        "Il tuo account non ha accesso ai dati economici."
-      );
-      return;
-    }
-
-    if (items.length === 0) {
-      alert("Non ci sono articoli da stampare.");
-      return;
+  function createOrderPdf(
+    orderId: string,
+    orderLines: OrderLine[]
+  ) {
+    if (!supplier) {
+      throw new Error("Fornitore non disponibile");
     }
 
     const doc = new jsPDF({
-      orientation: "landscape",
+      orientation: "portrait",
       unit: "mm",
       format: "a4",
     });
 
-    const pageHeight = doc.internal.pageSize.getHeight();
-    const marginLeft = 10;
-
-    const columns = [
-      { label: "Codice articolo", width: 30 },
-      { label: "Codice scanner", width: 34 },
-      { label: "Descrizione", width: 78 },
-
-      ...(canViewPrices
-        ? [{ label: "Prezzo", width: 27 }]
-        : []),
-
-      { label: "Giacenza", width: 23 },
-      { label: "Scorta min.", width: 24 },
-      { label: "In ordine", width: 23 },
-
-      ...(canViewInventoryValue
-        ? [{ label: "Valore", width: 31 }]
-        : []),
-    ];
-
-    const totalTableWidth = columns.reduce(
-      (sum, column) => sum + column.width,
-      0
-    );
-
-    let y = 38;
-
-    const reportSubtitle =
-      canViewPrices &&
-      canViewInventoryValue
-        ? "Report dettagliato con prezzi e valori economici"
-        : canViewPrices
-          ? "Report dettagliato con prezzi"
-          : "Report dettagliato con valori economici";
-
-    function drawHeader() {
-      drawPdfHeader(
-        doc,
-        `MAGAZZINO - ${supplierName.toUpperCase()}`,
-        reportSubtitle
-      );
-
-      y = 38;
-
-      doc.setFillColor(235, 235, 235);
-
-      doc.rect(
-        marginLeft,
-        y,
-        totalTableWidth,
-        9,
-        "F"
-      );
-
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(7.5);
-
-      let x = marginLeft;
-
-      columns.forEach((column) => {
-        doc.text(
-          column.label,
-          x + 1.5,
-          y + 5.7
-        );
-
-        x += column.width;
-      });
-
-      y += 9;
-    }
-
-    function newPage() {
-      doc.addPage();
-      drawHeader();
-    }
-
-    drawHeader();
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(7.5);
-
-    items.forEach((item) => {
-      const descriptionLines = doc.splitTextToSize(
-        item.description || "-",
-        columns[2].width - 3
-      );
-
-      const rowHeight = Math.max(
-        8,
-        descriptionLines.length * 4 + 3
-      );
-
-      if (y + rowHeight > pageHeight - 20) {
-        newPage();
-      }
-
-      if (isLowStock(item)) {
-        doc.setFillColor(255, 242, 242);
-
-        doc.rect(
-          marginLeft,
-          y,
-          totalTableWidth,
-          rowHeight,
-          "F"
-        );
-      }
-
-      doc.setDrawColor(215);
-
-      doc.line(
-        marginLeft,
-        y + rowHeight,
-        marginLeft + totalTableWidth,
-        y + rowHeight
-      );
-
-      const values: Array<string | string[]> = [
-        item.supplier_code || "-",
-        item.code || "-",
-        descriptionLines,
-
-        ...(canViewPrices
-          ? [formatPdfEuro(item.price)]
-          : []),
-
-        String(item.stock),
-
-        item.min_stock > 0
-          ? String(item.min_stock)
-          : "-",
-
-        item.on_order > 0
-          ? String(item.on_order)
-          : "-",
-
-        ...(canViewInventoryValue
-          ? [
-              formatPdfEuro(
-                item.stock * item.price
-              ),
-            ]
-          : []),
-      ];
-
-      let x = marginLeft;
-
-      values.forEach((value, index) => {
-        if (Array.isArray(value)) {
-          doc.text(
-            value,
-            x + 1.5,
-            y + 4.7
-          );
-        } else {
-          doc.text(
-            value,
-            x + 1.5,
-            y + 4.7
-          );
-        }
-
-        x += columns[index].width;
-      });
-
-      y += rowHeight;
-    });
-
-    if (y + 30 > pageHeight - 10) {
-      doc.addPage();
-
-      drawPdfHeader(
-        doc,
-        `MAGAZZINO - ${supplierName.toUpperCase()}`,
-        "Riepilogo"
-      );
-
-      y = 42;
-    } else {
-      y += 8;
-    }
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-
-    doc.text(
-      `Articoli totali: ${items.length}`,
-      marginLeft,
-      y
-    );
-
-    if (canViewInventoryValue) {
-      y += 6;
-
-      doc.text(
-        `Valore totale magazzino: ${formatPdfEuro(
-          totals.totalMagazzino
-        )}`,
-        marginLeft,
-        y
-      );
-
-      y += 6;
-
-      doc.text(
-        `Valore totale merce in ordine: ${formatPdfEuro(
-          totals.totalOrdine
-        )}`,
-        marginLeft,
-        y
-      );
-    }
-
-    addPageNumbers(doc);
-
-    doc.save(
-      `Magazzino_${safeFileName(
-        supplierName
-      )}_dettagliato.pdf`
-    );
-  }
-
-  function generateWarehousePdf() {
-    if (items.length === 0) {
-      alert("Non ci sono articoli da stampare.");
-      return;
-    }
-
-    /*
-      Qui applichiamo l'ordinamento scelto
-      dall'utente prima di creare il PDF.
-    */
-    const warehouseItems =
-      getWarehouseSortedItems();
-
-    const doc = new jsPDF({
-      orientation: "landscape",
-      unit: "mm",
-      format: "a4",
-    });
+    const pageWidth =
+      doc.internal.pageSize.getWidth();
 
     const pageHeight =
       doc.internal.pageSize.getHeight();
 
     const marginLeft = 14;
+    const marginRight = 14;
 
-    const columns = [
-      { label: "Codice articolo", width: 38 },
-      { label: "Codice scanner", width: 44 },
-      { label: "Descrizione", width: 112 },
-      { label: "Giacenza", width: 28 },
-      { label: "Scorta min.", width: 30 },
-      { label: "In ordine", width: 29 },
-    ];
+    let y = 17;
 
-    const totalTableWidth = columns.reduce(
-      (sum, column) => sum + column.width,
-      0
-    );
-
-    let y = 38;
-
-    function drawHeader() {
-      drawPdfHeader(
-        doc,
-        `MAGAZZINO - ${supplierName.toUpperCase()}`,
-        `Lista operativa magazziniere - Ordine: ${getWarehouseSortLabel()}`
-      );
-
-      y = 38;
-
-      doc.setFillColor(235, 235, 235);
-
-      doc.rect(
-        marginLeft,
-        y,
-        totalTableWidth,
-        10,
-        "F"
-      );
-
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(8.5);
-
-      let x = marginLeft;
-
-      columns.forEach((column) => {
-        doc.text(
-          column.label,
-          x + 2,
-          y + 6.3
-        );
-
-        x += column.width;
-      });
-
-      y += 10;
-    }
-
-    function newPage() {
-      doc.addPage();
-      drawHeader();
-    }
-
-    drawHeader();
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8.5);
-
-    warehouseItems.forEach((item) => {
-      const descriptionLines =
-        doc.splitTextToSize(
-          item.description || "-",
-          columns[2].width - 4
-        );
-
-      const rowHeight = Math.max(
-        9,
-        descriptionLines.length * 4.3 + 3
-      );
-
-      if (
-        y + rowHeight >
-        pageHeight - 18
-      ) {
-        newPage();
-      }
-
-      if (isLowStock(item)) {
-        doc.setFillColor(255, 242, 242);
-
-        doc.rect(
-          marginLeft,
-          y,
-          totalTableWidth,
-          rowHeight,
-          "F"
-        );
-      }
-
-      doc.setDrawColor(215);
-
-      doc.line(
-        marginLeft,
-        y + rowHeight,
-        marginLeft + totalTableWidth,
-        y + rowHeight
-      );
-
-      const values: Array<
-        string | string[]
-      > = [
-        item.supplier_code || "-",
-        item.code || "-",
-        descriptionLines,
-        String(item.stock),
-        item.min_stock > 0
-          ? String(item.min_stock)
-          : "-",
-        item.on_order > 0
-          ? String(item.on_order)
-          : "-",
-      ];
-
-      let x = marginLeft;
-
-      values.forEach((value, index) => {
-        if (Array.isArray(value)) {
-          doc.text(
-            value,
-            x + 2,
-            y + 5.2
-          );
-        } else {
-          doc.text(
-            value,
-            x + 2,
-            y + 5.2
-          );
-        }
-
-        x += columns[index].width;
-      });
-
-      y += rowHeight;
-    });
-
-    if (
-      y + 15 >
-      pageHeight - 10
-    ) {
-      doc.addPage();
-
-      drawPdfHeader(
-        doc,
-        `MAGAZZINO - ${supplierName.toUpperCase()}`,
-        "Riepilogo"
-      );
-
-      y = 42;
-    } else {
-      y += 8;
-    }
-
+    /*
+      TITOLO
+    */
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
+    doc.setFontSize(18);
 
     doc.text(
-      `Articoli totali: ${warehouseItems.length}`,
+      "ORDINE FORNITORE",
       marginLeft,
       y
     );
 
-    addPageNumbers(doc);
+    y += 9;
 
-    let sortFileName = "codice";
+    doc.setFontSize(12);
 
-    if (warehouseSort === "description") {
-      sortFileName = "descrizione";
-    }
-
-    if (warehouseSort === "stock") {
-      sortFileName = "giacenza";
-    }
-
-    doc.save(
-      `Magazzino_${safeFileName(
-        supplierName
-      )}_magazziniere_${sortFileName}.pdf`
+    doc.text(
+      supplier.name,
+      marginLeft,
+      y
     );
-  }
 
-  function addPageNumbers(doc: jsPDF) {
-    const pages = doc.getNumberOfPages();
+    y += 7;
 
-    for (let i = 1; i <= pages; i++) {
-      doc.setPage(i);
+    doc.setFont(
+      "helvetica",
+      "normal"
+    );
 
-      const pageWidth =
-        doc.internal.pageSize.getWidth();
+    doc.setFontSize(9);
 
-      const pageHeight =
-        doc.internal.pageSize.getHeight();
+    doc.text(
+      `Data: ${formatDateForPdf(new Date())}`,
+      marginLeft,
+      y
+    );
 
-      doc.setFont("helvetica", "normal");
+    y += 5;
+
+    doc.text(
+      `ID ordine: ${orderId}`,
+      marginLeft,
+      y
+    );
+
+    y += 8;
+
+    doc.setDrawColor(180);
+
+    doc.line(
+      marginLeft,
+      y,
+      pageWidth - marginRight,
+      y
+    );
+
+    y += 7;
+
+    /*
+      INTESTAZIONE TABELLA
+    */
+    const columns = {
+      code: marginLeft,
+      description: 48,
+      qty: 137,
+      price: 153,
+      total: 177,
+    };
+
+    function drawTableHeader() {
+      doc.setFont(
+        "helvetica",
+        "bold"
+      );
+
       doc.setFontSize(8);
 
       doc.text(
-        `Pagina ${i} di ${pages}`,
-        pageWidth - 14,
-        pageHeight - 7,
+        "CODICE",
+        columns.code,
+        y
+      );
+
+      doc.text(
+        "DESCRIZIONE",
+        columns.description,
+        y
+      );
+
+      doc.text(
+        "QTA",
+        columns.qty,
+        y,
         {
           align: "right",
         }
       );
+
+      doc.text(
+        "PREZZO",
+        columns.price,
+        y,
+        {
+          align: "right",
+        }
+      );
+
+      doc.text(
+        "TOTALE",
+        columns.total,
+        y,
+        {
+          align: "right",
+        }
+      );
+
+      y += 3;
+
+      doc.line(
+        marginLeft,
+        y,
+        pageWidth - marginRight,
+        y
+      );
+
+      y += 5;
+
+      doc.setFont(
+        "helvetica",
+        "normal"
+      );
     }
+
+    drawTableHeader();
+
+    doc.setFontSize(8);
+
+    let totalOrder = 0;
+
+    orderLines.forEach((line) => {
+      const lineTotal =
+        Number(line.qty || 0) *
+        Number(line.item.price || 0);
+
+      totalOrder += lineTotal;
+
+      const descriptionLines =
+        doc.splitTextToSize(
+          line.item.description || "-",
+          78
+        );
+
+      const rowHeight =
+        Math.max(
+          6,
+          descriptionLines.length * 4
+        );
+
+      /*
+        NUOVA PAGINA SE SERVE
+      */
+      if (
+        y + rowHeight >
+        pageHeight - 25
+      ) {
+        doc.addPage();
+
+        y = 18;
+
+        doc.setFont(
+          "helvetica",
+          "bold"
+        );
+
+        doc.setFontSize(12);
+
+        doc.text(
+          `ORDINE - ${supplier.name}`,
+          marginLeft,
+          y
+        );
+
+        y += 9;
+
+        drawTableHeader();
+      }
+
+      doc.setFontSize(8);
+      doc.setFont(
+        "helvetica",
+        "normal"
+      );
+
+      doc.text(
+        line.item.supplier_code || "-",
+        columns.code,
+        y
+      );
+
+      doc.text(
+        descriptionLines,
+        columns.description,
+        y
+      );
+
+      doc.text(
+        String(line.qty),
+        columns.qty,
+        y,
+        {
+          align: "right",
+        }
+      );
+
+      doc.text(
+        formatPdfEuro(line.item.price),
+        columns.price,
+        y,
+        {
+          align: "right",
+        }
+      );
+
+      doc.text(
+        formatPdfEuro(lineTotal),
+        columns.total,
+        y,
+        {
+          align: "right",
+        }
+      );
+
+      y += rowHeight + 2;
+
+      doc.setDrawColor(225);
+
+      doc.line(
+        marginLeft,
+        y,
+        pageWidth - marginRight,
+        y
+      );
+
+      y += 3;
+    });
+
+    /*
+      TOTALE
+    */
+    if (y > pageHeight - 30) {
+      doc.addPage();
+      y = 20;
+    }
+
+    y += 5;
+
+    doc.setFont(
+      "helvetica",
+      "bold"
+    );
+
+    doc.setFontSize(11);
+
+    doc.text(
+      `TOTALE ORDINE: ${formatPdfEuro(totalOrder)}`,
+      pageWidth - marginRight,
+      y,
+      {
+        align: "right",
+      }
+    );
+
+    return doc;
+  }
+
+  /*
+    CONFERMA ORDINE ATOMICA
+  */
+  async function confirmOrder() {
+    if (!supplier) {
+      return;
+    }
+
+    if (lines.length === 0) {
+      setMessage(
+        "Aggiungi almeno un articolo all'ordine."
+      );
+
+      setMessageType("error");
+      return;
+    }
+
+    /*
+      CONTROLLO QUANTITÀ
+    */
+    const invalidLine =
+      lines.find(
+        (line) =>
+          !Number.isFinite(
+            Number(line.qty)
+          ) ||
+          Number(line.qty) <= 0
+      );
+
+    if (invalidLine) {
+      setMessage(
+        "Tutte le quantità devono essere maggiori di zero."
+      );
+
+      setMessageType("error");
+      return;
+    }
+
+    const confirmed = confirm(
+      `Confermi l'ordine a ${supplier.name}?\n\n` +
+        `Articoli: ${totalArticles}\n` +
+        `Pezzi: ${totalPieces}\n` +
+        `Totale: ${formatEuro(totalValue)}`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setSaving(true);
+    setMessage("");
+    setMessageType("");
+
+    /*
+      PREPARIAMO LE RIGHE DA MANDARE
+      ALLA FUNZIONE SQL
+    */
+    const rpcLines = lines.map(
+      (line) => ({
+        item_id: line.item.id,
+        qty: Number(line.qty),
+      })
+    );
+
+    /*
+      CREAZIONE ATOMICA:
+
+      - orders
+      - order_items
+      - items.on_order
+
+      tutto insieme.
+    */
+    const { data, error } =
+      await supabase.rpc(
+        "create_order_atomic",
+        {
+          p_supplier_id:
+            supplier.id,
+
+          p_lines:
+            rpcLines,
+        }
+      );
+
+    if (error) {
+      console.error(
+        "Errore creazione ordine atomico:",
+        error
+      );
+
+      setMessage(
+        "Ordine NON creato: " +
+          error.message
+      );
+
+      setMessageType("error");
+      setSaving(false);
+
+      return;
+    }
+
+    const result =
+      data as AtomicOrderResult | null;
+
+    const orderId =
+      result?.order_id;
+
+    if (!orderId) {
+      setMessage(
+        "Ordine creato, ma non è stato restituito l'ID ordine."
+      );
+
+      setMessageType("error");
+      setSaving(false);
+
+      return;
+    }
+
+    /*
+      A QUESTO PUNTO L'ORDINE È GIÀ SICURO.
+
+      Anche se il PDF fallisce:
+      NON dobbiamo ricreare l'ordine.
+    */
+    try {
+      const doc =
+        createOrderPdf(
+          orderId,
+          lines
+        );
+
+      const pdfBlob =
+        doc.output("blob");
+
+      const safeSupplierName =
+        supplier.name
+          .trim()
+          .replace(
+            /[\\/:*?"<>|]/g,
+            "-"
+          )
+          .replace(
+            /\s+/g,
+            "_"
+          );
+
+      const pdfPath =
+        `${supplier.id}/${orderId}_${safeSupplierName}.pdf`;
+
+      /*
+        UPLOAD PDF
+      */
+      const {
+        error: uploadError,
+      } = await supabase.storage
+        .from("orders-pdf")
+        .upload(
+          pdfPath,
+          pdfBlob,
+          {
+            contentType:
+              "application/pdf",
+
+            upsert: false,
+          }
+        );
+
+      if (uploadError) {
+        throw new Error(
+          uploadError.message
+        );
+      }
+
+      /*
+        URL PUBBLICO
+      */
+      const {
+        data: publicUrlData,
+      } = supabase.storage
+        .from("orders-pdf")
+        .getPublicUrl(
+          pdfPath
+        );
+
+      const pdfUrl =
+        publicUrlData.publicUrl;
+
+      /*
+        SALVIAMO URL E PATH NELL'ORDINE
+      */
+      const {
+        error: pdfUpdateError,
+      } = await supabase
+        .from("orders")
+        .update({
+          pdf_path:
+            pdfPath,
+
+          pdf_url:
+            pdfUrl,
+        })
+        .eq(
+          "id",
+          orderId
+        );
+
+      if (pdfUpdateError) {
+        throw new Error(
+          pdfUpdateError.message
+        );
+      }
+
+      alert(
+        "Ordine creato correttamente."
+      );
+
+      router.push(
+        `/orders/${orderId}`
+      );
+
+      return;
+    } catch (pdfError: any) {
+      console.error(
+        "Errore PDF ordine:",
+        pdfError
+      );
+
+      /*
+        IMPORTANTE:
+
+        NON cancelliamo l'ordine
+        e NON proviamo a ricrearlo.
+
+        L'ordine è già stato creato
+        correttamente dalla funzione atomica.
+      */
+      alert(
+        "L'ordine è stato creato correttamente, " +
+          "ma il PDF non è stato salvato.\n\n" +
+          "Ordine ID:\n" +
+          orderId
+      );
+
+      router.push(
+        `/orders/${orderId}`
+      );
+
+      return;
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div
+        style={{
+          maxWidth: 1500,
+          margin: "0 auto",
+          padding: 30,
+          opacity: 0.6,
+        }}
+      >
+        Preparazione ordine...
+      </div>
+    );
+  }
+
+  if (!supplier) {
+    return (
+      <div
+        style={{
+          maxWidth: 1500,
+          margin: "0 auto",
+        }}
+      >
+        Fornitore non trovato.
+      </div>
+    );
   }
 
   return (
@@ -945,16 +850,18 @@ export default function SupplierDetail({
         margin: "0 auto",
       }}
     >
-      {/* INTESTAZIONE */}
+      {/* TESTATA */}
 
       <div
         style={{
           display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
+          justifyContent:
+            "space-between",
+          alignItems:
+            "flex-start",
           gap: 20,
           flexWrap: "wrap",
-          marginBottom: 26,
+          marginBottom: 25,
         }}
       >
         <div>
@@ -963,506 +870,668 @@ export default function SupplierDetail({
               fontSize: 13,
               opacity: 0.55,
               marginBottom: 4,
-              textTransform: "uppercase",
+              textTransform:
+                "uppercase",
               letterSpacing: 1.2,
               fontWeight: 700,
             }}
           >
-            Magazzino fornitore
+            Ordini / Nuovo ordine
           </div>
 
           <h1
             style={{
               margin: 0,
               fontSize: 34,
-              fontWeight: 800,
-              letterSpacing: "-0.5px",
+              fontWeight: 850,
+              letterSpacing:
+                "-0.5px",
             }}
           >
-            {supplierName}
+            {supplier.name}
           </h1>
 
           <div
             style={{
-              marginTop: 6,
+              marginTop: 7,
+              fontSize: 14,
               opacity: 0.6,
-              fontSize: 14,
             }}
           >
-            {totals.totalItems} articoli presenti
+            Controlla la proposta automatica,
+            modifica le quantità e conferma
+            l&apos;ordine.
           </div>
-        </div>
-
-        <div
-          style={{
-            display: "flex",
-            gap: 10,
-            flexWrap: "wrap",
-            alignItems: "center",
-          }}
-        >
-          <Link
-            href="/suppliers"
-            style={secondaryButton}
-          >
-            ← Fornitori
-          </Link>
-
-          {/* ORDINAMENTO PDF MAGAZZINIERE */}
-
-          <select
-            value={warehouseSort}
-            onChange={(e) =>
-              setWarehouseSort(
-                e.target.value as WarehouseSort
-              )
-            }
-            disabled={loading}
-            title="Scegli come ordinare il PDF magazziniere"
-            style={{
-              padding: "11px 12px",
-              borderRadius: 8,
-              border:
-                "1px solid var(--border-color)",
-              background:
-                "var(--input-bg)",
-              color:
-                "var(--foreground)",
-              fontWeight: 700,
-              cursor: loading
-                ? "not-allowed"
-                : "pointer",
-              outline: "none",
-            }}
-          >
-            <option value="supplier_code">
-              Codice articolo crescente
-            </option>
-
-            <option value="description">
-              Descrizione A → Z
-            </option>
-
-            <option value="stock">
-              Giacenza crescente
-            </option>
-          </select>
-
-          <button
-            type="button"
-            onClick={generateWarehousePdf}
-            disabled={loading}
-            style={{
-              ...warehousePdfButton,
-              opacity: loading ? 0.5 : 1,
-              cursor: loading
-                ? "not-allowed"
-                : "pointer",
-            }}
-          >
-            PDF magazziniere
-          </button>
-
-          {(canViewPrices ||
-            canViewInventoryValue) && (
-            <button
-              type="button"
-              onClick={generateDetailedPdf}
-              disabled={loading}
-              style={{
-                ...detailedPdfButton,
-                opacity: loading ? 0.5 : 1,
-                cursor: loading
-                  ? "not-allowed"
-                  : "pointer",
-              }}
-            >
-              PDF dettagliato
-            </button>
-          )}
-
-          <Link
-            href={`/suppliers/${supplierId}/new-item`}
-            style={primaryButton}
-          >
-            + Nuovo articolo
-          </Link>
-        </div>
-      </div>
-
-      {/* RIQUADRI RIEPILOGO */}
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns:
-            "repeat(auto-fit, minmax(220px, 1fr))",
-          gap: 14,
-          marginBottom: 24,
-        }}
-      >
-        {canViewInventoryValue && (
-          <>
-            <SummaryCard
-              title="Valore magazzino"
-              value={formatEuro(totals.totalMagazzino)}
-              subtitle="Valore della giacenza attuale"
-            />
-
-            <SummaryCard
-              title="Valore in ordine"
-              value={formatEuro(totals.totalOrdine)}
-              subtitle="Merce attualmente in ordine"
-            />
-          </>
-        )}
-
-        <SummaryCard
-          title="Scorte da controllare"
-          value={String(totals.lowStock)}
-          subtitle={
-            totals.lowStock === 0
-              ? "Nessuna criticità"
-              : "Articoli alla scorta minima"
-          }
-          warning={totals.lowStock > 0}
-        />
-      </div>
-
-      {/* RICERCA E FILTRI */}
-
-      <div
-        style={{
-          display: "flex",
-          gap: 12,
-          alignItems: "center",
-          flexWrap: "wrap",
-          padding: 14,
-          marginBottom: 16,
-          background: "var(--card)",
-          border:
-            "1px solid var(--border-color)",
-          borderRadius: 12,
-        }}
-      >
-        <div
-          style={{
-            position: "relative",
-            flex: "1 1 350px",
-          }}
-        >
-          <span
-            style={{
-              position: "absolute",
-              left: 13,
-              top: "50%",
-              transform: "translateY(-50%)",
-              opacity: 0.5,
-            }}
-          >
-            ⌕
-          </span>
-
-          <input
-            value={search}
-            onChange={(e) =>
-              setSearch(e.target.value)
-            }
-            placeholder="Cerca codice, scanner o descrizione..."
-            style={{
-              width: "100%",
-              boxSizing: "border-box",
-              padding:
-                "11px 14px 11px 38px",
-              background:
-                "var(--input-bg)",
-              color:
-                "var(--foreground)",
-              border:
-                "1px solid var(--border-color)",
-              borderRadius: 8,
-              outline: "none",
-              fontSize: 14,
-            }}
-          />
         </div>
 
         <button
           type="button"
           onClick={() =>
-            setOnlyLowStock(!onlyLowStock)
+            router.push(
+              "/orders"
+            )
           }
-          style={{
-            padding: "11px 15px",
-            borderRadius: 8,
-
-            border: onlyLowStock
-              ? "1px solid #ef4444"
-              : "1px solid var(--border-color)",
-
-            background: onlyLowStock
-              ? "rgba(239, 68, 68, 0.15)"
-              : "var(--input-bg)",
-
-            color:
-              "var(--foreground)",
-            cursor: "pointer",
-            fontWeight: 700,
-            whiteSpace: "nowrap",
-          }}
+          disabled={saving}
+          style={secondaryButtonStyle}
         >
-          {onlyLowStock ? "✓ " : ""}
-          Solo scorte basse
+          ← Torna agli ordini
         </button>
-
-        <div
-          style={{
-            fontSize: 13,
-            opacity: 0.6,
-            padding: "0 5px",
-          }}
-        >
-          {filteredItems.length} risultati
-        </div>
       </div>
 
-      {/* TABELLA */}
+      {/* MESSAGGIO */}
+
+      {message && (
+        <div
+          style={{
+            padding:
+              "13px 15px",
+
+            marginBottom: 18,
+
+            borderRadius: 10,
+
+            border:
+              messageType ===
+              "success"
+                ? "1px solid rgba(34,197,94,0.4)"
+                : "1px solid rgba(239,68,68,0.45)",
+
+            background:
+              messageType ===
+              "success"
+                ? "rgba(34,197,94,0.08)"
+                : "rgba(239,68,68,0.08)",
+
+            fontSize: 13,
+            fontWeight: 700,
+          }}
+        >
+          {message}
+        </div>
+      )}
+
+      {/* RIEPILOGO */}
 
       <div
         style={{
-          border:
-            "1px solid var(--border-color)",
-          borderRadius: 12,
-          overflow: "hidden",
-          background: "var(--card)",
+          display: "grid",
+
+          gridTemplateColumns:
+            "repeat(auto-fit, minmax(210px, 1fr))",
+
+          gap: 14,
+          marginBottom: 22,
         }}
       >
+        <SummaryCard
+          title="Articoli"
+          value={String(
+            totalArticles
+          )}
+          subtitle="Codici presenti nell'ordine"
+        />
+
+        <SummaryCard
+          title="Pezzi"
+          value={String(
+            totalPieces
+          )}
+          subtitle="Quantità totale"
+        />
+
+        <SummaryCard
+          title="Totale ordine"
+          value={formatEuro(
+            totalValue
+          )}
+          subtitle="Valore complessivo"
+        />
+      </div>
+
+      {/* RIGHE ORDINE */}
+
+      <div style={cardStyle}>
+        <div
+          style={{
+            padding:
+              "16px 18px",
+
+            display: "flex",
+
+            justifyContent:
+              "space-between",
+
+            alignItems:
+              "center",
+
+            gap: 15,
+
+            flexWrap: "wrap",
+
+            background:
+              "var(--table-head)",
+
+            borderBottom:
+              "1px solid var(--border-color)",
+          }}
+        >
+          <div>
+            <div
+              style={{
+                fontSize: 18,
+                fontWeight: 850,
+              }}
+            >
+              Articoli ordine
+            </div>
+
+            <div
+              style={{
+                marginTop: 3,
+                fontSize: 12,
+                opacity: 0.55,
+              }}
+            >
+              La proposta automatica considera
+              giacenza, scorta minima e merce
+              già in ordine.
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() =>
+              setShowAddItems(
+                !showAddItems
+              )
+            }
+            disabled={saving}
+            style={
+              secondaryButtonStyle
+            }
+          >
+            {showAddItems
+              ? "Chiudi aggiunta articoli"
+              : "+ Aggiungi articolo"}
+          </button>
+        </div>
+
         <div
           style={{
             overflowX: "auto",
           }}
         >
-          <table
-            style={{
-              width: "100%",
-              minWidth:
-                canViewPrices ||
-                canViewInventoryValue
-                  ? 1200
-                  : 900,
-              borderCollapse:
-                "collapse",
-            }}
-          >
+          <table style={tableStyle}>
             <thead>
-              <tr
-                style={{
-                  background:
-                    "var(--table-head)",
-                }}
-              >
-                <th style={headerStyle}>
+              <tr>
+                <TableHead>
                   Codice articolo
-                </th>
+                </TableHead>
 
-                <th style={headerStyle}>
+                <TableHead>
                   Codice scanner
-                </th>
+                </TableHead>
 
-                <th style={headerStyle}>
+                <TableHead>
                   Descrizione
-                </th>
+                </TableHead>
 
-                {canViewPrices && (
-                  <th style={headerRightStyle}>
-                    Prezzo
-                  </th>
-                )}
+                <TableHead align="right">
+                  Prezzo
+                </TableHead>
 
-                <th style={headerCenterStyle}>
+                <TableHead align="right">
                   Giacenza
-                </th>
+                </TableHead>
 
-                <th style={headerCenterStyle}>
+                <TableHead align="right">
                   Scorta min.
-                </th>
+                </TableHead>
 
-                <th style={headerCenterStyle}>
-                  In ordine
-                </th>
+                <TableHead align="right">
+                  Già in ordine
+                </TableHead>
 
-                {canViewInventoryValue && (
-                  <th style={headerRightStyle}>
-                    Valore
-                  </th>
-                )}
+                <TableHead align="right">
+                  Quantità
+                </TableHead>
+
+                <TableHead align="right">
+                  Totale
+                </TableHead>
+
+                <TableHead>
+                  Azione
+                </TableHead>
               </tr>
             </thead>
 
             <tbody>
-              {loading ? (
+              {lines.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={tableColumnCount}
-                    style={emptyStyle}
+                    colSpan={10}
+                    style={{
+                      padding: 40,
+                      textAlign:
+                        "center",
+                      opacity: 0.55,
+                    }}
                   >
-                    Caricamento articoli...
-                  </td>
-                </tr>
-              ) : filteredItems.length === 0 ? (
-                <tr>
-                  <td
-                    colSpan={tableColumnCount}
-                    style={emptyStyle}
-                  >
-                    Nessun articolo trovato.
+                    Nessun articolo nella proposta.
+                    Puoi aggiungerli manualmente con
+                    “+ Aggiungi articolo”.
                   </td>
                 </tr>
               ) : (
-                filteredItems.map((item) => {
-                  const lowStock =
-                    isLowStock(item);
+                lines.map((line) => (
+                  <tr
+                    key={line.item.id}
+                    style={{
+                      borderTop:
+                        "1px solid var(--border-color)",
+                    }}
+                  >
+                    <TableCell>
+                      <strong>
+                        {line.item
+                          .supplier_code ||
+                          "-"}
+                      </strong>
+                    </TableCell>
 
-                  return (
-                    <tr
-                      key={item.id}
-                      style={{
-                        borderBottom:
-                          "1px solid var(--border-color)",
+                    <TableCell>
+                      {line.item.code ||
+                        "-"}
+                    </TableCell>
 
-                        background:
-                          lowStock
-                            ? "rgba(239, 68, 68, 0.08)"
-                            : "transparent",
-                      }}
-                    >
-                      <td style={cellStyle}>
-                        <Link
-                          href={`/items/${item.id}`}
-                          style={{
-                            color: "inherit",
-                            textDecoration:
-                              "none",
-                            fontWeight: 750,
-                          }}
-                        >
-                          {item.supplier_code ||
-                            "-"}
-                        </Link>
-                      </td>
+                    <TableCell>
+                      {
+                        line.item
+                          .description
+                      }
+                    </TableCell>
 
-                      <td style={cellStyle}>
-                        <span
-                          style={{
-                            fontFamily:
-                              "monospace",
-                            fontSize: 13,
-                            padding:
-                              "4px 7px",
-                            border:
-                              "1px solid var(--border-color)",
-                            borderRadius: 5,
-                            background:
-                              "var(--input-bg)",
-                          }}
-                        >
-                          {item.code || "-"}
-                        </span>
-                      </td>
-
-                      <td style={cellStyle}>
-                        <Link
-                          href={`/items/${item.id}`}
-                          style={{
-                            color: "inherit",
-                            textDecoration:
-                              "none",
-                          }}
-                        >
-                          {item.description ||
-                            "-"}
-                        </Link>
-                      </td>
-
-                      {canViewPrices && (
-                        <td style={rightCellStyle}>
-                          {formatEuro(
-                            item.price
-                          )}
-                        </td>
+                    <TableCell align="right">
+                      {formatEuro(
+                        line.item.price
                       )}
+                    </TableCell>
 
-                      <td style={centerCellStyle}>
-                        <StockBadge
-                          stock={item.stock}
-                          minStock={
-                            item.min_stock
-                          }
-                        />
-                      </td>
+                    <TableCell align="right">
+                      {
+                        line.item
+                          .stock
+                      }
+                    </TableCell>
 
-                      <td style={centerCellStyle}>
-                        {item.min_stock > 0
-                          ? item.min_stock
-                          : "—"}
-                      </td>
+                    <TableCell align="right">
+                      {
+                        line.item
+                          .min_stock
+                      }
+                    </TableCell>
 
-                      <td style={centerCellStyle}>
-                        {item.on_order > 0 ? (
-                          <span
-                            style={{
-                              display:
-                                "inline-block",
-                              minWidth: 34,
-                              padding:
-                                "4px 9px",
-                              borderRadius: 20,
-                              background:
-                                "rgba(59, 130, 246, 0.15)",
-                              fontWeight: 800,
-                            }}
-                          >
-                            {item.on_order}
-                          </span>
-                        ) : (
-                          <span
-                            style={{
-                              opacity: 0.4,
-                            }}
-                          >
-                            —
-                          </span>
+                    <TableCell align="right">
+                      {
+                        line.item
+                          .on_order
+                      }
+                    </TableCell>
+
+                    <TableCell align="right">
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+
+                        value={
+                          line.qty
+                        }
+
+                        disabled={
+                          saving
+                        }
+
+                        onChange={(e) =>
+                          changeQty(
+                            line.item.id,
+                            Number(
+                              e.target
+                                .value
+                            )
+                          )
+                        }
+
+                        style={{
+                          width: 90,
+
+                          padding:
+                            "8px 9px",
+
+                          border:
+                            "1px solid var(--border-color)",
+
+                          borderRadius: 7,
+
+                          background:
+                            "var(--input-bg)",
+
+                          color:
+                            "var(--foreground)",
+
+                          textAlign:
+                            "right",
+
+                          fontWeight: 800,
+                        }}
+                      />
+                    </TableCell>
+
+                    <TableCell align="right">
+                      <strong>
+                        {formatEuro(
+                          line.qty *
+                            line.item
+                              .price
                         )}
-                      </td>
+                      </strong>
+                    </TableCell>
 
-                      {canViewInventoryValue && (
-                        <td style={rightCellStyle}>
-                          <strong>
-                            {formatEuro(
-                              item.stock *
-                                item.price
-                            )}
-                          </strong>
-                        </td>
-                      )}
-                    </tr>
-                  );
-                })
+                    <TableCell>
+                      <button
+                        type="button"
+                        disabled={
+                          saving
+                        }
+                        onClick={() =>
+                          removeLine(
+                            line.item.id
+                          )
+                        }
+                        style={{
+                          padding:
+                            "7px 10px",
+
+                          borderRadius: 7,
+
+                          border:
+                            "1px solid rgba(239,68,68,0.35)",
+
+                          background:
+                            "rgba(239,68,68,0.08)",
+
+                          color:
+                            "#ef4444",
+
+                          cursor:
+                            saving
+                              ? "not-allowed"
+                              : "pointer",
+
+                          fontWeight: 750,
+                        }}
+                      >
+                        Togli
+                      </button>
+                    </TableCell>
+                  </tr>
+                ))
               )}
             </tbody>
           </table>
         </div>
       </div>
 
+      {/* AGGIUNTA ARTICOLI */}
+
+      {showAddItems && (
+        <div
+          style={{
+            marginTop: 18,
+
+            padding: 18,
+
+            border:
+              "1px solid var(--border-color)",
+
+            borderRadius: 12,
+
+            background:
+              "var(--card)",
+          }}
+        >
+          <div
+            style={{
+              fontSize: 18,
+              fontWeight: 850,
+              marginBottom: 12,
+            }}
+          >
+            Aggiungi articolo
+          </div>
+
+          <input
+            value={search}
+            onChange={(e) =>
+              setSearch(
+                e.target.value
+              )
+            }
+            placeholder="Cerca codice articolo, scanner o descrizione..."
+            style={{
+              width: "100%",
+              boxSizing:
+                "border-box",
+
+              padding:
+                "12px 14px",
+
+              borderRadius: 8,
+
+              border:
+                "1px solid var(--border-color)",
+
+              background:
+                "var(--input-bg)",
+
+              color:
+                "var(--foreground)",
+
+              outline: "none",
+
+              fontSize: 14,
+
+              marginBottom: 12,
+            }}
+          />
+
+          <div
+            style={{
+              maxHeight: 350,
+              overflowY: "auto",
+
+              border:
+                "1px solid var(--border-color)",
+
+              borderRadius: 9,
+            }}
+          >
+            {availableItems.length ===
+            0 ? (
+              <div
+                style={{
+                  padding: 25,
+                  textAlign:
+                    "center",
+                  opacity: 0.55,
+                }}
+              >
+                Nessun articolo disponibile.
+              </div>
+            ) : (
+              availableItems.map(
+                (item) => (
+                  <div
+                    key={item.id}
+                    style={{
+                      padding:
+                        "12px 14px",
+
+                      display: "flex",
+
+                      justifyContent:
+                        "space-between",
+
+                      alignItems:
+                        "center",
+
+                      gap: 15,
+
+                      borderBottom:
+                        "1px solid var(--border-color)",
+                    }}
+                  >
+                    <div>
+                      <div
+                        style={{
+                          fontWeight: 850,
+                        }}
+                      >
+                        {item.supplier_code ||
+                          "-"}
+                      </div>
+
+                      <div
+                        style={{
+                          marginTop: 3,
+                          fontSize: 13,
+                        }}
+                      >
+                        {item.description}
+                      </div>
+
+                      <div
+                        style={{
+                          marginTop: 3,
+                          fontSize: 11,
+                          opacity: 0.55,
+                        }}
+                      >
+                        Scanner:{" "}
+                        {item.code ||
+                          "-"}{" "}
+                        · Giacenza:{" "}
+                        {item.stock} ·
+                        Scorta min.:{" "}
+                        {
+                          item.min_stock
+                        }{" "}
+                        · €{" "}
+                        {Number(
+                          item.price
+                        ).toFixed(2)}
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+
+                      disabled={
+                        saving
+                      }
+
+                      onClick={() =>
+                        addItem(item)
+                      }
+
+                      style={
+                        primarySmallButton
+                      }
+                    >
+                      Aggiungi
+                    </button>
+                  </div>
+                )
+              )
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* CONFERMA */}
+
       <div
         style={{
-          marginTop: 12,
-          fontSize: 12,
-          opacity: 0.5,
+          marginTop: 22,
+
+          padding: 20,
+
+          border:
+            "1px solid var(--border-color)",
+
+          borderRadius: 12,
+
+          background:
+            "var(--card)",
+
+          display: "flex",
+
+          justifyContent:
+            "space-between",
+
+          alignItems:
+            "center",
+
+          gap: 20,
+
+          flexWrap: "wrap",
         }}
       >
-        Clicca sul codice articolo o sulla descrizione per aprire
-        la scheda completa.
+        <div>
+          <div
+            style={{
+              fontSize: 18,
+              fontWeight: 850,
+            }}
+          >
+            Conferma ordine
+          </div>
+
+          <div
+            style={{
+              marginTop: 5,
+              fontSize: 13,
+              opacity: 0.6,
+            }}
+          >
+            L&apos;ordine, le righe e le quantità
+            “in ordine” verranno registrati insieme
+            in un&apos;unica operazione sicura.
+          </div>
+        </div>
+
+        <button
+          type="button"
+
+          onClick={
+            confirmOrder
+          }
+
+          disabled={
+            saving ||
+            lines.length === 0
+          }
+
+          style={primaryButtonStyle(
+            saving ||
+              lines.length === 0
+          )}
+        >
+          {saving
+            ? "Creazione ordine..."
+            : "Conferma ordine"}
+        </button>
       </div>
     </div>
   );
@@ -1474,37 +1543,36 @@ function SummaryCard({
   title,
   value,
   subtitle,
-  warning = false,
 }: {
   title: string;
   value: string;
   subtitle: string;
-  warning?: boolean;
 }) {
   return (
     <div
       style={{
         padding: 18,
 
-        border: warning
-          ? "1px solid rgba(239, 68, 68, 0.5)"
-          : "1px solid var(--border-color)",
+        border:
+          "1px solid var(--border-color)",
 
         borderRadius: 12,
 
-        background: warning
-          ? "rgba(239, 68, 68, 0.08)"
-          : "var(--card)",
+        background:
+          "var(--card)",
       }}
     >
       <div
         style={{
-          fontSize: 12,
+          fontSize: 11,
+          opacity: 0.55,
+
           textTransform:
             "uppercase",
+
           letterSpacing: 0.8,
+
           fontWeight: 700,
-          opacity: 0.55,
         }}
       >
         {title}
@@ -1515,10 +1583,8 @@ function SummaryCard({
           fontSize: 27,
           fontWeight: 850,
           marginTop: 7,
-          letterSpacing: "-0.5px",
         }}
       >
-        {warning && "⚠ "}
         {value}
       </div>
 
@@ -1535,190 +1601,205 @@ function SummaryCard({
   );
 }
 
-function StockBadge({
-  stock,
-  minStock,
+function TableHead({
+  children,
+  align = "left",
 }: {
-  stock: number;
-  minStock: number;
+  children: React.ReactNode;
+  align?: "left" | "right";
 }) {
-  const low =
-    minStock > 0 &&
-    stock <= minStock;
-
-  if (low) {
-    return (
-      <span
-        title={`Scorta minima: ${minStock}`}
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 5,
-
-          padding: "5px 10px",
-
-          borderRadius: 20,
-
-          background:
-            "rgba(239, 68, 68, 0.18)",
-
-          border:
-            "1px solid rgba(239, 68, 68, 0.4)",
-
-          fontWeight: 850,
-        }}
-      >
-        ⚠ {stock}
-      </span>
-    );
-  }
-
   return (
-    <span
+    <th
       style={{
-        display: "inline-block",
-        minWidth: 34,
-        padding: "5px 10px",
+        padding:
+          "11px 12px",
 
-        borderRadius: 20,
+        textAlign: align,
 
-        background:
-          "rgba(34, 197, 94, 0.12)",
+        fontSize: 10,
+
+        textTransform:
+          "uppercase",
+
+        letterSpacing: 0.5,
+
+        opacity: 0.6,
 
         fontWeight: 800,
+
+        whiteSpace:
+          "nowrap",
       }}
     >
-      {stock}
-    </span>
+      {children}
+    </th>
   );
 }
 
-function formatEuro(value: number) {
-  return new Intl.NumberFormat("it-IT", {
-    style: "currency",
-    currency: "EUR",
-    minimumFractionDigits: 2,
-  }).format(Number(value || 0));
+function TableCell({
+  children,
+  align = "left",
+}: {
+  children: React.ReactNode;
+  align?: "left" | "right";
+}) {
+  return (
+    <td
+      style={{
+        padding: "12px",
+        textAlign: align,
+        fontSize: 13,
+        verticalAlign:
+          "middle",
+      }}
+    >
+      {children}
+    </td>
+  );
+}
+
+/* ---------------- FORMATTAZIONE ---------------- */
+
+function formatEuro(
+  value: number
+) {
+  return new Intl.NumberFormat(
+    "it-IT",
+    {
+      style: "currency",
+      currency: "EUR",
+      minimumFractionDigits: 2,
+    }
+  ).format(
+    Number(value || 0)
+  );
+}
+
+function formatPdfEuro(
+  value: number
+) {
+  return (
+    new Intl.NumberFormat(
+      "it-IT",
+      {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }
+    ).format(
+      Number(value || 0)
+    ) + " EUR"
+  );
+}
+
+function formatDateForPdf(
+  date: Date
+) {
+  return new Intl.DateTimeFormat(
+    "it-IT",
+    {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    }
+  ).format(date);
 }
 
 /* ---------------- STILI ---------------- */
 
-const primaryButton = {
+const cardStyle = {
+  border:
+    "1px solid var(--border-color)",
+
+  borderRadius: 12,
+
+  overflow: "hidden",
+
+  background:
+    "var(--card)",
+};
+
+const tableStyle = {
+  width: "100%",
+  minWidth: 1300,
+
+  borderCollapse:
+    "collapse" as const,
+};
+
+const secondaryButtonStyle = {
   display: "inline-block",
-  padding: "11px 16px",
+
+  padding:
+    "10px 14px",
 
   borderRadius: 8,
+
+  border:
+    "1px solid var(--border-color)",
+
+  background:
+    "var(--input-bg)",
+
+  color:
+    "var(--foreground)",
+
+  cursor: "pointer",
+
+  fontWeight: 800,
+
+  textDecoration:
+    "none",
+};
+
+const primarySmallButton = {
+  padding:
+    "8px 12px",
+
+  borderRadius: 7,
+
   border:
     "1px solid var(--foreground)",
 
   background:
     "var(--foreground)",
+
   color:
     "var(--background)",
 
-  textDecoration: "none",
-  fontWeight: 750,
-};
-
-const secondaryButton = {
-  display: "inline-block",
-  padding: "11px 16px",
-
-  borderRadius: 8,
-  border:
-    "1px solid var(--border-color)",
-
-  background:
-    "var(--card)",
-  color:
-    "var(--foreground)",
-
-  textDecoration: "none",
-  fontWeight: 650,
-};
-
-const warehousePdfButton = {
-  display: "inline-block",
-  padding: "11px 16px",
-
-  borderRadius: 8,
-  border:
-    "1px solid var(--border-color)",
-
-  background:
-    "var(--card)",
-  color:
-    "var(--foreground)",
-
   cursor: "pointer",
-  fontWeight: 750,
+
+  fontWeight: 800,
 };
 
-const detailedPdfButton = {
-  display: "inline-block",
-  padding: "11px 16px",
+function primaryButtonStyle(
+  disabled: boolean
+) {
+  return {
+    padding:
+      "12px 19px",
 
-  borderRadius: 8,
-  border:
-    "1px solid rgba(59,130,246,0.45)",
+    borderRadius: 9,
 
-  background:
-    "rgba(59,130,246,0.12)",
+    border: disabled
+      ? "1px solid var(--border-color)"
+      : "1px solid var(--foreground)",
 
-  color:
-    "var(--foreground)",
+    background: disabled
+      ? "var(--card-2)"
+      : "var(--foreground)",
 
-  cursor: "pointer",
-  fontWeight: 750,
-};
+    color: disabled
+      ? "var(--foreground)"
+      : "var(--background)",
 
-const headerStyle = {
-  padding: "13px 14px",
-  textAlign: "left" as const,
+    cursor: disabled
+      ? "not-allowed"
+      : "pointer",
 
-  fontSize: 12,
-  textTransform:
-    "uppercase" as const,
-  letterSpacing: 0.5,
+    fontWeight: 850,
 
-  opacity: 0.7,
-
-  borderBottom:
-    "1px solid var(--border-color)",
-
-  whiteSpace:
-    "nowrap" as const,
-};
-
-const headerCenterStyle = {
-  ...headerStyle,
-  textAlign: "center" as const,
-};
-
-const headerRightStyle = {
-  ...headerStyle,
-  textAlign: "right" as const,
-};
-
-const cellStyle = {
-  padding: "12px 14px",
-  fontSize: 14,
-};
-
-const centerCellStyle = {
-  ...cellStyle,
-  textAlign: "center" as const,
-};
-
-const rightCellStyle = {
-  ...cellStyle,
-  textAlign: "right" as const,
-  whiteSpace:
-    "nowrap" as const,
-};
-
-const emptyStyle = {
-  padding: 45,
-  textAlign: "center" as const,
-  opacity: 0.55,
-};
+    opacity: disabled
+      ? 0.5
+      : 1,
+  };
+}

@@ -5,6 +5,7 @@ import type {
 
 import PwaRegister from "./PwaRegister";
 import CatalogoNav from "./CatalogoNav";
+import PwaAccessGate from "./PwaAccessGate";
 
 export const metadata: Metadata = {
   title: "Catalogo Magazzino",
@@ -24,33 +25,35 @@ export default function CatalogoLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-
-        background:
-          "radial-gradient(circle at top right, rgba(37,99,235,0.10), transparent 32%), linear-gradient(180deg, #07101b 0%, #091321 45%, #08111d 100%)",
-
-        color: "var(--foreground)",
-      }}
-    >
-      <PwaRegister />
-
-      <CatalogoNav />
-
-      <main
+    <PwaAccessGate>
+      <div
         style={{
-          width: "100%",
+          minHeight: "100vh",
 
-          boxSizing:
-            "border-box",
+          background:
+            "radial-gradient(circle at top right, rgba(37,99,235,0.10), transparent 32%), linear-gradient(180deg, #07101b 0%, #091321 45%, #08111d 100%)",
 
-          padding:
-            "26px 20px 48px",
+          color: "var(--foreground)",
         }}
       >
-        {children}
-      </main>
-    </div>
+        <PwaRegister />
+
+        <CatalogoNav />
+
+        <main
+          style={{
+            width: "100%",
+
+            boxSizing:
+              "border-box",
+
+            padding:
+              "26px 20px 48px",
+          }}
+        >
+          {children}
+        </main>
+      </div>
+    </PwaAccessGate>
   );
 }

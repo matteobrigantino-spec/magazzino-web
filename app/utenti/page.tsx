@@ -30,7 +30,6 @@ type Permissions = {
 type UserRow = {
   id: string;
   username: string;
-  password: string;
   role: string | null;
   session_version: number | null;
   display_name: string | null;
@@ -277,7 +276,6 @@ export default function UsersPage() {
         `
           id,
           username,
-          password,
           role,
           session_version,
           display_name,
@@ -478,24 +476,21 @@ export default function UsersPage() {
     if (!editingUser) {
       const {
         error,
-      } = await supabase
-        .from("users")
-        .insert({
-          username:
+      } = await supabase.rpc(
+        "create_magazzino_user",
+        {
+          p_username:
             cleanUsername,
-          password:
+          p_password:
             cleanPassword,
-          display_name:
+          p_display_name:
             cleanDisplayName,
-          role: "user",
-          session_version: 1,
-          is_active:
+          p_is_active:
             isActive,
-          permissions:
+          p_permissions:
             finalPermissions,
-          updated_at:
-            new Date().toISOString(),
-        });
+        }
+      );
 
       if (error) {
         if (
@@ -503,6 +498,11 @@ export default function UsersPage() {
             .toLowerCase()
             .includes(
               "unique"
+            ) ||
+          error.message
+            .toLowerCase()
+            .includes(
+              "duplicate"
             )
         ) {
           setMsg(
@@ -531,56 +531,32 @@ export default function UsersPage() {
       return;
     }
 
-    const currentVersion =
-      Number(
-        editingUser.session_version ||
-          1
-      );
-
-    const updateData: {
-      username: string;
-      display_name: string;
-      is_active: boolean;
-      permissions: Permissions;
-      updated_at: string;
-      password?: string;
-      session_version?: number;
-    } = {
-      username:
-        cleanUsername,
-      display_name:
-        cleanDisplayName,
-      is_active:
-        isActive,
-      permissions:
-        finalPermissions,
-      updated_at:
-        new Date().toISOString(),
-    };
-
     /*
-      Se viene inserita una nuova
-      password aumentiamo la
-      session_version per scollegare
-      gli altri PC dell'utente.
+      La modifica passa dalla funzione SQL.
+      Se viene inserita una nuova password,
+      viene aggiornato password_hash e viene
+      incrementata la session_version.
+      La password in chiaro non viene salvata.
     */
-    if (cleanPassword) {
-      updateData.password =
-        cleanPassword;
-
-      updateData.session_version =
-        currentVersion + 1;
-    }
-
     const {
       error,
-    } = await supabase
-      .from("users")
-      .update(updateData)
-      .eq(
-        "id",
-        editingUser.id
-      );
+    } = await supabase.rpc(
+      "update_magazzino_user",
+      {
+        p_user_id:
+          editingUser.id,
+        p_username:
+          cleanUsername,
+        p_display_name:
+          cleanDisplayName,
+        p_is_active:
+          isActive,
+        p_permissions:
+          finalPermissions,
+        p_password:
+          cleanPassword || null,
+      }
+    );
 
     if (error) {
       if (

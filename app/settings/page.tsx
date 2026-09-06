@@ -58,43 +58,39 @@ export default function SettingsPage() {
       );
     }
 
-    if (!newPassword.trim()) {
+    const cleanPassword =
+      newPassword.trim();
+
+    if (!cleanPassword) {
       setMsg("Inserisci una nuova password");
       setSaving(false);
       return;
     }
 
-    const {
-      data: currentUser,
-      error: readError,
-    } = await supabase
-      .from("users")
-      .select("session_version")
-      .eq("id", userId)
-      .maybeSingle();
-
-    if (readError || !currentUser) {
-      setMsg("Errore lettura utente");
+    if (cleanPassword.length < 4) {
+      setMsg(
+        "La password deve contenere almeno 4 caratteri."
+      );
       setSaving(false);
       return;
     }
 
-    const newVersion =
-      Number(
-        currentUser.session_version || 1
-      ) + 1;
+    if (!userId) {
+      setMsg("Utente non trovato");
+      setSaving(false);
+      return;
+    }
 
-    const { error } =
-      await supabase
-        .from("users")
-        .update({
-          password:
-            newPassword.trim(),
-
-          session_version:
-            newVersion,
-        })
-        .eq("id", userId);
+    const {
+      data,
+      error,
+    } = await supabase.rpc(
+      "change_magazzino_password",
+      {
+        p_user_id: userId,
+        p_password: cleanPassword,
+      }
+    );
 
     if (error) {
       setMsg(
@@ -102,6 +98,17 @@ export default function SettingsPage() {
           error.message
       );
 
+      setSaving(false);
+      return;
+    }
+
+    const newVersion =
+      Number(data);
+
+    if (!Number.isFinite(newVersion)) {
+      setMsg(
+        "Password aggiornata, ma non è stato possibile aggiornare la sessione locale."
+      );
       setSaving(false);
       return;
     }

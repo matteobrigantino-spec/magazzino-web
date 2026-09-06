@@ -23,7 +23,6 @@ type UserPermissions = {
 type LoginUser = {
   id: string;
   username: string;
-  password: string;
   role: string | null;
   session_version: number | null;
   display_name: string | null;
@@ -76,29 +75,15 @@ export default function LoginPage() {
       const {
         data,
         error,
-      } = await supabase
-        .from("users")
-        .select(
-          `
-            id,
-            username,
-            password,
-            role,
-            session_version,
-            display_name,
-            is_active,
-            permissions
-          `
-        )
-        .eq(
-          "username",
-          cleanUsername
-        )
-        .eq(
-          "password",
-          cleanPassword
-        )
-        .maybeSingle<LoginUser>();
+      } = await supabase.rpc(
+        "login_user",
+        {
+          p_username:
+            cleanUsername,
+          p_password:
+            cleanPassword,
+        }
+      );
 
       if (error) {
         setMsg(
@@ -110,7 +95,13 @@ export default function LoginPage() {
         return;
       }
 
-      if (!data) {
+      const loginRows =
+        (data || []) as LoginUser[];
+
+      const loginUser =
+        loginRows[0] || null;
+
+      if (!loginUser) {
         setMsg(
           "Username o password errati"
         );
@@ -120,7 +111,7 @@ export default function LoginPage() {
       }
 
       if (
-        data.is_active === false
+        loginUser.is_active === false
       ) {
         setMsg(
           "Questo account è stato disattivato."
@@ -131,37 +122,37 @@ export default function LoginPage() {
       }
 
       const permissions =
-        data.permissions &&
-        typeof data.permissions ===
+        loginUser.permissions &&
+        typeof loginUser.permissions ===
           "object"
-          ? data.permissions
+          ? loginUser.permissions
           : {};
 
       localStorage.setItem(
         "magazzino_user",
-        data.username
+        loginUser.username
       );
 
       localStorage.setItem(
         "magazzino_display_name",
-        data.display_name ||
-          data.username
+        loginUser.display_name ||
+          loginUser.username
       );
 
       localStorage.setItem(
         "magazzino_role",
-        data.role || "user"
+        loginUser.role || "user"
       );
 
       localStorage.setItem(
         "magazzino_user_id",
-        data.id
+        loginUser.id
       );
 
       localStorage.setItem(
         "magazzino_session_version",
         String(
-          data.session_version || 1
+          loginUser.session_version || 1
         )
       );
 

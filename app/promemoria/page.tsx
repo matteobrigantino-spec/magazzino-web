@@ -10,6 +10,7 @@ import { supabase } from "../../lib/supabaseClient";
 
 type Reminder = {
   id: string;
+  user_id: string;
   title: string;
   reminder_date: string;
   note: string | null;
@@ -74,13 +75,31 @@ export default function PromemoriaPage() {
     setLoading(true);
     setMessage("");
 
+    const currentUserId =
+      localStorage.getItem(
+        "magazzino_user_id"
+      );
+
+    if (!currentUserId) {
+      setReminders([]);
+      setMessage(
+        "Utente non riconosciuto. Esci e accedi nuovamente."
+      );
+      setLoading(false);
+      return;
+    }
+
     const {
       data,
       error,
     } = await supabase
       .from("reminders")
       .select(
-        "id,title,reminder_date,note,is_done,completed_at,created_at"
+        "id,user_id,title,reminder_date,note,is_done,completed_at,created_at"
+      )
+      .eq(
+        "user_id",
+        currentUserId
       )
       .order(
         "reminder_date",
@@ -113,6 +132,11 @@ export default function PromemoriaPage() {
           id:
             String(
               row.id
+            ),
+
+          user_id:
+            String(
+              row.user_id || ""
             ),
 
           title:
@@ -320,6 +344,19 @@ export default function PromemoriaPage() {
     const cleanTitle =
       title.trim();
 
+    const currentUserId =
+      localStorage.getItem(
+        "magazzino_user_id"
+      );
+
+    if (!currentUserId) {
+      window.alert(
+        "Utente non riconosciuto. Esci e accedi nuovamente."
+      );
+
+      return;
+    }
+
     if (!cleanTitle) {
       window.alert(
         "Inserisci il titolo del promemoria."
@@ -359,6 +396,10 @@ export default function PromemoriaPage() {
         .eq(
           "id",
           editingReminder.id
+        )
+        .eq(
+          "user_id",
+          currentUserId
         );
 
       if (error) {
@@ -380,6 +421,9 @@ export default function PromemoriaPage() {
       } = await supabase
         .from("reminders")
         .insert({
+          user_id:
+            currentUserId,
+
           title:
             cleanTitle,
 
@@ -421,6 +465,19 @@ export default function PromemoriaPage() {
   async function completeReminder(
     reminder: Reminder
   ) {
+    const currentUserId =
+      localStorage.getItem(
+        "magazzino_user_id"
+      );
+
+    if (!currentUserId) {
+      window.alert(
+        "Utente non riconosciuto. Esci e accedi nuovamente."
+      );
+
+      return;
+    }
+
     const {
       error,
     } = await supabase
@@ -435,6 +492,10 @@ export default function PromemoriaPage() {
       .eq(
         "id",
         reminder.id
+      )
+      .eq(
+        "user_id",
+        currentUserId
       );
 
     if (error) {
@@ -452,6 +513,19 @@ export default function PromemoriaPage() {
   async function reopenReminder(
     reminder: Reminder
   ) {
+    const currentUserId =
+      localStorage.getItem(
+        "magazzino_user_id"
+      );
+
+    if (!currentUserId) {
+      window.alert(
+        "Utente non riconosciuto. Esci e accedi nuovamente."
+      );
+
+      return;
+    }
+
     const {
       error,
     } = await supabase
@@ -466,6 +540,10 @@ export default function PromemoriaPage() {
       .eq(
         "id",
         reminder.id
+      )
+      .eq(
+        "user_id",
+        currentUserId
       );
 
     if (error) {
@@ -483,6 +561,19 @@ export default function PromemoriaPage() {
   async function deleteReminder(
     reminder: Reminder
   ) {
+    const currentUserId =
+      localStorage.getItem(
+        "magazzino_user_id"
+      );
+
+    if (!currentUserId) {
+      window.alert(
+        "Utente non riconosciuto. Esci e accedi nuovamente."
+      );
+
+      return;
+    }
+
     const confirmed =
       window.confirm(
         `Vuoi eliminare definitivamente questo promemoria?\n\n${reminder.title}`
@@ -500,6 +591,10 @@ export default function PromemoriaPage() {
       .eq(
         "id",
         reminder.id
+      )
+      .eq(
+        "user_id",
+        currentUserId
       );
 
     if (error) {

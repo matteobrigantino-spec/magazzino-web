@@ -27,6 +27,18 @@ type Item = {
   on_order: number;
 };
 
+type ItemDbRow = {
+  id: string;
+  supplier_id: string;
+  code: string | null;
+  supplier_code: string | null;
+  description: string | null;
+  price?: number | null;
+  stock: number | null;
+  min_stock: number | null;
+  on_order: number | null;
+};
+
 type Order = {
   id: string;
   supplier_id: string;
@@ -41,12 +53,34 @@ type LowStockItem = Item & {
 
 type Reminder = {
   id: string;
+  user_id: string;
   title: string;
   reminder_date: string;
   note: string | null;
   is_done: boolean;
   completed_at: string | null;
   created_at: string;
+};
+
+type SharedNoteRecipient = {
+  id: string;
+  username: string;
+  display_name: string | null;
+};
+
+type Permissions = {
+  dashboard?: boolean;
+  view_prices?: boolean;
+  view_inventory_value?: boolean;
+  suppliers?: boolean;
+  movements?: boolean;
+  missing_codes?: boolean;
+  orders?: boolean;
+  create_orders?: boolean;
+  reminders?: boolean;
+  settings?: boolean;
+  manage_users?: boolean;
+  low_stock?: boolean;
 };
 
 const DAILY_QUOTES = [
@@ -143,6 +177,74 @@ export default function Home() {
     setSavingReminder,
   ] = useState(false);
 
+  const [
+    permissions,
+    setPermissions,
+  ] = useState<Permissions>({});
+
+  const [
+    displayName,
+    setDisplayName,
+  ] = useState("Utente");
+
+  const [
+    isMainAccount,
+    setIsMainAccount,
+  ] = useState(false);
+
+  const [
+    sharedNoteModalOpen,
+    setSharedNoteModalOpen,
+  ] = useState(false);
+
+  const [
+    sharedNoteTitle,
+    setSharedNoteTitle,
+  ] = useState("");
+
+  const [
+    sharedNoteMessage,
+    setSharedNoteMessage,
+  ] = useState("");
+
+  const [
+    sharedNoteRecipients,
+    setSharedNoteRecipients,
+  ] = useState<SharedNoteRecipient[]>([]);
+
+  const [
+    sharedNoteRecipientId,
+    setSharedNoteRecipientId,
+  ] = useState("");
+
+  const [
+    loadingSharedNoteRecipients,
+    setLoadingSharedNoteRecipients,
+  ] = useState(false);
+
+  const [
+    sendingSharedNote,
+    setSendingSharedNote,
+  ] = useState(false);
+
+  const canViewInventoryValue =
+    permissions.view_inventory_value === true;
+
+  const canViewSuppliers =
+    permissions.suppliers === true;
+
+  const canViewMovements =
+    permissions.movements === true;
+
+  const canViewOrders =
+    permissions.orders === true;
+
+  const canViewReminders =
+    permissions.reminders === true;
+
+  const canViewLowStock =
+    permissions.low_stock !== false;
+
   useEffect(() => {
     setNow(new Date());
 
@@ -164,6 +266,47 @@ export default function Home() {
     setLoading(true);
     setErrorMessage("");
 
+    const currentPermissions =
+      readLocalPermissions();
+
+    const currentUserId =
+      localStorage.getItem(
+        "magazzino_user_id"
+      ) || "";
+
+    setPermissions(
+      currentPermissions
+    );
+
+    setDisplayName(
+      localStorage.getItem(
+        "magazzino_display_name"
+      ) ||
+        localStorage.getItem(
+          "magazzino_user"
+        ) ||
+        "Utente"
+    );
+
+    setIsMainAccount(
+      localStorage.getItem(
+        "magazzino_user"
+      ) === "admin"
+    );
+
+    /*
+      Se l'utente non può accedere
+      alla Dashboard non carichiamo
+      dati inutilmente.
+    */
+    if (
+      currentPermissions.dashboard !==
+      true
+    ) {
+      setLoading(false);
+      return;
+    }
+
     const {
       data: suppliersData,
       error: suppliersError,
@@ -182,71 +325,134 @@ export default function Home() {
       return;
     }
 
-    const {
-      data: itemsData,
-      error: itemsError,
-    } = await supabase
-      .from("items")
-      .select(
-        "id,supplier_id,code,supplier_code,description,price,stock,min_stock,on_order"
-      );
+    let itemsData: ItemDbRow[] = [];
 
-    if (itemsError) {
-      setErrorMessage(
-        "Errore caricamento articoli: " +
-          itemsError.message
-      );
+    if (
+      currentPermissions
+        .view_inventory_value === true
+    ) {
+      const {
+        data,
+        error,
+      } = await supabase
+        .from("items")
+        .select(
+          "id,supplier_id,code,supplier_code,description,price,stock,min_stock,on_order"
+        );
 
-      setLoading(false);
-      return;
+      if (error) {
+        setErrorMessage(
+          "Errore caricamento articoli: " +
+            error.message
+        );
+
+        setLoading(false);
+        return;
+      }
+
+      itemsData =
+        (data || []) as ItemDbRow[];
+    } else {
+      const {
+        data,
+        error,
+      } = await supabase
+        .from("items")
+        .select(
+          "id,supplier_id,code,supplier_code,description,stock,min_stock,on_order"
+        );
+
+      if (error) {
+        setErrorMessage(
+          "Errore caricamento articoli: " +
+            error.message
+        );
+
+        setLoading(false);
+        return;
+      }
+
+      itemsData =
+        (data || []) as ItemDbRow[];
     }
 
-    const {
-      data: ordersData,
-      error: ordersError,
-    } = await supabase
-      .from("orders")
-      .select(
-        "id,supplier_id,status,order_date,created_at"
-      )
-      .order("created_at", {
-        ascending: false,
-      });
+    let ordersData: Order[] = [];
 
-    if (ordersError) {
-      setErrorMessage(
-        "Errore caricamento ordini: " +
-          ordersError.message
-      );
+    if (
+      currentPermissions.orders ===
+      true
+    ) {
+      const {
+        data,
+        error,
+      } = await supabase
+        .from("orders")
+        .select(
+          "id,supplier_id,status,order_date,created_at"
+        )
+        .order("created_at", {
+          ascending: false,
+        });
 
-      setLoading(false);
-      return;
+      if (error) {
+        setErrorMessage(
+          "Errore caricamento ordini: " +
+            error.message
+        );
+
+        setLoading(false);
+        return;
+      }
+
+      ordersData =
+        (data || []) as Order[];
     }
 
-    const {
-      data: remindersData,
-      error: remindersError,
-    } = await supabase
-      .from("reminders")
-      .select(
-        "id,title,reminder_date,note,is_done,completed_at,created_at"
-      )
-      .eq("is_done", false)
-      .order("reminder_date", {
-        ascending: true,
-      })
-      .order("created_at", {
-        ascending: true,
-      });
+    let remindersData:
+      Reminder[] = [];
 
-    if (remindersError) {
-      setErrorMessage(
-        "Errore caricamento promemoria: " +
-          remindersError.message
-      );
+    if (
+      currentPermissions.reminders ===
+      true
+    ) {
+      if (!currentUserId) {
+        setErrorMessage(
+          "Utente non riconosciuto. Esci e accedi nuovamente."
+        );
 
-      setLoading(false);
-      return;
+        setLoading(false);
+        return;
+      }
+
+      const {
+        data,
+        error,
+      } = await supabase
+        .from("reminders")
+        .select(
+          "id,user_id,title,reminder_date,note,is_done,completed_at,created_at"
+        )
+        .eq("user_id", currentUserId)
+        .eq("is_done", false)
+        .order("reminder_date", {
+          ascending: true,
+        })
+        .order("created_at", {
+          ascending: true,
+        });
+
+      if (error) {
+        setErrorMessage(
+          "Errore caricamento promemoria: " +
+            error.message
+        );
+
+        setLoading(false);
+        return;
+      }
+
+      remindersData =
+        (data || []) as Reminder[];
     }
 
     const cleanSuppliers: Supplier[] =
@@ -287,9 +493,13 @@ export default function Home() {
             ),
 
           price:
-            Number(
-              row.price || 0
-            ),
+            currentPermissions
+              .view_inventory_value ===
+            true
+              ? Number(
+                  row.price || 0
+                )
+              : 0,
 
           stock:
             Number(
@@ -344,6 +554,11 @@ export default function Home() {
       (remindersData || []).map(
         (row) => ({
           id: String(row.id),
+
+          user_id:
+            String(
+              row.user_id || ""
+            ),
 
           title:
             String(
@@ -431,6 +646,19 @@ export default function Home() {
       return;
     }
 
+    const currentUserId =
+      localStorage.getItem(
+        "magazzino_user_id"
+      );
+
+    if (!currentUserId) {
+      window.alert(
+        "Utente non riconosciuto. Esci e accedi nuovamente."
+      );
+
+      return;
+    }
+
     setSavingReminder(true);
 
     const {
@@ -438,6 +666,9 @@ export default function Home() {
     } = await supabase
       .from("reminders")
       .insert({
+        user_id:
+          currentUserId,
+
         title:
           cleanTitle,
 
@@ -470,15 +701,250 @@ export default function Home() {
     await loadReminders();
   }
 
+  async function openSharedNoteModal() {
+    setSharedNoteTitle("");
+    setSharedNoteMessage("");
+    setSharedNoteRecipients([]);
+    setSharedNoteRecipientId("");
+    setSharedNoteModalOpen(
+      true
+    );
+
+    const currentUserId =
+      localStorage.getItem(
+        "magazzino_user_id"
+      );
+
+    if (!currentUserId) {
+      window.alert(
+        "Utente non riconosciuto. Esci e accedi nuovamente."
+      );
+
+      setSharedNoteModalOpen(
+        false
+      );
+
+      return;
+    }
+
+    setLoadingSharedNoteRecipients(
+      true
+    );
+
+    const {
+      data,
+      error,
+    } = await supabase
+      .from("users")
+      .select(
+        "id,username,display_name"
+      )
+      .eq("is_active", true)
+      .neq("id", currentUserId)
+      .order("display_name", {
+        ascending: true,
+        nullsFirst: false,
+      })
+      .order("username", {
+        ascending: true,
+      });
+
+    if (error) {
+      window.alert(
+        "Errore caricamento destinatari: " +
+          error.message
+      );
+
+      setLoadingSharedNoteRecipients(
+        false
+      );
+
+      return;
+    }
+
+    const cleanRecipients:
+      SharedNoteRecipient[] =
+      (data || []).map(
+        (row) => ({
+          id:
+            String(
+              row.id
+            ),
+
+          username:
+            String(
+              row.username ||
+                ""
+            ),
+
+          display_name:
+            row.display_name
+              ? String(
+                  row.display_name
+                )
+              : null,
+        })
+      );
+
+    setSharedNoteRecipients(
+      cleanRecipients
+    );
+
+    setSharedNoteRecipientId(
+      cleanRecipients[0]?.id ||
+        ""
+    );
+
+    setLoadingSharedNoteRecipients(
+      false
+    );
+  }
+
+  function closeSharedNoteModal() {
+    if (sendingSharedNote) {
+      return;
+    }
+
+    setSharedNoteModalOpen(
+      false
+    );
+  }
+
+  async function sendSharedNote() {
+    const cleanTitle =
+      sharedNoteTitle.trim();
+
+    const cleanMessage =
+      sharedNoteMessage.trim();
+
+    if (!cleanTitle) {
+      window.alert(
+        "Inserisci il titolo della nota."
+      );
+
+      return;
+    }
+
+    if (!cleanMessage) {
+      window.alert(
+        "Scrivi il messaggio da inviare."
+      );
+
+      return;
+    }
+
+    const senderUserId =
+      localStorage.getItem(
+        "magazzino_user_id"
+      );
+
+    const senderName =
+      localStorage.getItem(
+        "magazzino_display_name"
+      ) ||
+      localStorage.getItem(
+        "magazzino_user"
+      ) ||
+      "Utente";
+
+    if (!senderUserId) {
+      window.alert(
+        "Utente non riconosciuto. Esci e accedi nuovamente."
+      );
+
+      return;
+    }
+
+    if (!sharedNoteRecipientId) {
+      window.alert(
+        "Seleziona il destinatario della nota."
+      );
+
+      return;
+    }
+
+    setSendingSharedNote(true);
+
+    const {
+      error,
+    } = await supabase
+      .from("shared_notes")
+      .insert({
+        sender_user_id:
+          senderUserId,
+
+        recipient_user_id:
+          sharedNoteRecipientId,
+
+        sender_name:
+          senderName,
+
+        title:
+          cleanTitle,
+
+        message:
+          cleanMessage,
+
+        status:
+          "new",
+
+        read_at:
+          null,
+
+        resolved_at:
+          null,
+      });
+
+    if (error) {
+      window.alert(
+        "Nota non inviata: " +
+          error.message
+      );
+
+      setSendingSharedNote(false);
+      return;
+    }
+
+    setSendingSharedNote(false);
+    setSharedNoteModalOpen(
+      false
+    );
+
+    setSharedNoteTitle("");
+    setSharedNoteMessage("");
+    setSharedNoteRecipientId("");
+    setSharedNoteRecipients([]);
+
+    window.alert(
+      "Nota inviata correttamente."
+    );
+  }
+
   async function loadReminders() {
+    if (!canViewReminders) {
+      setReminders([]);
+      return;
+    }
+
+    const currentUserId =
+      localStorage.getItem(
+        "magazzino_user_id"
+      );
+
+    if (!currentUserId) {
+      setReminders([]);
+      return;
+    }
+
     const {
       data,
       error,
     } = await supabase
       .from("reminders")
       .select(
-        "id,title,reminder_date,note,is_done,completed_at,created_at"
+        "id,user_id,title,reminder_date,note,is_done,completed_at,created_at"
       )
+      .eq("user_id", currentUserId)
       .eq("is_done", false)
       .order("reminder_date", {
         ascending: true,
@@ -501,6 +967,11 @@ export default function Home() {
           id:
             String(
               row.id
+            ),
+
+          user_id:
+            String(
+              row.user_id || ""
             ),
 
           title:
@@ -548,6 +1019,19 @@ export default function Home() {
   async function completeReminder(
     id: string
   ) {
+    const currentUserId =
+      localStorage.getItem(
+        "magazzino_user_id"
+      );
+
+    if (!currentUserId) {
+      window.alert(
+        "Utente non riconosciuto. Esci e accedi nuovamente."
+      );
+
+      return;
+    }
+
     const {
       error,
     } = await supabase
@@ -557,7 +1041,11 @@ export default function Home() {
         completed_at:
           new Date().toISOString(),
       })
-      .eq("id", id);
+      .eq("id", id)
+      .eq(
+        "user_id",
+        currentUserId
+      );
 
     if (error) {
       window.alert(
@@ -693,6 +1181,54 @@ export default function Home() {
     );
   }
 
+  if (
+    permissions.dashboard !==
+    true
+  ) {
+    return (
+      <div
+        style={{
+          maxWidth: 620,
+          margin: "70px auto",
+          padding: 30,
+          textAlign: "center",
+          border:
+            "1px solid var(--border-color)",
+          borderRadius: 16,
+          background: "var(--card)",
+        }}
+      >
+        <div
+          style={{
+            fontSize: 38,
+            marginBottom: 12,
+          }}
+        >
+          🔒
+        </div>
+
+        <h1
+          style={{
+            margin: "0 0 8px",
+            fontSize: 28,
+          }}
+        >
+          Accesso non consentito
+        </h1>
+
+        <div
+          style={{
+            opacity: 0.62,
+          }}
+        >
+          Il tuo account non ha il
+          permesso di visualizzare la
+          Dashboard.
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="home-dashboard">
       {/* HERO */}
@@ -714,7 +1250,7 @@ export default function Home() {
             <h1>
               Buongiorno{" "}
               <span>
-                Matteo
+                {displayName}
               </span>
             </h1>
 
@@ -798,299 +1334,492 @@ export default function Home() {
       {/* KPI */}
 
       <section className="home-kpi-grid">
-        <KpiCard
-          title="Da riordinare"
-          value={String(
-            lowStockItems.length
-          )}
-          subtitle="Codici sotto scorta"
-          tone="orange"
-          icon={
-            <AlertIcon />
-          }
-          onClick={() =>
-            router.push(
-              "/low-stock-report"
-            )
-          }
-        />
+        {canViewLowStock && (
+          <KpiCard
+            title="Da riordinare"
+            value={String(
+              lowStockItems.length
+            )}
+            subtitle="Codici sotto scorta"
+            tone="orange"
+            icon={
+              <AlertIcon />
+            }
+            onClick={() =>
+              router.push(
+                "/low-stock-report"
+              )
+            }
+          />
+        )}
 
-        <KpiCard
-          title="Merce in arrivo"
-          value={`${formatNumber(
-            totalOnOrder
-          )} pz`}
-          subtitle="Quantità già ordinate"
-          tone="blue"
-          icon={
-            <IncomingIcon />
-          }
-          onClick={() =>
-            router.push(
-              "/orders"
-            )
-          }
-        />
+        {canViewOrders && (
+          <KpiCard
+            title="Merce in arrivo"
+            value={`${formatNumber(
+              totalOnOrder
+            )} pz`}
+            subtitle="Quantità già ordinate"
+            tone="blue"
+            icon={
+              <IncomingIcon />
+            }
+            onClick={() =>
+              router.push(
+                "/orders"
+              )
+            }
+          />
+        )}
 
-        <KpiCard
-          title="Ordini aperti"
-          value={String(
-            openOrders.length
-          )}
-          subtitle="In ordine o parziali"
-          tone="purple"
-          icon={
-            <DocumentIcon />
-          }
-          onClick={() =>
-            router.push(
-              "/orders"
-            )
-          }
-        />
+        {canViewOrders && (
+          <KpiCard
+            title="Ordini aperti"
+            value={String(
+              openOrders.length
+            )}
+            subtitle="In ordine o parziali"
+            tone="purple"
+            icon={
+              <DocumentIcon />
+            }
+            onClick={() =>
+              router.push(
+                "/orders"
+              )
+            }
+          />
+        )}
 
-        <KpiCard
-          title="Valore magazzino"
-          value={formatEuro(
-            warehouseValue
-          )}
-          subtitle="Giacenza × prezzo"
-          tone="green"
-          icon={
-            <EuroIcon />
-          }
-        />
+        {canViewInventoryValue && (
+          <KpiCard
+            title="Valore magazzino"
+            value={formatEuro(
+              warehouseValue
+            )}
+            subtitle="Giacenza × prezzo"
+            tone="green"
+            icon={
+              <EuroIcon />
+            }
+          />
+        )}
       </section>
 
       {/* AZIONI RAPIDE */}
 
-      <section className="home-panel home-actions-panel">
-        <PanelTitle
-          title="Azioni rapide"
-          subtitle="Accesso diretto alle operazioni principali."
-        />
-
-        <div className="home-actions-grid">
-          <QuickAction
-            title="Nuovo fornitore"
-            icon={<PlusIcon />}
-            onClick={() =>
-              router.push(
-                "/suppliers/new"
-              )
-            }
+      {(canViewSuppliers ||
+        canViewOrders ||
+        canViewMovements) && (
+        <section className="home-panel home-actions-panel">
+          <PanelTitle
+            title="Azioni rapide"
+            subtitle="Accesso diretto alle operazioni principali."
           />
 
-          <QuickAction
-            title="Ordini"
-            icon={<CartIcon />}
-            onClick={() =>
-              router.push(
-                "/orders"
-              )
-            }
-          />
+          <div className="home-actions-grid">
+            {canViewSuppliers && (
+              <QuickAction
+                title="Nuovo fornitore"
+                icon={<PlusIcon />}
+                onClick={() =>
+                  router.push(
+                    "/suppliers/new"
+                  )
+                }
+              />
+            )}
 
-          <QuickAction
-            title="Gestisci fornitori"
-            icon={<UsersIcon />}
-            onClick={() =>
-              router.push(
-                "/suppliers"
-              )
-            }
-          />
+            {canViewOrders && (
+              <QuickAction
+                title="Ordini"
+                icon={<CartIcon />}
+                onClick={() =>
+                  router.push(
+                    "/orders"
+                  )
+                }
+              />
+            )}
 
-          <QuickAction
-            title="Movimenti"
-            icon={<MovementIcon />}
-            onClick={() =>
-              router.push(
-                "/movements"
-              )
-            }
-          />
-        </div>
-      </section>
+            {canViewSuppliers && (
+              <QuickAction
+                title="Gestisci fornitori"
+                icon={<UsersIcon />}
+                onClick={() =>
+                  router.push(
+                    "/suppliers"
+                  )
+                }
+              />
+            )}
+
+            {canViewMovements && (
+              <QuickAction
+                title="Movimenti"
+                icon={<MovementIcon />}
+                onClick={() =>
+                  router.push(
+                    "/movements"
+                  )
+                }
+              />
+            )}
+          </div>
+        </section>
+      )}
 
       {/* PROMEMORIA + ATTIVITÀ */}
 
-      <section className="home-lower-grid">
-        <div className="home-panel">
-          <PanelTitle
-            title="Scadenze e promemoria"
-            subtitle={
-              reminders.length === 0
-                ? "Nessun promemoria aperto"
-                : `${reminders.length} promemoria aperti`
-            }
-            badge={
-              reminders.length >
-              0
-                ? reminders.length
-                : undefined
-            }
-            secondaryActionText="Vedi tutti"
-            onSecondaryAction={() =>
-              router.push(
-                "/promemoria"
-              )
-            }
-            actionText="+ Nuovo promemoria"
-            onAction={
-              openReminderModal
-            }
-          />
+      {(canViewReminders ||
+        canViewOrders) && (
+        <section className="home-lower-grid">
+          {canViewReminders && (
+            <div className="home-panel">
+              <PanelTitle
+                title="Scadenze e promemoria"
+                subtitle={
+                  reminders.length === 0
+                    ? "Nessun promemoria aperto"
+                    : `${reminders.length} promemoria aperti`
+                }
+                badge={
+                  reminders.length >
+                  0
+                    ? reminders.length
+                    : undefined
+                }
+                secondaryActionText="Vedi tutti"
+                onSecondaryAction={() =>
+                  router.push(
+                    "/promemoria"
+                  )
+                }
+                actionText="+ Nuovo promemoria"
+                onAction={
+                  openReminderModal
+                }
+              />
 
-          <div className="home-reminders">
-            {reminders.length ===
-            0 ? (
-              <div className="home-success-empty">
-                <div className="home-success-icon">
-                  ✓
-                </div>
+              <div className="home-reminders">
+                {reminders.length ===
+                0 ? (
+                  <div className="home-success-empty">
+                    <div className="home-success-icon">
+                      ✓
+                    </div>
 
-                <div>
-                  <strong>
-                    Nessun promemoria
-                  </strong>
+                    <div>
+                      <strong>
+                        Nessun promemoria
+                      </strong>
 
-                  <span>
-                    Premi “Nuovo promemoria”
-                    per aggiungerne uno.
-                  </span>
-                </div>
+                      <span>
+                        Premi “Nuovo promemoria”
+                        per aggiungerne uno.
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  reminders
+                    .slice(0, 6)
+                    .map(
+                      (reminder) => {
+                        const state =
+                          reminderState(
+                            reminder.reminder_date
+                          );
+
+                        return (
+                          <div
+                            key={
+                              reminder.id
+                            }
+                            className="home-reminder-row"
+                          >
+                            <div
+                              className="home-date-badge"
+                              style={{
+                                color:
+                                  state.color,
+
+                                borderColor:
+                                  `${state.color}55`,
+
+                                background:
+                                  `${state.color}12`,
+                              }}
+                            >
+                              <strong>
+                                {formatReminderDay(
+                                  reminder.reminder_date
+                                )}
+                              </strong>
+
+                              <span>
+                                {formatReminderMonth(
+                                  reminder.reminder_date
+                                )}
+                              </span>
+                            </div>
+
+                            <div className="home-reminder-copy">
+                              <strong>
+                                {
+                                  reminder.title
+                                }
+                              </strong>
+
+                              <span
+                                style={{
+                                  color:
+                                    state.color,
+                                }}
+                              >
+                                {
+                                  state.label
+                                }
+                              </span>
+
+                              {reminder.note && (
+                                <small>
+                                  {
+                                    reminder.note
+                                  }
+                                </small>
+                              )}
+                            </div>
+
+                            <button
+                              type="button"
+                              className="home-done-button"
+                              onClick={() =>
+                                completeReminder(
+                                  reminder.id
+                                )
+                              }
+                            >
+                              ✓ Fatto
+                            </button>
+                          </div>
+                        );
+                      }
+                    )
+                )}
               </div>
-            ) : (
-              reminders
-                .slice(0, 6)
-                .map(
-                  (reminder) => {
-                    const state =
-                      reminderState(
-                        reminder.reminder_date
-                      );
+            </div>
+          )}
 
-                    return (
-                      <div
-                        key={
-                          reminder.id
+          {canViewOrders && (
+            <div className="home-panel">
+              <PanelTitle
+                title="Attività recenti"
+                subtitle="Ultimi ordini registrati"
+                actionText="Vedi tutti"
+                onAction={() =>
+                  router.push(
+                    "/orders"
+                  )
+                }
+              />
+
+              <div className="home-activity-list">
+                {recentOrders.length ===
+                0 ? (
+                  <div className="home-empty">
+                    Nessuna attività recente.
+                  </div>
+                ) : (
+                  recentOrders.map(
+                    (order) => (
+                      <button
+                        type="button"
+                        key={order.id}
+                        className="home-activity-row"
+                        onClick={() =>
+                          router.push(
+                            `/orders/${order.id}`
+                          )
                         }
-                        className="home-reminder-row"
                       >
-                        <div
-                          className="home-date-badge"
-                          style={{
-                            color:
-                              state.color,
+                        <div className="home-activity-icon">
+                          <DocumentIcon />
+                        </div>
 
-                            borderColor:
-                              `${state.color}55`,
-
-                            background:
-                              `${state.color}12`,
-                          }}
-                        >
+                        <div className="home-activity-copy">
                           <strong>
-                            {formatReminderDay(
-                              reminder.reminder_date
-                            )}
+                            {supplierMap.get(
+                              order.supplier_id
+                            ) ||
+                              "Ordine"}
                           </strong>
 
                           <span>
-                            {formatReminderMonth(
-                              reminder.reminder_date
+                            {formatDate(
+                              order.order_date ||
+                                order.created_at
                             )}
                           </span>
                         </div>
 
-                        <div className="home-reminder-copy">
-                          <strong>
-                            {
-                              reminder.title
-                            }
-                          </strong>
-
-                          <span
-                            style={{
-                              color:
-                                state.color,
-                            }}
-                          >
-                            {
-                              state.label
-                            }
-                          </span>
-
-                          {reminder.note && (
-                            <small>
-                              {
-                                reminder.note
-                              }
-                            </small>
-                          )}
-                        </div>
-
-                        <button
-                          type="button"
-                          className="home-done-button"
-                          onClick={() =>
-                            completeReminder(
-                              reminder.id
-                            )
+                        <StatusBadge
+                          status={
+                            order.status
                           }
-                        >
-                          ✓ Fatto
-                        </button>
-                      </div>
-                    );
-                  }
+                        />
+                      </button>
+                    )
+                  )
+                )}
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* PANNELLI FINALI */}
+
+      <section className="home-bottom-grid">
+          {canViewLowStock && (
+          <div className="home-panel">
+            <PanelTitle
+              title="Articoli da riordinare"
+              subtitle="Le priorità attuali del magazzino"
+              actionText="Vedi tutti"
+              onAction={() =>
+                router.push(
+                  "/low-stock-report"
                 )
+              }
+            />
+
+            {lowStockItems.length ===
+            0 ? (
+              <div className="home-empty">
+                Nessun articolo da
+                riordinare.
+              </div>
+            ) : (
+              lowStockItems
+                .slice(0, 5)
+                .map((item) => (
+                  <div
+                    key={item.id}
+                    className="home-stock-row"
+                  >
+                    <div>
+                      <strong>
+                        {item.supplier_code ||
+                          item.code ||
+                          "-"}
+                      </strong>
+
+                      <span>
+                        {
+                          item.description
+                        }
+                      </span>
+
+                      <small>
+                        {supplierMap.get(
+                          item.supplier_id
+                        ) ||
+                          "Fornitore"}
+                      </small>
+                    </div>
+
+                    <div className="home-stock-qty">
+                      +
+                      {
+                        item.qty_to_order
+                      }
+
+                      <small>
+                        da ordinare
+                      </small>
+                    </div>
+                  </div>
+                ))
             )}
           </div>
-        </div>
+
+          )}
 
         <div className="home-panel">
           <PanelTitle
-            title="Attività recenti"
-            subtitle="Ultimi ordini registrati"
-            actionText="Vedi tutti"
-            onAction={() =>
+            title="Note condivise"
+            subtitle="Comunicazioni tra gli account del magazzino"
+            secondaryActionText="Vedi note"
+            onSecondaryAction={() =>
               router.push(
-                "/orders"
+                "/note-condivise"
               )
+            }
+            actionText="+ Nuova nota"
+            onAction={
+              openSharedNoteModal
             }
           />
 
-          <div className="home-activity-list">
-            {recentOrders.length ===
+          <div className="home-shared-note-body">
+            <div className="home-shared-note-icon">
+              <NoteIcon />
+            </div>
+
+            <div className="home-shared-note-copy">
+              <strong>
+                Scrivi a un altro account
+              </strong>
+
+              <span>
+                Scegli il destinatario e invia
+                una comunicazione interna.
+                {isMainAccount
+                  ? " Dal tuo account puoi anche vedere tutte le note scambiate tra gli utenti."
+                  : " Nella pagina Note condivise trovi le tue ricevute e inviate."}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {canViewOrders && (
+          <div className="home-panel">
+            <PanelTitle
+              title="Ordini da ricevere"
+              subtitle="Ordini ancora aperti"
+              actionText="Tutti gli ordini"
+              onAction={() =>
+                router.push(
+                  "/orders"
+                )
+              }
+            />
+
+            {openOrders.length ===
             0 ? (
               <div className="home-empty">
-                Nessuna attività recente.
+                Nessun ordine aperto.
               </div>
             ) : (
-              recentOrders.map(
-                (order) => (
+              openOrders
+                .slice(0, 5)
+                .map((order) => (
                   <button
                     type="button"
                     key={order.id}
-                    className="home-activity-row"
+                    className="home-order-row"
                     onClick={() =>
                       router.push(
                         `/orders/${order.id}`
                       )
                     }
                   >
-                    <div className="home-activity-icon">
-                      <DocumentIcon />
-                    </div>
-
-                    <div className="home-activity-copy">
+                    <div>
                       <strong>
                         {supplierMap.get(
                           order.supplier_id
                         ) ||
-                          "Ordine"}
+                          "Fornitore"}
                       </strong>
 
                       <span>
@@ -1107,139 +1836,16 @@ export default function Home() {
                       }
                     />
                   </button>
-                )
-              )
+                ))
             )}
           </div>
-        </div>
-      </section>
-
-      {/* PANNELLI FINALI */}
-
-      <section className="home-bottom-grid">
-        <div className="home-panel">
-          <PanelTitle
-            title="Articoli da riordinare"
-            subtitle="Le priorità attuali del magazzino"
-            actionText="Vedi tutti"
-            onAction={() =>
-              router.push(
-                "/low-stock-report"
-              )
-            }
-          />
-
-          {lowStockItems.length ===
-          0 ? (
-            <div className="home-empty">
-              Nessun articolo da
-              riordinare.
-            </div>
-          ) : (
-            lowStockItems
-              .slice(0, 5)
-              .map((item) => (
-                <div
-                  key={item.id}
-                  className="home-stock-row"
-                >
-                  <div>
-                    <strong>
-                      {item.supplier_code ||
-                        item.code ||
-                        "-"}
-                    </strong>
-
-                    <span>
-                      {
-                        item.description
-                      }
-                    </span>
-
-                    <small>
-                      {supplierMap.get(
-                        item.supplier_id
-                      ) ||
-                        "Fornitore"}
-                    </small>
-                  </div>
-
-                  <div className="home-stock-qty">
-                    +
-                    {
-                      item.qty_to_order
-                    }
-
-                    <small>
-                      da ordinare
-                    </small>
-                  </div>
-                </div>
-              ))
-          )}
-        </div>
-
-        <div className="home-panel">
-          <PanelTitle
-            title="Ordini da ricevere"
-            subtitle="Ordini ancora aperti"
-            actionText="Tutti gli ordini"
-            onAction={() =>
-              router.push(
-                "/orders"
-              )
-            }
-          />
-
-          {openOrders.length ===
-          0 ? (
-            <div className="home-empty">
-              Nessun ordine aperto.
-            </div>
-          ) : (
-            openOrders
-              .slice(0, 5)
-              .map((order) => (
-                <button
-                  type="button"
-                  key={order.id}
-                  className="home-order-row"
-                  onClick={() =>
-                    router.push(
-                      `/orders/${order.id}`
-                    )
-                  }
-                >
-                  <div>
-                    <strong>
-                      {supplierMap.get(
-                        order.supplier_id
-                      ) ||
-                        "Fornitore"}
-                    </strong>
-
-                    <span>
-                      {formatDate(
-                        order.order_date ||
-                          order.created_at
-                      )}
-                    </span>
-                  </div>
-
-                  <StatusBadge
-                    status={
-                      order.status
-                    }
-                  />
-                </button>
-              ))
-          )}
-        </div>
+        )}
       </section>
 
       {/* MODALE NUOVO PROMEMORIA */}
 
-      {reminderModalOpen && (
+      {reminderModalOpen &&
+        canViewReminders && (
         <div
           className="reminder-modal-backdrop"
           onMouseDown={(
@@ -1362,6 +1968,175 @@ export default function Home() {
                 {savingReminder
                   ? "Salvataggio..."
                   : "Salva promemoria"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODALE NOTA CONDIVISA */}
+
+      {sharedNoteModalOpen && (
+        <div
+          className="reminder-modal-backdrop"
+          onMouseDown={(
+            event
+          ) => {
+            if (
+              event.target ===
+              event.currentTarget
+            ) {
+              closeSharedNoteModal();
+            }
+          }}
+        >
+          <div className="reminder-modal">
+            <div className="reminder-modal-header">
+              <div>
+                <div className="reminder-modal-label">
+                  NOTE CONDIVISE
+                </div>
+
+                <h2>
+                  Nuova nota
+                </h2>
+              </div>
+
+              <button
+                type="button"
+                onClick={
+                  closeSharedNoteModal
+                }
+                disabled={
+                  sendingSharedNote
+                }
+                className="reminder-close"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="reminder-form">
+              <label>
+                Destinatario
+              </label>
+
+              <select
+                autoFocus
+                value={
+                  sharedNoteRecipientId
+                }
+                onChange={(event) =>
+                  setSharedNoteRecipientId(
+                    event.target.value
+                  )
+                }
+                disabled={
+                  sendingSharedNote ||
+                  loadingSharedNoteRecipients
+                }
+              >
+                {loadingSharedNoteRecipients ? (
+                  <option value="">
+                    Caricamento account...
+                  </option>
+                ) : sharedNoteRecipients.length ===
+                  0 ? (
+                  <option value="">
+                    Nessun altro account attivo
+                  </option>
+                ) : (
+                  sharedNoteRecipients.map(
+                    (recipient) => (
+                      <option
+                        key={
+                          recipient.id
+                        }
+                        value={
+                          recipient.id
+                        }
+                      >
+                        {sharedNoteRecipientLabel(
+                          recipient
+                        )}
+                      </option>
+                    )
+                  )
+                )}
+              </select>
+
+              <label>
+                Titolo
+              </label>
+
+              <input
+                type="text"
+                value={
+                  sharedNoteTitle
+                }
+                onChange={(event) =>
+                  setSharedNoteTitle(
+                    event.target.value
+                  )
+                }
+                placeholder="Es. Manca materiale in reparto"
+              />
+
+              <label>
+                Messaggio
+              </label>
+
+              <textarea
+                value={
+                  sharedNoteMessage
+                }
+                onChange={(event) =>
+                  setSharedNoteMessage(
+                    event.target.value
+                  )
+                }
+                placeholder="Scrivi qui la nota da inviare..."
+                rows={6}
+              />
+
+              <div className="home-shared-note-help">
+                La nota verrà inviata solo
+                all&apos;account selezionato.
+                Il tuo account principale admin
+                può vedere anche le note scambiate
+                tra gli altri utenti.
+              </div>
+            </div>
+
+            <div className="reminder-modal-actions">
+              <button
+                type="button"
+                className="reminder-cancel"
+                onClick={
+                  closeSharedNoteModal
+                }
+                disabled={
+                  sendingSharedNote
+                }
+              >
+                Annulla
+              </button>
+
+              <button
+                type="button"
+                className="reminder-save"
+                onClick={
+                  sendSharedNote
+                }
+                disabled={
+                  sendingSharedNote ||
+                  loadingSharedNoteRecipients ||
+                  !sharedNoteRecipientId
+                }
+              >
+                {sendingSharedNote
+                  ? "Invio..."
+                  : "Invia nota"}
               </button>
             </div>
           </div>
@@ -1565,7 +2340,7 @@ export default function Home() {
 
         .home-kpi-grid {
           display: grid;
-          grid-template-columns: repeat(4, minmax(0, 1fr));
+          grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
           gap: 14px;
           margin-bottom: 18px;
         }
@@ -1769,7 +2544,7 @@ export default function Home() {
         .home-lower-grid,
         .home-bottom-grid {
           display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
+          grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
           gap: 18px;
           margin-bottom: 18px;
         }
@@ -1935,6 +2710,60 @@ export default function Home() {
           opacity: 0.46;
         }
 
+        .home-shared-note-body {
+          min-height: 128px;
+          padding: 22px;
+          display: flex;
+          align-items: center;
+          gap: 16px;
+        }
+
+        .home-shared-note-icon {
+          width: 46px;
+          height: 46px;
+          flex-shrink: 0;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 12px;
+          border: 1px solid rgba(59,130,246,0.24);
+          background: rgba(59,130,246,0.08);
+          color: #60a5fa;
+        }
+
+        .home-shared-note-copy {
+          min-width: 0;
+        }
+
+        .home-shared-note-copy strong,
+        .home-shared-note-copy span {
+          display: block;
+        }
+
+        .home-shared-note-copy strong {
+          font-size: 13px;
+          font-weight: 900;
+        }
+
+        .home-shared-note-copy span {
+          margin-top: 6px;
+          max-width: 520px;
+          font-size: 10px;
+          line-height: 1.55;
+          opacity: 0.52;
+        }
+
+        .home-shared-note-help {
+          margin-top: 12px;
+          padding: 10px 11px;
+          border-radius: 8px;
+          border: 1px solid rgba(59,130,246,0.18);
+          background: rgba(59,130,246,0.06);
+          color: rgba(255,255,255,0.62);
+          font-size: 10px;
+          line-height: 1.5;
+        }
+
         .home-stock-row {
           padding: 11px 15px;
           display: flex;
@@ -2080,6 +2909,7 @@ export default function Home() {
         }
 
         .reminder-form input,
+        .reminder-form select,
         .reminder-form textarea {
           width: 100%;
           box-sizing: border-box;
@@ -2093,6 +2923,7 @@ export default function Home() {
         }
 
         .reminder-form input:focus,
+        .reminder-form select:focus,
         .reminder-form textarea:focus {
           border-color: #3b82f6;
         }
@@ -2541,6 +3372,37 @@ function UsersIcon() {
   );
 }
 
+function NoteIcon() {
+  return (
+    <span
+      style={{
+        width: 17,
+        height: 14,
+        display: "inline-block",
+        border:
+          "2px solid currentColor",
+        borderRadius: 4,
+        position: "relative",
+        boxSizing:
+          "border-box",
+      }}
+    >
+      <span
+        style={{
+          position: "absolute",
+          left: 3,
+          right: 3,
+          top: 3,
+          height: 2,
+          background:
+            "currentColor",
+          opacity: 0.75,
+        }}
+      />
+    </span>
+  );
+}
+
 function MovementIcon() {
   return (
     <span
@@ -2554,6 +3416,98 @@ function MovementIcon() {
 }
 
 /* UTILITÀ */
+
+function sharedNoteRecipientLabel(
+  recipient: SharedNoteRecipient
+) {
+  const displayName =
+    recipient.display_name?.trim();
+
+  if (
+    displayName &&
+    displayName.toLowerCase() !==
+      recipient.username.toLowerCase()
+  ) {
+    return `${displayName} (${recipient.username})`;
+  }
+
+  return (
+    displayName ||
+    recipient.username ||
+    "Utente"
+  );
+}
+
+function readLocalPermissions(): Permissions {
+  let parsed: Permissions = {};
+
+  try {
+    const saved =
+      localStorage.getItem(
+        "magazzino_permissions"
+      );
+
+    parsed = saved
+      ? JSON.parse(saved)
+      : {};
+  } catch {
+    parsed = {};
+  }
+
+  /*
+    Compatibilità con il vecchio
+    account amministratore.
+  */
+  const role =
+    localStorage.getItem(
+      "magazzino_role"
+    );
+
+  if (role === "admin") {
+    return {
+      dashboard: true,
+      view_prices: true,
+      view_inventory_value: true,
+      suppliers: true,
+      movements: true,
+      missing_codes: true,
+      orders: true,
+      create_orders: true,
+      reminders: true,
+      settings: true,
+      manage_users: true,
+      low_stock: true,
+    };
+  }
+
+  return {
+    dashboard:
+      parsed.dashboard === true,
+    view_prices:
+      parsed.view_prices === true,
+    view_inventory_value:
+      parsed.view_inventory_value ===
+      true,
+    suppliers:
+      parsed.suppliers === true,
+    movements:
+      parsed.movements === true,
+    missing_codes:
+      parsed.missing_codes === true,
+    orders:
+      parsed.orders === true,
+    create_orders:
+      parsed.create_orders === true,
+    reminders:
+      parsed.reminders === true,
+    settings:
+      parsed.settings === true,
+    manage_users:
+      parsed.manage_users === true,
+    low_stock:
+      parsed.low_stock !== false,
+  };
+}
 
 function currentLocalDate() {
   const now =

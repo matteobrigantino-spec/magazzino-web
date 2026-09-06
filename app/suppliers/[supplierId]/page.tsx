@@ -22,6 +22,12 @@ type WarehouseSort =
   | "description"
   | "stock";
 
+type UserPermissions = {
+  view_prices?: boolean;
+  view_inventory_value?: boolean;
+  [key: string]: boolean | undefined;
+};
+
 export default function SupplierDetail({
   params,
 }: {
@@ -44,7 +50,66 @@ export default function SupplierDetail({
   const [warehouseSort, setWarehouseSort] =
     useState<WarehouseSort>("supplier_code");
 
+  const [canViewPrices, setCanViewPrices] =
+    useState(false);
+
+  const [
+    canViewInventoryValue,
+    setCanViewInventoryValue,
+  ] = useState(false);
+
+  const [permissionsReady, setPermissionsReady] =
+    useState(false);
+
+  /*
+    PERMESSI ECONOMICI
+
+    - view_prices:
+      mostra il prezzo unitario.
+
+    - view_inventory_value:
+      mostra i valori economici della giacenza
+      e della merce in ordine.
+
+    L'account admin mantiene accesso completo.
+  */
   useEffect(() => {
+    const role =
+      localStorage.getItem("magazzino_role");
+
+    let permissions: UserPermissions = {};
+
+    try {
+      const saved =
+        localStorage.getItem("magazzino_permissions");
+
+      permissions = saved
+        ? JSON.parse(saved)
+        : {};
+    } catch {
+      permissions = {};
+    }
+
+    const isAdmin = role === "admin";
+
+    setCanViewPrices(
+      isAdmin ||
+        permissions.view_prices === true
+    );
+
+    setCanViewInventoryValue(
+      isAdmin ||
+        permissions.view_inventory_value === true
+    );
+
+    setPermissionsReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!permissionsReady) {
+      return;
+    }
+
     async function loadData() {
       setLoading(true);
 
@@ -58,11 +123,17 @@ export default function SupplierDetail({
         setSupplierName(supplier.name);
       }
 
+      const shouldLoadPrice =
+        canViewPrices ||
+        canViewInventoryValue;
+
+      const itemFields = shouldLoadPrice
+        ? "id, code, supplier_code, description, stock, min_stock, price, on_order, image_url"
+        : "id, code, supplier_code, description, stock, min_stock, on_order, image_url";
+
       const { data: itemsData, error } = await supabase
         .from("items")
-        .select(
-          "id, code, supplier_code, description, stock, min_stock, price, on_order, image_url"
-        )
+        .select(itemFields)
         .eq("supplier_id", supplierId)
         .order("description");
 
@@ -72,7 +143,9 @@ export default function SupplierDetail({
             ...item,
             stock: Number(item.stock ?? 0),
             min_stock: Number(item.min_stock ?? 0),
-            price: Number(item.price ?? 0),
+            price: shouldLoadPrice
+              ? Number((item as any).price ?? 0)
+              : 0,
             on_order: Number(item.on_order ?? 0),
           }))
         );
@@ -82,7 +155,12 @@ export default function SupplierDetail({
     }
 
     loadData();
-  }, [supplierId]);
+  }, [
+    supplierId,
+    permissionsReady,
+    canViewPrices,
+    canViewInventoryValue,
+  ]);
 
   function isLowStock(item: Item) {
     return item.min_stock > 0 && item.stock <= item.min_stock;
@@ -125,6 +203,11 @@ export default function SupplierDetail({
       return matchesSearch && matchesLowStock;
     });
   }, [items, search, onlyLowStock]);
+
+  const tableColumnCount =
+    6 +
+    (canViewPrices ? 1 : 0) +
+    (canViewInventoryValue ? 1 : 0);
 
   function getPdfDate() {
     return new Intl.DateTimeFormat("it-IT", {
@@ -271,6 +354,16 @@ export default function SupplierDetail({
   }
 
   function generateDetailedPdf() {
+    if (
+      !canViewPrices &&
+      !canViewInventoryValue
+    ) {
+      alert(
+        "Il tuo account non ha accesso ai dati economici."
+      );
+      return;
+    }
+
     if (items.length === 0) {
       alert("Non ci sono articoli da stampare.");
       return;
@@ -283,18 +376,24 @@ export default function SupplierDetail({
     });
 
     const pageHeight = doc.internal.pageSize.getHeight();
-
     const marginLeft = 10;
 
     const columns = [
       { label: "Codice articolo", width: 30 },
       { label: "Codice scanner", width: 34 },
       { label: "Descrizione", width: 78 },
-      { label: "Prezzo", width: 27 },
+
+      ...(canViewPrices
+        ? [{ label: "Prezzo", width: 27 }]
+        : []),
+
       { label: "Giacenza", width: 23 },
       { label: "Scorta min.", width: 24 },
       { label: "In ordine", width: 23 },
-      { label: "Valore", width: 31 },
+
+      ...(canViewInventoryValue
+        ? [{ label: "Valore", width: 31 }]
+        : []),
     ];
 
     const totalTableWidth = columns.reduce(
@@ -304,11 +403,19 @@ export default function SupplierDetail({
 
     let y = 38;
 
+    const reportSubtitle =
+      canViewPrices &&
+      canViewInventoryValue
+        ? "Report dettagliato con prezzi e valori economici"
+        : canViewPrices
+          ? "Report dettagliato con prezzi"
+          : "Report dettagliato con valori economici";
+
     function drawHeader() {
       drawPdfHeader(
         doc,
         `MAGAZZINO - ${supplierName.toUpperCase()}`,
-        "Report dettagliato con valori economici"
+        reportSubtitle
       );
 
       y = 38;
@@ -391,15 +498,28 @@ export default function SupplierDetail({
         item.supplier_code || "-",
         item.code || "-",
         descriptionLines,
-        formatPdfEuro(item.price),
+
+        ...(canViewPrices
+          ? [formatPdfEuro(item.price)]
+          : []),
+
         String(item.stock),
+
         item.min_stock > 0
           ? String(item.min_stock)
           : "-",
+
         item.on_order > 0
           ? String(item.on_order)
           : "-",
-        formatPdfEuro(item.stock * item.price),
+
+        ...(canViewInventoryValue
+          ? [
+              formatPdfEuro(
+                item.stock * item.price
+              ),
+            ]
+          : []),
       ];
 
       let x = marginLeft;
@@ -448,25 +568,27 @@ export default function SupplierDetail({
       y
     );
 
-    y += 6;
+    if (canViewInventoryValue) {
+      y += 6;
 
-    doc.text(
-      `Valore totale magazzino: ${formatPdfEuro(
-        totals.totalMagazzino
-      )}`,
-      marginLeft,
-      y
-    );
+      doc.text(
+        `Valore totale magazzino: ${formatPdfEuro(
+          totals.totalMagazzino
+        )}`,
+        marginLeft,
+        y
+      );
 
-    y += 6;
+      y += 6;
 
-    doc.text(
-      `Valore totale merce in ordine: ${formatPdfEuro(
-        totals.totalOrdine
-      )}`,
-      marginLeft,
-      y
-    );
+      doc.text(
+        `Valore totale merce in ordine: ${formatPdfEuro(
+          totals.totalOrdine
+        )}`,
+        marginLeft,
+        y
+      );
+    }
 
     addPageNumbers(doc);
 
@@ -839,20 +961,23 @@ export default function SupplierDetail({
             PDF magazziniere
           </button>
 
-          <button
-            type="button"
-            onClick={generateDetailedPdf}
-            disabled={loading}
-            style={{
-              ...detailedPdfButton,
-              opacity: loading ? 0.5 : 1,
-              cursor: loading
-                ? "not-allowed"
-                : "pointer",
-            }}
-          >
-            PDF dettagliato
-          </button>
+          {(canViewPrices ||
+            canViewInventoryValue) && (
+            <button
+              type="button"
+              onClick={generateDetailedPdf}
+              disabled={loading}
+              style={{
+                ...detailedPdfButton,
+                opacity: loading ? 0.5 : 1,
+                cursor: loading
+                  ? "not-allowed"
+                  : "pointer",
+              }}
+            >
+              PDF dettagliato
+            </button>
+          )}
 
           <Link
             href={`/suppliers/${supplierId}/new-item`}
@@ -874,17 +999,21 @@ export default function SupplierDetail({
           marginBottom: 24,
         }}
       >
-        <SummaryCard
-          title="Valore magazzino"
-          value={formatEuro(totals.totalMagazzino)}
-          subtitle="Valore della giacenza attuale"
-        />
+        {canViewInventoryValue && (
+          <>
+            <SummaryCard
+              title="Valore magazzino"
+              value={formatEuro(totals.totalMagazzino)}
+              subtitle="Valore della giacenza attuale"
+            />
 
-        <SummaryCard
-          title="Valore in ordine"
-          value={formatEuro(totals.totalOrdine)}
-          subtitle="Merce attualmente in ordine"
-        />
+            <SummaryCard
+              title="Valore in ordine"
+              value={formatEuro(totals.totalOrdine)}
+              subtitle="Merce attualmente in ordine"
+            />
+          </>
+        )}
 
         <SummaryCard
           title="Scorte da controllare"
@@ -1014,7 +1143,11 @@ export default function SupplierDetail({
           <table
             style={{
               width: "100%",
-              minWidth: 1200,
+              minWidth:
+                canViewPrices ||
+                canViewInventoryValue
+                  ? 1200
+                  : 900,
               borderCollapse:
                 "collapse",
             }}
@@ -1038,9 +1171,11 @@ export default function SupplierDetail({
                   Descrizione
                 </th>
 
-                <th style={headerRightStyle}>
-                  Prezzo
-                </th>
+                {canViewPrices && (
+                  <th style={headerRightStyle}>
+                    Prezzo
+                  </th>
+                )}
 
                 <th style={headerCenterStyle}>
                   Giacenza
@@ -1054,9 +1189,11 @@ export default function SupplierDetail({
                   In ordine
                 </th>
 
-                <th style={headerRightStyle}>
-                  Valore
-                </th>
+                {canViewInventoryValue && (
+                  <th style={headerRightStyle}>
+                    Valore
+                  </th>
+                )}
               </tr>
             </thead>
 
@@ -1064,7 +1201,7 @@ export default function SupplierDetail({
               {loading ? (
                 <tr>
                   <td
-                    colSpan={8}
+                    colSpan={tableColumnCount}
                     style={emptyStyle}
                   >
                     Caricamento articoli...
@@ -1073,7 +1210,7 @@ export default function SupplierDetail({
               ) : filteredItems.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={8}
+                    colSpan={tableColumnCount}
                     style={emptyStyle}
                   >
                     Nessun articolo trovato.
@@ -1145,11 +1282,13 @@ export default function SupplierDetail({
                         </Link>
                       </td>
 
-                      <td style={rightCellStyle}>
-                        {formatEuro(
-                          item.price
-                        )}
-                      </td>
+                      {canViewPrices && (
+                        <td style={rightCellStyle}>
+                          {formatEuro(
+                            item.price
+                          )}
+                        </td>
+                      )}
 
                       <td style={centerCellStyle}>
                         <StockBadge
@@ -1194,14 +1333,16 @@ export default function SupplierDetail({
                         )}
                       </td>
 
-                      <td style={rightCellStyle}>
-                        <strong>
-                          {formatEuro(
-                            item.stock *
-                              item.price
-                          )}
-                        </strong>
-                      </td>
+                      {canViewInventoryValue && (
+                        <td style={rightCellStyle}>
+                          <strong>
+                            {formatEuro(
+                              item.stock *
+                                item.price
+                            )}
+                          </strong>
+                        </td>
+                      )}
                     </tr>
                   );
                 })

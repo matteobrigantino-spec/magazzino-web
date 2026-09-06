@@ -51,6 +51,58 @@ type LineView = {
   on_order: number;
 };
 
+type Permissions = {
+  orders?: boolean;
+  create_orders?: boolean;
+  view_prices?: boolean;
+};
+
+function readLocalPermissions(): {
+  role: string | null;
+  permissions: Permissions;
+} {
+  const role =
+    localStorage.getItem(
+      "magazzino_role"
+    );
+
+  const saved =
+    localStorage.getItem(
+      "magazzino_permissions"
+    );
+
+  if (!saved) {
+    return {
+      role,
+      permissions: {},
+    };
+  }
+
+  try {
+    const parsed =
+      JSON.parse(saved);
+
+    if (
+      parsed &&
+      typeof parsed === "object"
+    ) {
+      return {
+        role,
+        permissions:
+          parsed as Permissions,
+      };
+    }
+  } catch {
+    // Dato locale non valido:
+    // nessun permesso aggiuntivo.
+  }
+
+  return {
+    role,
+    permissions: {},
+  };
+}
+
 export default function OrderDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -76,11 +128,47 @@ export default function OrderDetailPage() {
     "success" | "error" | ""
   >("");
 
+  const [canViewPrices, setCanViewPrices] =
+    useState(false);
+
+  const [canManageOrders, setCanManageOrders] =
+    useState(false);
+
   useEffect(() => {
-    loadData();
+    const {
+      role,
+      permissions,
+    } = readLocalPermissions();
+
+    const admin =
+      role === "admin";
+
+    const allowPrices =
+      admin ||
+      permissions.view_prices === true;
+
+    const allowManage =
+      admin ||
+      permissions.create_orders === true;
+
+    setCanViewPrices(
+      allowPrices
+    );
+
+    setCanManageOrders(
+      allowManage
+    );
+
+    loadData(
+      allowPrices,
+      allowManage
+    );
   }, [orderId]);
 
-  async function loadData() {
+  async function loadData(
+    allowPrices = canViewPrices,
+    allowManage = canManageOrders
+  ) {
     setLoading(true);
 
     const { data: orderData, error: orderError } =
@@ -97,6 +185,29 @@ export default function OrderDetailPage() {
         "Errore caricamento ordine: " +
           (orderError?.message ||
             "Ordine non trovato")
+      );
+
+      setMessageType("error");
+      setLoading(false);
+      return;
+    }
+
+    /*
+      Un utente che può solo consultare
+      la merce in arrivo vede esclusivamente
+      ordini IN ORDINE o PARZIALI.
+
+      Bozze, ricevuti e annullati restano
+      nella gestione completa.
+    */
+    if (
+      !allowManage &&
+      !["ordered", "partial"].includes(
+        String(orderData.status || "")
+      )
+    ) {
+      setMessage(
+        "Questo ordine non fa parte della merce attualmente in arrivo."
       );
 
       setMessageType("error");
@@ -123,14 +234,21 @@ export default function OrderDetailPage() {
       return;
     }
 
+    /*
+      Se l'utente non può vedere i prezzi
+      NON chiediamo unit_price a Supabase.
+    */
+    const orderItemsSelect =
+      allowPrices
+        ? "id,order_id,item_id,qty,received_qty,unit_price"
+        : "id,order_id,item_id,qty,received_qty";
+
     const {
       data: orderItemsData,
       error: orderItemsError,
     } = await supabase
       .from("order_items")
-      .select(
-        "id,order_id,item_id,qty,received_qty,unit_price"
-      )
+      .select(orderItemsSelect)
       .eq("order_id", orderId);
 
     if (orderItemsError) {
@@ -220,7 +338,11 @@ export default function OrderDetailPage() {
             ),
 
           unit_price:
-            Number(line.unit_price || 0),
+            allowPrices
+              ? Number(
+                  line.unit_price || 0
+                )
+              : 0,
 
           stock:
             Number(item?.stock || 0),
@@ -246,6 +368,10 @@ export default function OrderDetailPage() {
   }
 
   const totalOrderValue = useMemo(() => {
+    if (!canViewPrices) {
+      return 0;
+    }
+
     return lines.reduce(
       (sum, line) =>
         sum +
@@ -253,7 +379,7 @@ export default function OrderDetailPage() {
           line.unit_price,
       0
     );
-  }, [lines]);
+  }, [lines, canViewPrices]);
 
   const totalOrderedQty = useMemo(() => {
     return lines.reduce(
@@ -671,6 +797,7 @@ export default function OrderDetailPage() {
     "cancelled";
 
   const canReceive =
+    canManageOrders &&
     !isReceived &&
     !isCancelled;
 
@@ -762,7 +889,7 @@ export default function OrderDetailPage() {
             flexWrap: "wrap",
           }}
         >
-          {order.pdf_url && (
+          {canViewPrices && order.pdf_url && (
             <a
               href={order.pdf_url}
               target="_blank"
@@ -775,49 +902,51 @@ export default function OrderDetailPage() {
             </a>
           )}
 
-          <button
-            type="button"
-            disabled={
-              saving ||
-              deleting
-            }
-            onClick={
-              deleteOrder
-            }
-            style={{
-              padding:
-                "10px 14px",
-
-              borderRadius: 8,
-
-              border:
-                "1px solid rgba(239,68,68,0.4)",
-
-              background:
-                "rgba(239,68,68,0.08)",
-
-              color:
-                "#ef4444",
-
-              cursor:
+          {canManageOrders && (
+            <button
+              type="button"
+              disabled={
                 saving ||
                 deleting
-                  ? "not-allowed"
-                  : "pointer",
+              }
+              onClick={
+                deleteOrder
+              }
+              style={{
+                padding:
+                  "10px 14px",
 
-              fontWeight: 800,
+                borderRadius: 8,
 
-              opacity:
-                saving ||
-                deleting
-                  ? 0.5
-                  : 1,
-            }}
-          >
-            {deleting
-              ? "Eliminazione..."
-              : "Elimina ordine"}
-          </button>
+                border:
+                  "1px solid rgba(239,68,68,0.4)",
+
+                background:
+                  "rgba(239,68,68,0.08)",
+
+                color:
+                  "#ef4444",
+
+                cursor:
+                  saving ||
+                  deleting
+                    ? "not-allowed"
+                    : "pointer",
+
+                fontWeight: 800,
+
+                opacity:
+                  saving ||
+                  deleting
+                    ? 0.5
+                    : 1,
+              }}
+            >
+              {deleting
+                ? "Eliminazione..."
+                : "Elimina ordine"}
+            </button>
+          )}
 
           <button
             type="button"
@@ -921,13 +1050,15 @@ export default function OrderDetailPage() {
           subtitle="Pezzi ancora in ordine"
         />
 
-        <SummaryCard
-          title="Valore ordine"
-          value={formatEuro(
-            totalOrderValue
-          )}
-          subtitle="Valore originale"
-        />
+        {canViewPrices && (
+          <SummaryCard
+            title="Valore ordine"
+            value={formatEuro(
+              totalOrderValue
+            )}
+            subtitle="Valore originale"
+          />
+        )}
       </div>
 
       {/* TABELLA */}
@@ -961,7 +1092,9 @@ export default function OrderDetailPage() {
               marginTop: 3,
             }}
           >
-            Controlla le quantità ricevute con il DDT reale
+            {canManageOrders
+              ? "Controlla le quantità ricevute con il DDT reale"
+              : "Articoli e quantità ancora in arrivo"}
           </div>
         </div>
 
@@ -1001,9 +1134,11 @@ export default function OrderDetailPage() {
                   Giacenza
                 </TableHead>
 
-                <TableHead align="right">
-                  Arrivato ora
-                </TableHead>
+                {canManageOrders && (
+                  <TableHead align="right">
+                    Arrivato ora
+                  </TableHead>
+                )}
               </tr>
             </thead>
 
@@ -1054,89 +1189,91 @@ export default function OrderDetailPage() {
                       {line.stock}
                     </TableCell>
 
-                    <TableCell align="right">
-                      {!canReceive ? (
-                        <span
-                          style={{
-                            color:
-                              isReceived
-                                ? "#22c55e"
-                                : "#ef4444",
+                    {canManageOrders && (
+                      <TableCell align="right">
+                        {!canReceive ? (
+                          <span
+                            style={{
+                              color:
+                                isReceived
+                                  ? "#22c55e"
+                                  : "#ef4444",
 
-                            fontWeight: 800,
-                          }}
-                        >
-                          {isReceived
-                            ? "Completo"
-                            : "Annullato"}
-                        </span>
-                      ) : (
-                        <input
-                          type="number"
-                          min="0"
+                              fontWeight: 800,
+                            }}
+                          >
+                            {isReceived
+                              ? "Completo"
+                              : "Annullato"}
+                          </span>
+                        ) : (
+                          <input
+                            type="number"
+                            min="0"
 
-                          max={
-                            line.remaining_qty
-                          }
+                            max={
+                              line.remaining_qty
+                            }
 
-                          step="1"
+                            step="1"
 
-                          value={
-                            incomingQty[
-                              line.id
-                            ] || 0
-                          }
+                            value={
+                              incomingQty[
+                                line.id
+                              ] || 0
+                            }
 
-                          disabled={
-                            line.remaining_qty ===
-                              0 ||
-                            saving
-                          }
-
-                          onChange={(
-                            e
-                          ) =>
-                            changeIncomingQty(
-                              line.id,
-                              Number(
-                                e.target
-                                  .value
-                              )
-                            )
-                          }
-
-                          style={{
-                            width: 95,
-
-                            padding:
-                              "8px 9px",
-
-                            border:
-                              "1px solid var(--border-color)",
-
-                            borderRadius: 7,
-
-                            background:
-                              "var(--input-bg)",
-
-                            color:
-                              "var(--foreground)",
-
-                            textAlign:
-                              "right",
-
-                            fontWeight: 800,
-
-                            opacity:
+                            disabled={
                               line.remaining_qty ===
                                 0 ||
                               saving
-                                ? 0.5
-                                : 1,
-                          }}
-                        />
-                      )}
-                    </TableCell>
+                            }
+
+                            onChange={(
+                              e
+                            ) =>
+                              changeIncomingQty(
+                                line.id,
+                                Number(
+                                  e.target
+                                    .value
+                                )
+                              )
+                            }
+
+                            style={{
+                              width: 95,
+
+                              padding:
+                                "8px 9px",
+
+                              border:
+                                "1px solid var(--border-color)",
+
+                              borderRadius: 7,
+
+                              background:
+                                "var(--input-bg)",
+
+                              color:
+                                "var(--foreground)",
+
+                              textAlign:
+                                "right",
+
+                              fontWeight: 800,
+
+                              opacity:
+                                line.remaining_qty ===
+                                  0 ||
+                                saving
+                                  ? 0.5
+                                  : 1,
+                            }}
+                          />
+                        )}
+                      </TableCell>
+                    )}
                   </tr>
                 )
               )}
@@ -1255,6 +1392,39 @@ export default function OrderDetailPage() {
                 ? "Salvataggio..."
                 : "Ordine completo"}
             </button>
+          </div>
+        </div>
+      )}
+
+      {!canManageOrders && (
+        <div
+          style={{
+            marginTop: 22,
+            padding: 18,
+            border:
+              "1px solid rgba(59,130,246,0.30)",
+            borderRadius: 12,
+            background:
+              "rgba(59,130,246,0.08)",
+            fontSize: 13,
+            lineHeight: 1.55,
+          }}
+        >
+          <strong>
+            Vista merce in arrivo
+          </strong>
+
+          <div
+            style={{
+              marginTop: 4,
+              opacity: 0.7,
+            }}
+          >
+            Puoi consultare articoli e quantità
+            ancora da ricevere. La registrazione
+            degli arrivi e la gestione
+            dell&apos;ordine sono riservate agli
+            utenti autorizzati.
           </div>
         </div>
       )}

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { use, useState } from "react";
+import React, { use, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../../../lib/supabaseClient";
 import Link from "next/link";
@@ -28,6 +28,40 @@ export default function NewItemPage({
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
 
+  const [canViewPrices, setCanViewPrices] =
+    useState(false);
+
+  useEffect(() => {
+    const role =
+      localStorage.getItem(
+        "magazzino_role"
+      );
+
+    if (role === "admin") {
+      setCanViewPrices(true);
+      return;
+    }
+
+    try {
+      const saved =
+        localStorage.getItem(
+          "magazzino_permissions"
+        );
+
+      const permissions =
+        saved
+          ? JSON.parse(saved)
+          : {};
+
+      setCanViewPrices(
+        permissions?.view_prices ===
+          true
+      );
+    } catch {
+      setCanViewPrices(false);
+    }
+  }, []);
+
   async function save() {
     setMsg("");
 
@@ -51,7 +85,10 @@ export default function NewItemPage({
       return;
     }
 
-    if (Number(price) < 0) {
+    if (
+      canViewPrices &&
+      Number(price) < 0
+    ) {
       setMsg("Il prezzo non può essere negativo.");
       return;
     }
@@ -68,7 +105,9 @@ export default function NewItemPage({
       code: trimmedScannerCode,
       supplier_code: trimmedSupplierCode,
       description: trimmedDescription,
-      price: Number(price) || 0,
+      price: canViewPrices
+        ? Number(price) || 0
+        : 0,
       stock: 0,
       min_stock: Number(minStock) || 0,
       on_order: 0,
@@ -234,17 +273,22 @@ export default function NewItemPage({
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                gridTemplateColumns:
+                  canViewPrices
+                    ? "repeat(2, minmax(0, 1fr))"
+                    : "1fr",
                 gap: 14,
               }}
             >
-              <NumberField
-                label="Prezzo singolo"
-                value={price}
-                onChange={setPrice}
-                suffix="€"
-                step="0.01"
-              />
+              {canViewPrices && (
+                <NumberField
+                  label="Prezzo singolo"
+                  value={price}
+                  onChange={setPrice}
+                  suffix="€"
+                  step="0.01"
+                />
+              )}
 
               <NumberField
                 label="Scorta minima"
@@ -399,15 +443,20 @@ export default function NewItemPage({
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                gridTemplateColumns:
+                  canViewPrices
+                    ? "repeat(2, minmax(0, 1fr))"
+                    : "1fr",
                 gap: 10,
                 marginTop: 16,
               }}
             >
-              <MiniCard
-                label="Prezzo"
-                value={formatEuro(price)}
-              />
+              {canViewPrices && (
+                <MiniCard
+                  label="Prezzo"
+                  value={formatEuro(price)}
+                />
+              )}
 
               <MiniCard
                 label="Scorta minima"

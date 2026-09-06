@@ -32,6 +32,35 @@ type SearchResult = SearchItem & {
   supplier_name: string;
 };
 
+type Permissions = {
+  dashboard?: boolean;
+  view_prices?: boolean;
+  view_inventory_value?: boolean;
+  suppliers?: boolean;
+  movements?: boolean;
+  missing_codes?: boolean;
+  orders?: boolean;
+  create_orders?: boolean;
+  reminders?: boolean;
+  settings?: boolean;
+  manage_users?: boolean;
+  [key: string]: boolean | undefined;
+};
+
+const FULL_PERMISSIONS: Permissions = {
+  dashboard: true,
+  view_prices: true,
+  view_inventory_value: true,
+  suppliers: true,
+  movements: true,
+  missing_codes: true,
+  orders: true,
+  create_orders: true,
+  reminders: true,
+  settings: true,
+  manage_users: true,
+};
+
 export default function TopBar() {
   const pathname =
     usePathname();
@@ -55,6 +84,31 @@ export default function TopBar() {
     username,
     setUsername,
   ] = useState("");
+
+  const [
+    displayName,
+    setDisplayName,
+  ] = useState("");
+
+  const [
+    currentUserId,
+    setCurrentUserId,
+  ] = useState("");
+
+  const [
+    unreadNotesCount,
+    setUnreadNotesCount,
+  ] = useState(0);
+
+  const [
+    permissions,
+    setPermissions,
+  ] = useState<Permissions>({});
+
+  const [
+    permissionsReady,
+    setPermissionsReady,
+  ] = useState(false);
 
   const [
     suppliers,
@@ -116,7 +170,7 @@ export default function TopBar() {
     );
 
   /*
-    UTENTE
+    UTENTE E PERMESSI
   */
   useEffect(() => {
     if (hideTopBar) {
@@ -128,12 +182,184 @@ export default function TopBar() {
         "magazzino_user"
       );
 
+    const savedDisplayName =
+      localStorage.getItem(
+        "magazzino_display_name"
+      );
+
+    const userId =
+      localStorage.getItem(
+        "magazzino_user_id"
+      );
+
+    const role =
+      localStorage.getItem(
+        "magazzino_role"
+      );
+
+    const savedPermissions =
+      localStorage.getItem(
+        "magazzino_permissions"
+      );
+
+    let parsedPermissions:
+      Permissions = {};
+
+    try {
+      parsedPermissions =
+        savedPermissions
+          ? JSON.parse(
+              savedPermissions
+            )
+          : {};
+    } catch {
+      parsedPermissions = {};
+    }
+
     setUsername(
       user || ""
+    );
+
+    setDisplayName(
+      savedDisplayName ||
+        user ||
+        ""
+    );
+
+    setCurrentUserId(
+      userId || ""
+    );
+
+    setPermissions(
+      role === "admin"
+        ? FULL_PERMISSIONS
+        : parsedPermissions
+    );
+
+    setPermissionsReady(
+      true
     );
   }, [
     pathname,
     hideTopBar,
+  ]);
+
+  const canDashboard =
+    permissions.dashboard ===
+    true;
+
+  const canSuppliers =
+    permissions.suppliers ===
+    true;
+
+  const canMovements =
+    permissions.movements ===
+    true;
+
+  const canMissingCodes =
+    permissions.missing_codes ===
+    true;
+
+  const canOrders =
+    permissions.orders ===
+    true;
+
+  const canSettings =
+    permissions.settings ===
+    true;
+
+  const canManageUsers =
+    permissions.manage_users ===
+    true;
+
+  /*
+    NOTE CONDIVISE:
+    conteggio delle note nuove ricevute
+    dall'account attualmente collegato.
+  */
+  useEffect(() => {
+    if (
+      hideTopBar ||
+      !currentUserId
+    ) {
+      setUnreadNotesCount(0);
+      return;
+    }
+
+    let disposed = false;
+
+    async function loadUnreadNotesCount() {
+      const {
+        count,
+        error,
+      } = await supabase
+        .from("shared_notes")
+        .select(
+          "id",
+          {
+            count: "exact",
+            head: true,
+          }
+        )
+        .eq(
+          "recipient_user_id",
+          currentUserId
+        )
+        .eq(
+          "status",
+          "new"
+        );
+
+      if (disposed) {
+        return;
+      }
+
+      if (error) {
+        console.warn(
+          "Conteggio note condivise non disponibile:",
+          error.message
+        );
+        return;
+      }
+
+      setUnreadNotesCount(
+        Number(count || 0)
+      );
+    }
+
+    loadUnreadNotesCount();
+
+    const interval =
+      window.setInterval(
+        loadUnreadNotesCount,
+        30 * 1000
+      );
+
+    function handleFocus() {
+      loadUnreadNotesCount();
+    }
+
+    window.addEventListener(
+      "focus",
+      handleFocus
+    );
+
+    return () => {
+      disposed = true;
+
+      window.clearInterval(
+        interval
+      );
+
+      window.removeEventListener(
+        "focus",
+        handleFocus
+      );
+    };
+  }, [
+    hideTopBar,
+    currentUserId,
+    pathname,
   ]);
 
   /*
@@ -141,7 +367,17 @@ export default function TopBar() {
     PER MENU E RICERCA
   */
   useEffect(() => {
-    if (hideTopBar) {
+    if (
+      hideTopBar ||
+      !permissionsReady
+    ) {
+      return;
+    }
+
+    if (!canSuppliers) {
+      setSuppliers([]);
+      setItems([]);
+      setSearchLoading(false);
       return;
     }
 
@@ -276,6 +512,8 @@ export default function TopBar() {
     loadTopBarData();
   }, [
     hideTopBar,
+    permissionsReady,
+    canSuppliers,
   ]);
 
   /*
@@ -374,6 +612,7 @@ export default function TopBar() {
       }
 
       if (
+        canSuppliers &&
         (
           event.ctrlKey ||
           event.metaKey
@@ -404,6 +643,7 @@ export default function TopBar() {
     };
   }, [
     hideTopBar,
+    canSuppliers,
   ]);
 
   /*
@@ -603,7 +843,15 @@ export default function TopBar() {
     );
 
     localStorage.removeItem(
+      "magazzino_display_name"
+    );
+
+    localStorage.removeItem(
       "magazzino_role"
+    );
+
+    localStorage.removeItem(
+      "magazzino_permissions"
     );
 
     localStorage.removeItem(
@@ -617,6 +865,9 @@ export default function TopBar() {
     localStorage.removeItem(
       "magazzino_last_activity"
     );
+
+    setUnreadNotesCount(0);
+    setCurrentUserId("");
 
     router.replace(
       "/login"
@@ -652,24 +903,28 @@ export default function TopBar() {
 
           {/* HOME */}
 
-          <Link
-            href="/"
-            className={`topbar-v2-pill ${
-              pathname ===
-              "/"
-                ? "active"
-                : ""
-            }`}
-          >
-            <HomeIcon />
+          {canDashboard && (
+            <Link
+              href="/"
+              className={`topbar-v2-pill ${
+                pathname ===
+                "/"
+                  ? "active"
+                  : ""
+              }`}
+            >
+              <HomeIcon />
 
-            <span>
-              Home
-            </span>
-          </Link>
+              <span>
+                Home
+              </span>
+            </Link>
+          )}
 
-          {/* FORNITORI */}
+          {/* FORNITORI + MAGAZZINO */}
 
+          {canSuppliers && (
+            <>
           <div
             className="topbar-v2-menu"
             ref={
@@ -749,7 +1004,7 @@ export default function TopBar() {
             )}
           </div>
 
-          {/* MAGAZZINO */}
+              {/* MAGAZZINO */}
 
           <div
             className="topbar-v2-menu"
@@ -824,8 +1079,12 @@ export default function TopBar() {
             )}
           </div>
 
+            </>
+          )}
+
           {/* MOVIMENTI */}
 
+          {canMovements && (
           <Link
             href="/movements"
             className={`topbar-v2-pill ${
@@ -843,8 +1102,11 @@ export default function TopBar() {
             </span>
           </Link>
 
+          )}
+
           {/* CODICI */}
 
+          {canMissingCodes && (
           <Link
             href="/codici-da-inserire"
             className={`topbar-v2-pill ${
@@ -862,8 +1124,11 @@ export default function TopBar() {
             </span>
           </Link>
 
+          )}
+
           {/* ORDINI */}
 
+          {canOrders && (
           <Link
             href="/orders"
             className={`topbar-v2-pill ${
@@ -881,8 +1146,11 @@ export default function TopBar() {
             </span>
           </Link>
 
+          )}
+
           {/* RICERCA */}
 
+          {canSuppliers && (
           <div
             className="topbar-v2-search-wrap"
             ref={
@@ -1099,20 +1367,84 @@ export default function TopBar() {
             )}
           </div>
 
+          )}
+
           {/* USER */}
 
           <div className="topbar-v2-user-area">
             <div className="topbar-v2-avatar">
               {getInitial(
-                username
+                displayName ||
+                  username
               )}
             </div>
 
             <div className="topbar-v2-user-name">
-              {username ||
+              {displayName ||
+                username ||
                 "Utente"}
             </div>
 
+            <Link
+              href="/note-condivise"
+              title={
+                unreadNotesCount > 0
+                  ? `${unreadNotesCount} note da leggere`
+                  : "Note condivise"
+              }
+              aria-label={
+                unreadNotesCount > 0
+                  ? `Note condivise: ${unreadNotesCount} da leggere`
+                  : "Note condivise"
+              }
+              className={`topbar-v2-icon-button topbar-v2-notes-button ${
+                pathname.startsWith(
+                  "/note-condivise"
+                )
+                  ? "active"
+                  : ""
+              }`}
+              onClick={() => {
+                setSearch("");
+                setSearchOpen(false);
+                setSupplierMenuOpen(false);
+                setWarehouseMenuOpen(false);
+              }}
+            >
+              <BellIcon />
+
+              {unreadNotesCount > 0 && (
+                <span className="topbar-v2-notes-badge">
+                  {unreadNotesCount > 99
+                    ? "99+"
+                    : unreadNotesCount}
+                </span>
+              )}
+            </Link>
+
+            {canManageUsers && (
+              <Link
+                href="/utenti"
+                title="Utenti e permessi"
+                aria-label="Utenti e permessi"
+                className={`topbar-v2-icon-button ${
+                  pathname ===
+                  "/utenti"
+                    ? "active"
+                    : ""
+                }`}
+                onClick={() => {
+                  setSearch("");
+                  setSearchOpen(false);
+                  setSupplierMenuOpen(false);
+                  setWarehouseMenuOpen(false);
+                }}
+              >
+                <UsersIcon />
+              </Link>
+            )}
+
+            {canSettings && (
             <Link
               href="/settings"
               title="Impostazioni"
@@ -1152,6 +1484,8 @@ export default function TopBar() {
             >
               <SettingsIcon />
             </Link>
+
+            )}
 
             <button
               type="button"
@@ -1706,6 +2040,32 @@ export default function TopBar() {
           background: rgba(59, 130, 246, 0.09);
         }
 
+        .topbar-v2-notes-button {
+          position: relative;
+          flex-shrink: 0;
+        }
+
+        .topbar-v2-notes-badge {
+          position: absolute;
+          top: -6px;
+          right: -7px;
+          min-width: 18px;
+          height: 18px;
+          padding: 0 5px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          box-sizing: border-box;
+          border: 2px solid #07101b;
+          border-radius: 999px;
+          background: #ef4444;
+          color: white;
+          font-size: 8px;
+          font-weight: 950;
+          line-height: 1;
+          box-shadow: 0 4px 12px rgba(239, 68, 68, 0.35);
+        }
+
         .topbar-v2-logout {
           height: 34px;
           padding: 0 9px;
@@ -2050,6 +2410,32 @@ function SearchIcon() {
         d="M15.5 15.5L20 20"
         stroke="currentColor"
         strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function BellIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path
+        d="M18 9.5C18 6.2 15.7 4 12 4C8.3 4 6 6.2 6 9.5V13.5L4.5 16.5H19.5L18 13.5V9.5Z"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinejoin="round"
+      />
+
+      <path
+        d="M9.5 18.5C10 19.5 10.8 20 12 20C13.2 20 14 19.5 14.5 18.5"
+        stroke="currentColor"
+        strokeWidth="1.7"
         strokeLinecap="round"
       />
     </svg>

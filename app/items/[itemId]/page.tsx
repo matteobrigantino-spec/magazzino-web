@@ -13,9 +13,16 @@ type ItemData = {
   description: string;
   stock: number;
   min_stock: number;
-  price: number;
+  price?: number;
   on_order: number;
   image_url: string | null;
+};
+
+type Permissions = {
+  view_prices?: boolean;
+  view_inventory_value?: boolean;
+
+  [key: string]: boolean | undefined;
 };
 
 export default function ItemDetailPage({
@@ -37,6 +44,10 @@ export default function ItemDetailPage({
   const [msg, setMsg] = useState("");
   const [success, setSuccess] = useState(false);
 
+  const [canViewPrices, setCanViewPrices] = useState(false);
+  const [canViewInventoryValue, setCanViewInventoryValue] =
+    useState(false);
+
   const [supplierId, setSupplierId] = useState("");
   const [scannerCode, setScannerCode] = useState("");
   const [supplierCode, setSupplierCode] = useState("");
@@ -50,10 +61,60 @@ export default function ItemDetailPage({
   useEffect(() => {
     async function loadItem() {
       setLoading(true);
+      setMsg("");
+      setSuccess(false);
+
+      const role =
+        localStorage.getItem("magazzino_role");
+
+      const savedPermissions =
+        localStorage.getItem("magazzino_permissions");
+
+      let permissions: Permissions = {};
+
+      try {
+        permissions = savedPermissions
+          ? JSON.parse(savedPermissions)
+          : {};
+      } catch {
+        permissions = {};
+      }
+
+      /*
+        Compatibilità con l'account admin
+        già esistente.
+      */
+      const isAdmin = role === "admin";
+
+      const pricesAllowed =
+        isAdmin ||
+        permissions.view_prices === true;
+
+      const inventoryValueAllowed =
+        isAdmin ||
+        permissions.view_inventory_value === true;
+
+      setCanViewPrices(pricesAllowed);
+      setCanViewInventoryValue(inventoryValueAllowed);
+
+      /*
+        Il prezzo viene richiesto al database
+        solo se serve davvero:
+
+        - per mostrare il prezzo unitario;
+        - oppure per calcolare i valori economici.
+      */
+      const needsPrice =
+        pricesAllowed ||
+        inventoryValueAllowed;
+
+      const itemFields = needsPrice
+        ? "id,supplier_id,code,supplier_code,description,stock,min_stock,price,on_order,image_url"
+        : "id,supplier_id,code,supplier_code,description,stock,min_stock,on_order,image_url";
 
       const { data, error } = await supabase
         .from("items")
-        .select("*")
+        .select(itemFields)
         .eq("id", itemId)
         .single();
 
@@ -70,7 +131,13 @@ export default function ItemDetailPage({
       setScannerCode(item.code || "");
       setSupplierCode(item.supplier_code || "");
       setDescription(item.description || "");
-      setPrice(Number(item.price || 0));
+
+      if (needsPrice) {
+        setPrice(Number(item.price || 0));
+      } else {
+        setPrice(0);
+      }
+
       setStock(Number(item.stock || 0));
       setMinStock(Number(item.min_stock || 0));
       setOnOrder(Number(item.on_order || 0));
@@ -101,7 +168,10 @@ export default function ItemDetailPage({
       return;
     }
 
-    if (Number(price) < 0) {
+    if (
+      canViewPrices &&
+      Number(price) < 0
+    ) {
       setMsg("Il prezzo non può essere negativo.");
       return;
     }
@@ -123,18 +193,41 @@ export default function ItemDetailPage({
 
     setSaving(true);
 
+    const updateData: {
+      code: string;
+      supplier_code: string;
+      description: string;
+      stock: number;
+      min_stock: number;
+      on_order: number;
+      image_url: string | null;
+      price?: number;
+    } = {
+      code: scannerCode.trim(),
+      supplier_code: supplierCode.trim(),
+      description: description.trim(),
+      stock: Number(stock) || 0,
+      min_stock: Number(minStock) || 0,
+      on_order: Number(onOrder) || 0,
+      image_url: imageUrl.trim() || null,
+    };
+
+    /*
+      Se l'utente non può vedere/modificare
+      i prezzi, il campo price NON viene
+      inviato a Supabase.
+
+      Quindi il prezzo già presente
+      nel database rimane invariato.
+    */
+    if (canViewPrices) {
+      updateData.price =
+        Number(price) || 0;
+    }
+
     const { error } = await supabase
       .from("items")
-      .update({
-        code: scannerCode.trim(),
-        supplier_code: supplierCode.trim(),
-        description: description.trim(),
-        price: Number(price) || 0,
-        stock: Number(stock) || 0,
-        min_stock: Number(minStock) || 0,
-        on_order: Number(onOrder) || 0,
-        image_url: imageUrl.trim() || null,
-      })
+      .update(updateData)
       .eq("id", itemId);
 
     if (error) {
@@ -350,13 +443,15 @@ export default function ItemDetailPage({
                 gap: 14,
               }}
             >
-              <NumberField
-                label="Prezzo singolo"
-                value={price}
-                onChange={setPrice}
-                suffix="€"
-                step="0.01"
-              />
+              {canViewPrices && (
+                <NumberField
+                  label="Prezzo singolo"
+                  value={price}
+                  onChange={setPrice}
+                  suffix="€"
+                  step="0.01"
+                />
+              )}
 
               <NumberField
                 label="Scorta minima"
@@ -573,31 +668,35 @@ export default function ItemDetailPage({
                 value={`${onOrder} pz`}
               />
 
-              <MiniCard
-                label="Prezzo"
-                value={formatEuro(price)}
-              />
+              {canViewPrices && (
+                <MiniCard
+                  label="Prezzo"
+                  value={formatEuro(price)}
+                />
+              )}
             </div>
 
-            <div
-              style={{
-                marginTop: 10,
-                display: "grid",
-                gridTemplateColumns:
-                  "repeat(2, minmax(0, 1fr))",
-                gap: 10,
-              }}
-            >
-              <MiniCard
-                label="Valore magazzino"
-                value={formatEuro(warehouseValue)}
-              />
+            {canViewInventoryValue && (
+              <div
+                style={{
+                  marginTop: 10,
+                  display: "grid",
+                  gridTemplateColumns:
+                    "repeat(2, minmax(0, 1fr))",
+                  gap: 10,
+                }}
+              >
+                <MiniCard
+                  label="Valore magazzino"
+                  value={formatEuro(warehouseValue)}
+                />
 
-              <MiniCard
-                label="Valore in ordine"
-                value={formatEuro(orderValue)}
-              />
-            </div>
+                <MiniCard
+                  label="Valore in ordine"
+                  value={formatEuro(orderValue)}
+                />
+              </div>
+            )}
 
             <div
               style={{

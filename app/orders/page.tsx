@@ -25,7 +25,7 @@ type OrderItem = {
   item_id: string;
   qty: number;
   received_qty: number;
-  unit_price: number;
+  unit_price?: number;
 };
 
 type SupplierRow = {
@@ -37,11 +37,45 @@ type SupplierRow = {
 
 type OrderView = Order & {
   supplier_name: string;
-  total: number;
+  total: number | null;
   totalLines: number;
   totalQty: number;
   receivedQty: number;
+  remainingQty: number;
 };
+
+type Permissions = {
+  view_prices?: boolean;
+  orders?: boolean;
+  create_orders?: boolean;
+};
+
+function readPermissions() {
+  const role = localStorage.getItem("magazzino_role");
+
+  let permissions: Permissions = {};
+
+  try {
+    const saved = localStorage.getItem("magazzino_permissions");
+
+    if (saved) {
+      const parsed = JSON.parse(saved);
+
+      if (parsed && typeof parsed === "object") {
+        permissions = parsed as Permissions;
+      }
+    }
+  } catch {
+    permissions = {};
+  }
+
+  return {
+    canViewPrices:
+      role === "admin" || permissions.view_prices === true,
+    canCreateOrders:
+      role === "admin" || permissions.create_orders === true,
+  };
+}
 
 export default function OrdersPage() {
   const router = useRouter();
@@ -50,12 +84,19 @@ export default function OrdersPage() {
   const [orders, setOrders] = useState<OrderView[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [canViewPrices, setCanViewPrices] = useState(false);
+  const [canCreateOrders, setCanCreateOrders] = useState(false);
 
   useEffect(() => {
-    loadData();
+    const access = readPermissions();
+
+    setCanViewPrices(access.canViewPrices);
+    setCanCreateOrders(access.canCreateOrders);
+
+    loadData(access.canViewPrices);
   }, []);
 
-  async function loadData() {
+  async function loadData(viewPrices: boolean) {
     setLoading(true);
 
     const { data: suppliersData, error: suppliersError } = await supabase
@@ -82,11 +123,13 @@ export default function OrdersPage() {
       return;
     }
 
+    const orderItemsSelect = viewPrices
+      ? "id,order_id,item_id,qty,received_qty,unit_price"
+      : "id,order_id,item_id,qty,received_qty";
+
     const { data: orderItemsData, error: orderItemsError } = await supabase
       .from("order_items")
-      .select(
-        "id,order_id,item_id,qty,received_qty,unit_price"
-      );
+      .select(orderItemsSelect);
 
     if (orderItemsError) {
       alert("Errore righe ordine: " + orderItemsError.message);
@@ -109,13 +152,15 @@ export default function OrdersPage() {
         (line) => line.order_id === order.id
       );
 
-      const total = lines.reduce((sum, line) => {
-        return (
-          sum +
-          Number(line.qty || 0) *
-            Number(line.unit_price || 0)
-        );
-      }, 0);
+      const total = viewPrices
+        ? lines.reduce((sum, line) => {
+            return (
+              sum +
+              Number(line.qty || 0) *
+                Number(line.unit_price || 0)
+            );
+          }, 0)
+        : null;
 
       const totalQty = lines.reduce((sum, line) => {
         return sum + Number(line.qty || 0);
@@ -134,6 +179,7 @@ export default function OrdersPage() {
         totalLines: lines.length,
         totalQty,
         receivedQty,
+        remainingQty: Math.max(0, totalQty - receivedQty),
       };
     });
 
@@ -176,10 +222,14 @@ export default function OrdersPage() {
   }, [suppliers, search]);
 
   const openOrders = useMemo(() => {
+    const allowedStatuses = canCreateOrders
+      ? ["draft", "ordered", "partial"]
+      : ["ordered", "partial"];
+
     return orders.filter((order) =>
-      ["draft", "ordered", "partial"].includes(order.status)
+      allowedStatuses.includes(order.status)
     );
-  }, [orders]);
+  }, [orders, canCreateOrders]);
 
   const historyOrders = useMemo(() => {
     return orders.filter((order) =>
@@ -246,155 +296,159 @@ export default function OrdersPage() {
             fontSize: 14,
           }}
         >
-          Seleziona un fornitore per preparare un nuovo ordine.
+          {canCreateOrders
+            ? "Seleziona un fornitore per preparare un nuovo ordine."
+            : "Controlla la merce ordinata che deve ancora arrivare."}
         </div>
       </div>
 
-      <div
-        style={{
-          marginBottom: 34,
-        }}
-      >
-        <SectionTitle
-          title="Fornitori"
-          subtitle="Apri un fornitore per creare o modificare un ordine"
-        />
-
+      {canCreateOrders && (
         <div
           style={{
-            marginBottom: 16,
-            padding: 14,
-            border: "1px solid var(--border-color)",
-            borderRadius: 12,
-            background: "var(--card)",
+            marginBottom: 34,
           }}
         >
-          <input
-            type="text"
-            placeholder="Cerca fornitore..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            style={{
-              width: "100%",
-              padding: "11px 13px",
-              borderRadius: 8,
-              border: "1px solid var(--border-color)",
-              background: "var(--input-bg)",
-              color: "var(--foreground)",
-              outline: "none",
-              fontSize: 14,
-            }}
+          <SectionTitle
+            title="Fornitori"
+            subtitle="Apri un fornitore per creare o modificare un ordine"
           />
-        </div>
 
-        {filteredSuppliers.length === 0 ? (
-          <EmptyCard
-            title="Nessun fornitore trovato"
-            subtitle="Prova con un altro nome."
-          />
-        ) : (
           <div
             style={{
-              display: "grid",
-              gridTemplateColumns:
-                "repeat(auto-fit, minmax(260px, 1fr))",
-              gap: 16,
+              marginBottom: 16,
+              padding: 14,
+              border: "1px solid var(--border-color)",
+              borderRadius: 12,
+              background: "var(--card)",
             }}
           >
-            {filteredSuppliers.map((supplier) => (
-              <button
-                key={supplier.id}
-                type="button"
-                onClick={() =>
-                  router.push(
-                    `/orders/supplier/${supplier.id}`
-                  )
-                }
-                style={{
-                  textAlign: "left",
-                  padding: 20,
-                  border:
-                    "1px solid var(--border-color)",
-                  borderRadius: 12,
-                  background: "var(--card)",
-                  color: "var(--foreground)",
-                  cursor: "pointer",
-                }}
-              >
-                <div
+            <input
+              type="text"
+              placeholder="Cerca fornitore..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={{
+                width: "100%",
+                padding: "11px 13px",
+                borderRadius: 8,
+                border: "1px solid var(--border-color)",
+                background: "var(--input-bg)",
+                color: "var(--foreground)",
+                outline: "none",
+                fontSize: 14,
+              }}
+            />
+          </div>
+
+          {filteredSuppliers.length === 0 ? (
+            <EmptyCard
+              title="Nessun fornitore trovato"
+              subtitle="Prova con un altro nome."
+            />
+          ) : (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns:
+                  "repeat(auto-fit, minmax(260px, 1fr))",
+                gap: 16,
+              }}
+            >
+              {filteredSuppliers.map((supplier) => (
+                <button
+                  key={supplier.id}
+                  type="button"
+                  onClick={() =>
+                    router.push(
+                      `/orders/supplier/${supplier.id}`
+                    )
+                  }
                   style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    gap: 10,
-                    alignItems: "flex-start",
+                    textAlign: "left",
+                    padding: 20,
+                    border:
+                      "1px solid var(--border-color)",
+                    borderRadius: 12,
+                    background: "var(--card)",
+                    color: "var(--foreground)",
+                    cursor: "pointer",
                   }}
                 >
-                  <div>
-                    <div
-                      style={{
-                        fontSize: 19,
-                        fontWeight: 850,
-                      }}
-                    >
-                      {supplier.name}
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: 10,
+                      alignItems: "flex-start",
+                    }}
+                  >
+                    <div>
+                      <div
+                        style={{
+                          fontSize: 19,
+                          fontWeight: 850,
+                        }}
+                      >
+                        {supplier.name}
+                      </div>
+
+                      <div
+                        style={{
+                          fontSize: 12,
+                          opacity: 0.55,
+                          marginTop: 5,
+                        }}
+                      >
+                        Clicca per preparare l&apos;ordine
+                      </div>
                     </div>
 
                     <div
                       style={{
-                        fontSize: 12,
-                        opacity: 0.55,
-                        marginTop: 5,
+                        fontSize: 24,
+                        opacity: 0.4,
                       }}
                     >
-                      Clicca per preparare l&apos;ordine
+                      →
                     </div>
                   </div>
 
                   <div
                     style={{
-                      fontSize: 24,
-                      opacity: 0.4,
+                      display: "flex",
+                      gap: 8,
+                      flexWrap: "wrap",
+                      marginTop: 18,
                     }}
                   >
-                    →
-                  </div>
-                </div>
-
-                <div
-                  style={{
-                    display: "flex",
-                    gap: 8,
-                    flexWrap: "wrap",
-                    marginTop: 18,
-                  }}
-                >
-                  {supplier.openOrders > 0 && (
-                    <Badge
-                      text={`${supplier.openOrders} aperti`}
-                      type="warning"
-                    />
-                  )}
-
-                  {supplier.historyOrders > 0 && (
-                    <Badge
-                      text={`${supplier.historyOrders} storico`}
-                      type="neutral"
-                    />
-                  )}
-
-                  {supplier.openOrders === 0 &&
-                    supplier.historyOrders === 0 && (
+                    {supplier.openOrders > 0 && (
                       <Badge
-                        text="Nessun ordine"
+                        text={`${supplier.openOrders} aperti`}
+                        type="warning"
+                      />
+                    )}
+
+                    {supplier.historyOrders > 0 && (
+                      <Badge
+                        text={`${supplier.historyOrders} storico`}
                         type="neutral"
                       />
                     )}
-                </div>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+
+                    {supplier.openOrders === 0 &&
+                      supplier.historyOrders === 0 && (
+                        <Badge
+                          text="Nessun ordine"
+                          type="neutral"
+                        />
+                      )}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <div
         style={{
@@ -402,8 +456,12 @@ export default function OrdersPage() {
         }}
       >
         <SectionTitle
-          title="Ordini aperti"
-          subtitle="Ordini inviati o parzialmente ricevuti"
+          title={canCreateOrders ? "Ordini aperti" : "Merce in arrivo"}
+          subtitle={
+            canCreateOrders
+              ? "Ordini inviati, bozze o parzialmente ricevuti"
+              : "Ordini inviati o parzialmente ricevuti ancora da completare"
+          }
         />
 
         {openOrders.length === 0 ? (
@@ -423,6 +481,7 @@ export default function OrdersPage() {
               <OrderCard
                 key={order.id}
                 order={order}
+                canViewPrices={canViewPrices}
                 onOpen={() =>
                   router.push(`/orders/${order.id}`)
                 }
@@ -432,46 +491,51 @@ export default function OrdersPage() {
         )}
       </div>
 
-      <div>
-        <SectionTitle
-          title="Storico ordini"
-          subtitle="Ordini ricevuti o annullati"
-        />
-
-        {historyOrders.length === 0 ? (
-          <EmptyCard
-            title="Storico vuoto"
-            subtitle="Gli ordini completati compariranno qui."
+      {canCreateOrders && (
+        <div>
+          <SectionTitle
+            title="Storico ordini"
+            subtitle="Ordini ricevuti o annullati"
           />
-        ) : (
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: 14,
-            }}
-          >
-            {historyOrders.map((order) => (
-              <OrderCard
-                key={order.id}
-                order={order}
-                onOpen={() =>
-                  router.push(`/orders/${order.id}`)
-                }
-              />
-            ))}
-          </div>
-        )}
-      </div>
+
+          {historyOrders.length === 0 ? (
+            <EmptyCard
+              title="Storico vuoto"
+              subtitle="Gli ordini completati compariranno qui."
+            />
+          ) : (
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 14,
+              }}
+            >
+              {historyOrders.map((order) => (
+                <OrderCard
+                  key={order.id}
+                  order={order}
+                  canViewPrices={canViewPrices}
+                  onOpen={() =>
+                    router.push(`/orders/${order.id}`)
+                  }
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
 function OrderCard({
   order,
+  canViewPrices,
   onOpen,
 }: {
   order: OrderView;
+  canViewPrices: boolean;
   onOpen: () => void;
 }) {
   return (
@@ -545,9 +609,18 @@ function OrderCard({
             </span>
           )}
 
-          <span>
-            <strong>{formatEuro(order.total)}</strong>
-          </span>
+          {["ordered", "partial"].includes(order.status) && (
+            <span>
+              Da ricevere{" "}
+              <strong>{order.remainingQty}</strong>
+            </span>
+          )}
+
+          {canViewPrices && order.total !== null && (
+            <span>
+              <strong>{formatEuro(order.total)}</strong>
+            </span>
+          )}
         </div>
       </div>
 
@@ -558,7 +631,7 @@ function OrderCard({
           alignItems: "center",
         }}
       >
-        {order.pdf_url && (
+        {canViewPrices && order.pdf_url && (
           <a
             href={order.pdf_url}
             target="_blank"

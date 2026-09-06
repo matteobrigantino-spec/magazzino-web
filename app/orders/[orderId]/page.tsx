@@ -237,33 +237,97 @@ export default function OrderDetailPage() {
     /*
       Se l'utente non può vedere i prezzi
       NON chiediamo unit_price a Supabase.
+
+      Usiamo due select letterali separate:
+      evita l'errore di tipizzazione Supabase
+      durante il build TypeScript su Vercel.
     */
-    const orderItemsSelect =
-      allowPrices
-        ? "id,order_id,item_id,qty,received_qty,unit_price"
-        : "id,order_id,item_id,qty,received_qty";
+    let orderItems: OrderItem[] = [];
 
-    const {
-      data: orderItemsData,
-      error: orderItemsError,
-    } = await supabase
-      .from("order_items")
-      .select(orderItemsSelect)
-      .eq("order_id", orderId);
+    if (allowPrices) {
+      const {
+        data,
+        error,
+      } = await supabase
+        .from("order_items")
+        .select(
+          "id,order_id,item_id,qty,received_qty,unit_price"
+        )
+        .eq("order_id", orderId);
 
-    if (orderItemsError) {
-      setMessage(
-        "Errore caricamento righe ordine: " +
-          orderItemsError.message
-      );
+      if (error) {
+        setMessage(
+          "Errore caricamento righe ordine: " +
+            error.message
+        );
 
-      setMessageType("error");
-      setLoading(false);
-      return;
+        setMessageType("error");
+        setLoading(false);
+        return;
+      }
+
+      orderItems =
+        (data || []).map(
+          (row) => ({
+            id:
+              String(row.id),
+            order_id:
+              String(row.order_id),
+            item_id:
+              String(row.item_id),
+            qty:
+              Number(row.qty || 0),
+            received_qty:
+              Number(
+                row.received_qty || 0
+              ),
+            unit_price:
+              Number(
+                row.unit_price || 0
+              ),
+          })
+        );
+    } else {
+      const {
+        data,
+        error,
+      } = await supabase
+        .from("order_items")
+        .select(
+          "id,order_id,item_id,qty,received_qty"
+        )
+        .eq("order_id", orderId);
+
+      if (error) {
+        setMessage(
+          "Errore caricamento righe ordine: " +
+            error.message
+        );
+
+        setMessageType("error");
+        setLoading(false);
+        return;
+      }
+
+      orderItems =
+        (data || []).map(
+          (row) => ({
+            id:
+              String(row.id),
+            order_id:
+              String(row.order_id),
+            item_id:
+              String(row.item_id),
+            qty:
+              Number(row.qty || 0),
+            received_qty:
+              Number(
+                row.received_qty || 0
+              ),
+            unit_price: 0,
+          })
+        );
     }
-
-    const orderItems =
-      (orderItemsData || []) as OrderItem[];
 
     const itemIds =
       orderItems.map((line) => line.item_id);

@@ -123,23 +123,87 @@ export default function OrdersPage() {
       return;
     }
 
-    const orderItemsSelect = viewPrices
-      ? "id,order_id,item_id,qty,received_qty,unit_price"
-      : "id,order_id,item_id,qty,received_qty";
+    let orderItems: OrderItem[] = [];
 
-    const { data: orderItemsData, error: orderItemsError } = await supabase
-      .from("order_items")
-      .select(orderItemsSelect);
+    if (viewPrices) {
+      const {
+        data,
+        error,
+      } = await supabase
+        .from("order_items")
+        .select(
+          "id,order_id,item_id,qty,received_qty,unit_price"
+        );
 
-    if (orderItemsError) {
-      alert("Errore righe ordine: " + orderItemsError.message);
-      setLoading(false);
-      return;
+      if (error) {
+        alert(
+          "Errore righe ordine: " +
+            error.message
+        );
+        setLoading(false);
+        return;
+      }
+
+      orderItems =
+        (data || []).map(
+          (row) => ({
+            id: String(row.id),
+            order_id:
+              String(row.order_id),
+            item_id:
+              String(row.item_id),
+            qty:
+              Number(row.qty || 0),
+            received_qty:
+              Number(
+                row.received_qty || 0
+              ),
+            unit_price:
+              Number(
+                row.unit_price || 0
+              ),
+          })
+        );
+    } else {
+      const {
+        data,
+        error,
+      } = await supabase
+        .from("order_items")
+        .select(
+          "id,order_id,item_id,qty,received_qty"
+        );
+
+      if (error) {
+        alert(
+          "Errore righe ordine: " +
+            error.message
+        );
+        setLoading(false);
+        return;
+      }
+
+      orderItems =
+        (data || []).map(
+          (row) => ({
+            id: String(row.id),
+            order_id:
+              String(row.order_id),
+            item_id:
+              String(row.item_id),
+            qty:
+              Number(row.qty || 0),
+            received_qty:
+              Number(
+                row.received_qty || 0
+              ),
+            unit_price: 0,
+          })
+        );
     }
 
     const supplierList = (suppliersData || []) as Supplier[];
     const orderList = (ordersData || []) as Order[];
-    const orderItems = (orderItemsData || []) as OrderItem[];
 
     const supplierMap = new Map<string, string>();
 

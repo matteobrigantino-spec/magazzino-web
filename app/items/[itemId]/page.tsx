@@ -108,24 +108,44 @@ export default function ItemDetailPage({
         pricesAllowed ||
         inventoryValueAllowed;
 
-      const itemFields = needsPrice
-        ? "id,supplier_id,code,supplier_code,description,stock,min_stock,price,on_order,image_url"
-        : "id,supplier_id,code,supplier_code,description,stock,min_stock,on_order,image_url";
+      let itemData: unknown = null;
+      let itemError: { message: string } | null = null;
 
-      const { data, error } = await supabase
-        .from("items")
-        .select(itemFields)
-        .eq("id", itemId)
-        .single();
+      if (needsPrice) {
+        const response = await supabase
+          .from("items")
+          .select(
+            "id,supplier_id,code,supplier_code,description,stock,min_stock,price,on_order,image_url"
+          )
+          .eq("id", itemId)
+          .single();
 
-      if (error) {
-        setMsg("Errore caricamento: " + error.message);
+        itemData = response.data;
+        itemError = response.error;
+      } else {
+        const response = await supabase
+          .from("items")
+          .select(
+            "id,supplier_id,code,supplier_code,description,stock,min_stock,on_order,image_url"
+          )
+          .eq("id", itemId)
+          .single();
+
+        itemData = response.data;
+        itemError = response.error;
+      }
+
+      if (itemError || !itemData) {
+        setMsg(
+          "Errore caricamento: " +
+            (itemError?.message || "Articolo non trovato")
+        );
         setSuccess(false);
         setLoading(false);
         return;
       }
 
-      const item = data as ItemData;
+      const item = itemData as ItemData;
 
       setSupplierId(item.supplier_id || "");
       setScannerCode(item.code || "");

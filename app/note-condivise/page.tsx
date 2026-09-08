@@ -386,33 +386,22 @@ export default function SharedNotesPage() {
     setSuccessMessage("");
 
     const { error } =
-      await supabase
-        .from("shared_notes")
-        .insert({
-          sender_user_id:
+      await supabase.rpc(
+        "send_shared_note",
+        {
+          p_sender_user_id:
             currentUserId,
 
-          recipient_user_id:
+          p_recipient_user_id:
             recipientId,
 
-          sender_name:
-            currentDisplayName,
-
-          title:
+          p_title:
             cleanTitle,
 
-          message:
+          p_message:
             cleanMessage,
-
-          status:
-            "new",
-
-          read_at:
-            null,
-
-          resolved_at:
-            null,
-        });
+        }
+      );
 
     if (error) {
       setErrorMessage(
@@ -497,20 +486,29 @@ export default function SharedNotesPage() {
           : null,
     };
 
-    const { error } =
-      await supabase
-        .from("shared_notes")
-        .update(payload)
-        .eq("id", note.id)
-        .eq(
-          "recipient_user_id",
-          currentUserId
-        );
+    const {
+      data,
+      error,
+    } = await supabase.rpc(
+      "update_shared_note_status",
+      {
+        p_note_id:
+          note.id,
 
-    if (error) {
+        p_recipient_user_id:
+          currentUserId,
+
+        p_status:
+          nextStatus,
+      }
+    );
+
+    if (error || data !== true) {
       setErrorMessage(
-        "Errore aggiornamento nota: " +
-          error.message
+        error
+          ? "Errore aggiornamento nota: " +
+              error.message
+          : "Impossibile aggiornare la nota."
       );
 
       return;

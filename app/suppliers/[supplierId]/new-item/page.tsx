@@ -23,6 +23,7 @@ export default function NewItemPage({
   const [description, setDescription] = useState("");
   const [price, setPrice] = useState<number>(0);
   const [minStock, setMinStock] = useState<number>(0);
+  const [boxQty, setBoxQty] = useState<number>(1);
   const [imageUrl, setImageUrl] = useState("");
 
   const [saving, setSaving] = useState(false);
@@ -98,6 +99,14 @@ export default function NewItemPage({
       return;
     }
 
+    if (
+      !Number.isInteger(Number(boxQty)) ||
+      Number(boxQty) <= 0
+    ) {
+      setMsg("La quantità per box deve essere almeno 1 pezzo.");
+      return;
+    }
+
     setSaving(true);
 
     const { error } = await supabase.from("items").insert({
@@ -110,6 +119,7 @@ export default function NewItemPage({
         : 0,
       stock: 0,
       min_stock: Number(minStock) || 0,
+      box_qty: Number(boxQty) || 1,
       on_order: 0,
       image_url: trimmedImage || null,
     });
@@ -275,8 +285,8 @@ export default function NewItemPage({
                 display: "grid",
                 gridTemplateColumns:
                   canViewPrices
-                    ? "repeat(2, minmax(0, 1fr))"
-                    : "1fr",
+                    ? "repeat(3, minmax(0, 1fr))"
+                    : "repeat(2, minmax(0, 1fr))",
                 gap: 14,
               }}
             >
@@ -297,6 +307,31 @@ export default function NewItemPage({
                 suffix="pz"
                 step="1"
               />
+
+              <NumberField
+                label="Quantità per box"
+                value={boxQty}
+                onChange={setBoxQty}
+                suffix="pz"
+                step="1"
+                min="1"
+              />
+            </div>
+
+            <div
+              style={{
+                marginTop: -4,
+                marginBottom: 16,
+                padding: "10px 12px",
+                borderRadius: 8,
+                background: "rgba(59,130,246,0.07)",
+                border: "1px solid rgba(59,130,246,0.20)",
+                fontSize: 12,
+                lineHeight: 1.45,
+              }}
+            >
+              Il gestionale userà questa quantità per proporre ordini a box
+              interi fino a raggiungere almeno la scorta minima.
             </div>
 
             <Field
@@ -445,8 +480,8 @@ export default function NewItemPage({
                 display: "grid",
                 gridTemplateColumns:
                   canViewPrices
-                    ? "repeat(2, minmax(0, 1fr))"
-                    : "1fr",
+                    ? "repeat(3, minmax(0, 1fr))"
+                    : "repeat(2, minmax(0, 1fr))",
                 gap: 10,
                 marginTop: 16,
               }}
@@ -461,6 +496,11 @@ export default function NewItemPage({
               <MiniCard
                 label="Scorta minima"
                 value={`${Number(minStock || 0)} pz`}
+              />
+
+              <MiniCard
+                label="Quantità per box"
+                value={`${Number(boxQty || 1)} pz`}
               />
             </div>
 
@@ -572,12 +612,14 @@ function NumberField({
   onChange,
   suffix,
   step,
+  min = "0",
 }: {
   label: string;
   value: number;
   onChange: (value: number) => void;
   suffix: string;
   step: string;
+  min?: string;
 }) {
   return (
     <div
@@ -603,7 +645,7 @@ function NumberField({
       >
         <input
           type="number"
-          min="0"
+          min={min}
           step={step}
           value={value}
           onChange={(e) =>

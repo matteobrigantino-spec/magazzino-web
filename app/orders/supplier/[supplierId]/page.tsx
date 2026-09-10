@@ -19,6 +19,7 @@ type Item = {
   price: number;
   stock: number;
   min_stock: number;
+  box_qty: number;
   on_order: number;
 };
 
@@ -94,7 +95,7 @@ export default function SupplierOrderPage() {
       await supabase
         .from("items")
         .select(
-          "id,supplier_id,code,supplier_code,description,price,stock,min_stock,on_order"
+          "id,supplier_id,code,supplier_code,description,price,stock,min_stock,box_qty,on_order"
         )
         .eq("supplier_id", supplierId)
         .order("description");
@@ -120,25 +121,52 @@ export default function SupplierOrderPage() {
       price: Number(item.price || 0),
       stock: Number(item.stock || 0),
       min_stock: Number(item.min_stock || 0),
+      box_qty: Math.max(1, Number(item.box_qty || 1)),
       on_order: Number(item.on_order || 0),
     }));
 
     /*
-      BOZZA AUTOMATICA
+      BOZZA AUTOMATICA A BOX INTERI
 
-      Quantità suggerita =
-      scorta minima
-      - giacenza
-      - già in ordine
+      1. Calcoliamo quanti pezzi mancano per arrivare
+         almeno alla scorta minima, considerando anche
+         la merce già in ordine.
+
+      2. Dividiamo i pezzi mancanti per la quantità
+         contenuta in un box.
+
+      3. Arrotondiamo SEMPRE per eccesso al box intero.
+
+      Esempio:
+      stock 1200
+      minimo 2000
+      in ordine 0
+      box 200
+      => mancano 800
+      => 4 box
+      => 800 pezzi da ordinare
     */
     const automaticLines: OrderLine[] = cleanItems
       .map((item) => {
-        const suggestedQty = Math.max(
+        const missingQty = Math.max(
           0,
           Number(item.min_stock || 0) -
             Number(item.stock || 0) -
             Number(item.on_order || 0)
         );
+
+        const boxQty = Math.max(
+          1,
+          Number(item.box_qty || 1)
+        );
+
+        const boxesNeeded =
+          missingQty > 0
+            ? Math.ceil(missingQty / boxQty)
+            : 0;
+
+        const suggestedQty =
+          boxesNeeded * boxQty;
 
         return {
           item,
@@ -163,6 +191,22 @@ export default function SupplierOrderPage() {
       (sum, line) => sum + Number(line.qty || 0),
       0
     );
+  }, [lines]);
+
+  const totalBoxes = useMemo(() => {
+    return lines.reduce((sum, line) => {
+      const boxQty = Math.max(
+        1,
+        Number(line.item.box_qty || 1)
+      );
+
+      return (
+        sum +
+        Math.ceil(
+          Number(line.qty || 0) / boxQty
+        )
+      );
+    }, 0);
   }, [lines]);
 
   const totalValue = useMemo(() => {
@@ -204,21 +248,31 @@ export default function SupplierOrderPage() {
       });
   }, [items, lines, search]);
 
-  function changeQty(itemId: string, value: number) {
-    const safeQty = Math.max(
+  function changeBoxes(
+    itemId: string,
+    value: number
+  ) {
+    const safeBoxes = Math.max(
       1,
       Math.floor(Number(value || 1))
     );
 
     setLines((current) =>
-      current.map((line) =>
-        line.item.id === itemId
-          ? {
-              ...line,
-              qty: safeQty,
-            }
-          : line
-      )
+      current.map((line) => {
+        if (line.item.id !== itemId) {
+          return line;
+        }
+
+        const boxQty = Math.max(
+          1,
+          Number(line.item.box_qty || 1)
+        );
+
+        return {
+          ...line,
+          qty: safeBoxes * boxQty,
+        };
+      })
     );
   }
 
@@ -244,7 +298,10 @@ export default function SupplierOrderPage() {
         ...current,
         {
           item,
-          qty: 1,
+          qty: Math.max(
+            1,
+            Number(item.box_qty || 1)
+          ),
         },
       ];
     });
@@ -348,10 +405,11 @@ export default function SupplierOrderPage() {
     */
     const columns = {
       code: marginLeft,
-      description: 48,
-      qty: 137,
-      price: 153,
-      total: 177,
+      description: 43,
+      boxes: 126,
+      qty: 142,
+      price: 160,
+      total: 190,
     };
 
     function drawTableHeader() {
@@ -375,7 +433,16 @@ export default function SupplierOrderPage() {
       );
 
       doc.text(
-        "QTA",
+        "BOX",
+        columns.boxes,
+        y,
+        {
+          align: "right",
+        }
+      );
+
+      doc.text(
+        "QTA PZ",
         columns.qty,
         y,
         {
@@ -490,6 +557,24 @@ export default function SupplierOrderPage() {
         y
       );
 
+      const lineBoxQty = Math.max(
+        1,
+        Number(line.item.box_qty || 1)
+      );
+
+      const lineBoxes = Math.ceil(
+        Number(line.qty || 0) / lineBoxQty
+      );
+
+      doc.text(
+        String(lineBoxes),
+        columns.boxes,
+        y,
+        {
+          align: "right",
+        }
+      );
+
       doc.text(
         String(line.qty),
         columns.qty,
@@ -592,6 +677,28 @@ export default function SupplierOrderPage() {
     if (invalidLine) {
       setMessage(
         "Tutte le quantità devono essere maggiori di zero."
+      );
+
+      setMessageType("error");
+      return;
+    }
+
+    const invalidBoxLine = lines.find(
+      (line) => {
+        const boxQty = Math.max(
+          1,
+          Number(line.item.box_qty || 1)
+        );
+
+        return (
+          Number(line.qty) % boxQty !== 0
+        );
+      }
+    );
+
+    if (invalidBoxLine) {
+      setMessage(
+        "Le quantità devono corrispondere a box interi."
       );
 
       setMessageType("error");
@@ -972,6 +1079,14 @@ export default function SupplierOrderPage() {
         />
 
         <SummaryCard
+          title="Box"
+          value={String(
+            totalBoxes
+          )}
+          subtitle="Confezioni totali"
+        />
+
+        <SummaryCard
           title="Pezzi"
           value={String(
             totalPieces
@@ -1033,8 +1148,9 @@ export default function SupplierOrderPage() {
               }}
             >
               La proposta automatica considera
-              giacenza, scorta minima e merce
-              già in ordine.
+              giacenza, scorta minima, merce già in ordine
+              e quantità per box. Gli ordini vengono
+              arrotondati sempre a confezioni intere.
             </div>
           </div>
 
@@ -1093,7 +1209,15 @@ export default function SupplierOrderPage() {
                 </TableHead>
 
                 <TableHead align="right">
-                  Quantità
+                  Pz / box
+                </TableHead>
+
+                <TableHead align="right">
+                  Box
+                </TableHead>
+
+                <TableHead align="right">
+                  Quantità pz
                 </TableHead>
 
                 <TableHead align="right">
@@ -1110,7 +1234,7 @@ export default function SupplierOrderPage() {
               {lines.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={10}
+                    colSpan={12}
                     style={{
                       padding: 40,
                       textAlign:
@@ -1180,21 +1304,46 @@ export default function SupplierOrderPage() {
                     </TableCell>
 
                     <TableCell align="right">
+                      <strong>
+                        {Math.max(
+                          1,
+                          Number(
+                            line.item
+                              .box_qty || 1
+                          )
+                        )}
+                      </strong>
+                    </TableCell>
+
+                    <TableCell align="right">
                       <input
                         type="number"
                         min="1"
                         step="1"
 
-                        value={
-                          line.qty
-                        }
+                        value={Math.max(
+                          1,
+                          Math.round(
+                            Number(
+                              line.qty || 0
+                            ) /
+                              Math.max(
+                                1,
+                                Number(
+                                  line.item
+                                    .box_qty ||
+                                    1
+                                )
+                              )
+                          )
+                        )}
 
                         disabled={
                           saving
                         }
 
                         onChange={(e) =>
-                          changeQty(
+                          changeBoxes(
                             line.item.id,
                             Number(
                               e.target
@@ -1204,7 +1353,7 @@ export default function SupplierOrderPage() {
                         }
 
                         style={{
-                          width: 90,
+                          width: 76,
 
                           padding:
                             "8px 9px",
@@ -1226,6 +1375,12 @@ export default function SupplierOrderPage() {
                           fontWeight: 800,
                         }}
                       />
+                    </TableCell>
+
+                    <TableCell align="right">
+                      <strong>
+                        {line.qty}
+                      </strong>
                     </TableCell>
 
                     <TableCell align="right">
@@ -1720,7 +1875,7 @@ const cardStyle = {
 
 const tableStyle = {
   width: "100%",
-  minWidth: 1300,
+  minWidth: 1480,
 
   borderCollapse:
     "collapse" as const,

@@ -13,6 +13,7 @@ type ItemData = {
   description: string;
   stock: number;
   min_stock: number;
+  box_qty: number;
   price?: number;
   on_order: number;
   image_url: string | null;
@@ -55,6 +56,7 @@ export default function ItemDetailPage({
   const [price, setPrice] = useState<number>(0);
   const [stock, setStock] = useState<number>(0);
   const [minStock, setMinStock] = useState<number>(0);
+  const [boxQty, setBoxQty] = useState<number>(1);
   const [onOrder, setOnOrder] = useState<number>(0);
   const [imageUrl, setImageUrl] = useState("");
 
@@ -115,7 +117,7 @@ export default function ItemDetailPage({
         const response = await supabase
           .from("items")
           .select(
-            "id,supplier_id,code,supplier_code,description,stock,min_stock,price,on_order,image_url"
+            "id,supplier_id,code,supplier_code,description,stock,min_stock,box_qty,price,on_order,image_url"
           )
           .eq("id", itemId)
           .single();
@@ -126,7 +128,7 @@ export default function ItemDetailPage({
         const response = await supabase
           .from("items")
           .select(
-            "id,supplier_id,code,supplier_code,description,stock,min_stock,on_order,image_url"
+            "id,supplier_id,code,supplier_code,description,stock,min_stock,box_qty,on_order,image_url"
           )
           .eq("id", itemId)
           .single();
@@ -160,6 +162,7 @@ export default function ItemDetailPage({
 
       setStock(Number(item.stock || 0));
       setMinStock(Number(item.min_stock || 0));
+      setBoxQty(Math.max(1, Number(item.box_qty || 1)));
       setOnOrder(Number(item.on_order || 0));
       setImageUrl(item.image_url || "");
 
@@ -206,6 +209,14 @@ export default function ItemDetailPage({
       return;
     }
 
+    if (
+      !Number.isInteger(Number(boxQty)) ||
+      Number(boxQty) <= 0
+    ) {
+      setMsg("La quantità per box deve essere almeno 1 pezzo.");
+      return;
+    }
+
     if (Number(onOrder) < 0) {
       setMsg("Gli articoli in ordine non possono essere negativi.");
       return;
@@ -219,6 +230,7 @@ export default function ItemDetailPage({
       description: string;
       stock: number;
       min_stock: number;
+      box_qty: number;
       on_order: number;
       image_url: string | null;
       price?: number;
@@ -228,6 +240,7 @@ export default function ItemDetailPage({
       description: description.trim(),
       stock: Number(stock) || 0,
       min_stock: Number(minStock) || 0,
+      box_qty: Number(boxQty) || 1,
       on_order: Number(onOrder) || 0,
       image_url: imageUrl.trim() || null,
     };
@@ -482,6 +495,15 @@ export default function ItemDetailPage({
               />
 
               <NumberField
+                label="Quantità per box"
+                value={boxQty}
+                onChange={setBoxQty}
+                suffix="pz"
+                step="1"
+                min="1"
+              />
+
+              <NumberField
                 label="Giacenza"
                 value={stock}
                 onChange={setStock}
@@ -508,6 +530,8 @@ export default function ItemDetailPage({
             >
               L'articolo entra nel report scorte minime quando
               la giacenza è minore o uguale alla scorta minima.
+              La quantità per box verrà usata per calcolare ordini
+              sempre a confezioni intere.
             </div>
 
             <Field
@@ -684,6 +708,11 @@ export default function ItemDetailPage({
               />
 
               <MiniCard
+                label="Quantità per box"
+                value={`${boxQty} pz`}
+              />
+
+              <MiniCard
                 label="In ordine"
                 value={`${onOrder} pz`}
               />
@@ -801,12 +830,14 @@ function NumberField({
   onChange,
   suffix,
   step,
+  min = "0",
 }: {
   label: string;
   value: number;
   onChange: (value: number) => void;
   suffix: string;
   step: string;
+  min?: string;
 }) {
   return (
     <div style={{ marginBottom: 16 }}>
@@ -824,7 +855,7 @@ function NumberField({
       <div style={{ position: "relative" }}>
         <input
           type="number"
-          min="0"
+          min={min}
           step={step}
           value={value}
           onChange={(e) =>

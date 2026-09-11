@@ -21,6 +21,7 @@ export default function NewItemPage({
   const [scannerCode, setScannerCode] = useState("");
   const [supplierCode, setSupplierCode] = useState("");
   const [description, setDescription] = useState("");
+  const [category, setCategory] = useState("Altro");
   const [price, setPrice] = useState<number>(0);
   const [minStock, setMinStock] = useState<number>(0);
   const [boxQty, setBoxQty] = useState<number>(1);
@@ -69,6 +70,7 @@ export default function NewItemPage({
     const trimmedScannerCode = scannerCode.trim();
     const trimmedSupplierCode = supplierCode.trim();
     const trimmedDescription = description.trim();
+    const trimmedCategory = category.trim();
     const trimmedImage = imageUrl.trim();
 
     if (!trimmedScannerCode) {
@@ -83,6 +85,11 @@ export default function NewItemPage({
 
     if (!trimmedDescription) {
       setMsg("Inserisci la descrizione.");
+      return;
+    }
+
+    if (!trimmedCategory) {
+      setMsg("Inserisci una categoria.");
       return;
     }
 
@@ -114,6 +121,7 @@ export default function NewItemPage({
       code: trimmedScannerCode,
       supplier_code: trimmedSupplierCode,
       description: trimmedDescription,
+      category: trimmedCategory || "Altro",
       price: canViewPrices
         ? Number(price) || 0
         : 0,
@@ -280,6 +288,13 @@ export default function NewItemPage({
               placeholder="Es. Pompa autoclave 12V"
             />
 
+            <Field
+              label="Categoria"
+              value={category}
+              onChange={setCategory}
+              placeholder="Scrivi la categoria"
+            />
+
             <div
               style={{
                 display: "grid",
@@ -330,8 +345,9 @@ export default function NewItemPage({
                 lineHeight: 1.45,
               }}
             >
-              Il gestionale userà questa quantità per proporre ordini a box
-              interi fino a raggiungere almeno la scorta minima.
+              La categoria è libera e verrà usata anche nei filtri della PWA.
+              La quantità per box servirà invece per proporre ordini sempre a
+              confezioni intere fino a raggiungere almeno la scorta minima.
             </div>
 
             <Field
@@ -473,6 +489,11 @@ export default function NewItemPage({
             <PreviewRow
               label="Descrizione"
               value={description || "Nessuna descrizione"}
+            />
+
+            <PreviewRow
+              label="Categoria"
+              value={category || "Altro"}
             />
 
             <div

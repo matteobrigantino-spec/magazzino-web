@@ -11,6 +11,7 @@ type ItemData = {
   code: string;
   supplier_code: string | null;
   description: string;
+  category: string;
   stock: number;
   min_stock: number;
   box_qty: number;
@@ -53,6 +54,7 @@ export default function ItemDetailPage({
   const [scannerCode, setScannerCode] = useState("");
   const [supplierCode, setSupplierCode] = useState("");
   const [description, setDescription] = useState("");
+  const [category, setCategory] = useState("Altro");
   const [price, setPrice] = useState<number>(0);
   const [stock, setStock] = useState<number>(0);
   const [minStock, setMinStock] = useState<number>(0);
@@ -117,7 +119,7 @@ export default function ItemDetailPage({
         const response = await supabase
           .from("items")
           .select(
-            "id,supplier_id,code,supplier_code,description,stock,min_stock,box_qty,price,on_order,image_url"
+            "id,supplier_id,code,supplier_code,description,category,stock,min_stock,box_qty,price,on_order,image_url"
           )
           .eq("id", itemId)
           .single();
@@ -128,7 +130,7 @@ export default function ItemDetailPage({
         const response = await supabase
           .from("items")
           .select(
-            "id,supplier_id,code,supplier_code,description,stock,min_stock,box_qty,on_order,image_url"
+            "id,supplier_id,code,supplier_code,description,category,stock,min_stock,box_qty,on_order,image_url"
           )
           .eq("id", itemId)
           .single();
@@ -153,6 +155,7 @@ export default function ItemDetailPage({
       setScannerCode(item.code || "");
       setSupplierCode(item.supplier_code || "");
       setDescription(item.description || "");
+      setCategory(item.category?.trim() || "Altro");
 
       if (needsPrice) {
         setPrice(Number(item.price || 0));
@@ -188,6 +191,11 @@ export default function ItemDetailPage({
 
     if (!description.trim()) {
       setMsg("Inserisci la descrizione.");
+      return;
+    }
+
+    if (!category.trim()) {
+      setMsg("Inserisci una categoria.");
       return;
     }
 
@@ -228,6 +236,7 @@ export default function ItemDetailPage({
       code: string;
       supplier_code: string;
       description: string;
+      category: string;
       stock: number;
       min_stock: number;
       box_qty: number;
@@ -238,6 +247,7 @@ export default function ItemDetailPage({
       code: scannerCode.trim(),
       supplier_code: supplierCode.trim(),
       description: description.trim(),
+      category: category.trim() || "Altro",
       stock: Number(stock) || 0,
       min_stock: Number(minStock) || 0,
       box_qty: Number(boxQty) || 1,
@@ -468,6 +478,11 @@ export default function ItemDetailPage({
               onChange={setDescription}
             />
 
+            <CategoryField
+              value={category}
+              onChange={setCategory}
+            />
+
             <div
               style={{
                 display: "grid",
@@ -687,6 +702,11 @@ export default function ItemDetailPage({
               value={description || "-"}
             />
 
+            <PreviewRow
+              label="Categoria"
+              value={category || "Altro"}
+            />
+
             <div
               style={{
                 display: "grid",
@@ -820,6 +840,46 @@ function Field({
         placeholder={placeholder}
         style={inputStyle}
       />
+    </div>
+  );
+}
+
+function CategoryField({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <label
+        style={{
+          display: "block",
+          fontSize: 13,
+          fontWeight: 750,
+          marginBottom: 7,
+        }}
+      >
+        Categoria
+      </label>
+
+      <input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Scrivi la categoria"
+        style={inputStyle}
+      />
+
+      <div
+        style={{
+          marginTop: 6,
+          fontSize: 11,
+          opacity: 0.5,
+        }}
+      >
+        Campo libero: inserisci la categoria che vuoi usare per questo articolo.
+      </div>
     </div>
   );
 }

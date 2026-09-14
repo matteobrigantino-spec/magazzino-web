@@ -4,7 +4,8 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
 import AuthGuard from "../components/AuthGuard";
-import TopBar from "../components/TopBar";
+import GestionaleAppChrome from "../components/GestionaleAppChrome";
+import GestionaleViewportFix from "../components/GestionaleViewportFix";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -32,11 +33,11 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <AuthGuard>
-          <TopBar />
+          <GestionaleViewportFix />
 
-          <main className="mx-auto max-w-7xl px-6 py-6">
+          <GestionaleAppChrome>
             {children}
-          </main>
+          </GestionaleAppChrome>
         </AuthGuard>
       </body>
     </html>

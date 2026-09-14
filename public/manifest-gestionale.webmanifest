@@ -1,0 +1,20 @@
+{
+  "id": "/gestionale-pwa",
+  "name": "Gestionale Matteo",
+  "short_name": "Gestionale",
+  "description": "Gestionale personale completo del magazzino",
+  "start_url": "/gestionale",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#07111f",
+  "theme_color": "#07111f",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/catalogo-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

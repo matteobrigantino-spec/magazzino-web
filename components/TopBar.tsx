@@ -19,6 +19,13 @@ type Supplier = {
   name: string;
 };
 
+function isUpholsterySupplier(name: string) {
+  return name
+    .trim()
+    .toUpperCase()
+    .replace(/’/g, "'") === "D'AMICO ARREDAMENTI NAVALI";
+}
+
 type SearchItem = {
   id: string;
   supplier_id: string;
@@ -89,16 +96,6 @@ export default function TopBar() {
     displayName,
     setDisplayName,
   ] = useState("");
-
-  const [
-    currentUserId,
-    setCurrentUserId,
-  ] = useState("");
-
-  const [
-    unreadNotesCount,
-    setUnreadNotesCount,
-  ] = useState(0);
 
   const [
     permissions,
@@ -187,11 +184,6 @@ export default function TopBar() {
         "magazzino_display_name"
       );
 
-    const userId =
-      localStorage.getItem(
-        "magazzino_user_id"
-      );
-
     const role =
       localStorage.getItem(
         "magazzino_role"
@@ -224,10 +216,6 @@ export default function TopBar() {
       savedDisplayName ||
         user ||
         ""
-    );
-
-    setCurrentUserId(
-      userId || ""
     );
 
     setPermissions(
@@ -271,96 +259,6 @@ export default function TopBar() {
   const canManageUsers =
     permissions.manage_users ===
     true;
-
-  /*
-    NOTE CONDIVISE:
-    conteggio delle note nuove ricevute
-    dall'account attualmente collegato.
-  */
-  useEffect(() => {
-    if (
-      hideTopBar ||
-      !currentUserId
-    ) {
-      setUnreadNotesCount(0);
-      return;
-    }
-
-    let disposed = false;
-
-    async function loadUnreadNotesCount() {
-      const {
-        count,
-        error,
-      } = await supabase
-        .from("shared_notes")
-        .select(
-          "id",
-          {
-            count: "exact",
-            head: true,
-          }
-        )
-        .eq(
-          "recipient_user_id",
-          currentUserId
-        )
-        .eq(
-          "status",
-          "new"
-        );
-
-      if (disposed) {
-        return;
-      }
-
-      if (error) {
-        console.warn(
-          "Conteggio note condivise non disponibile:",
-          error.message
-        );
-        return;
-      }
-
-      setUnreadNotesCount(
-        Number(count || 0)
-      );
-    }
-
-    loadUnreadNotesCount();
-
-    const interval =
-      window.setInterval(
-        loadUnreadNotesCount,
-        30 * 1000
-      );
-
-    function handleFocus() {
-      loadUnreadNotesCount();
-    }
-
-    window.addEventListener(
-      "focus",
-      handleFocus
-    );
-
-    return () => {
-      disposed = true;
-
-      window.clearInterval(
-        interval
-      );
-
-      window.removeEventListener(
-        "focus",
-        handleFocus
-      );
-    };
-  }, [
-    hideTopBar,
-    currentUserId,
-    pathname,
-  ]);
 
   /*
     CARICAMENTO DATI
@@ -866,9 +764,6 @@ export default function TopBar() {
       "magazzino_last_activity"
     );
 
-    setUnreadNotesCount(0);
-    setCurrentUserId("");
-
     router.replace(
       "/login"
     );
@@ -1068,9 +963,19 @@ export default function TopBar() {
                       >
                         <span className="topbar-v2-supplier-dot" />
 
-                        {
+                        <span className="topbar-v2-supplier-name">
+                          {
+                            supplier.name
+                          }
+                        </span>
+
+                        {isUpholsterySupplier(
                           supplier.name
-                        }
+                        ) && (
+                          <span className="topbar-v2-upholstery-badge">
+                            TAPPEZZERIE
+                          </span>
+                        )}
                       </Link>
                     )
                   )
@@ -1385,43 +1290,6 @@ export default function TopBar() {
                 "Utente"}
             </div>
 
-            <Link
-              href="/note-condivise"
-              title={
-                unreadNotesCount > 0
-                  ? `${unreadNotesCount} note da leggere`
-                  : "Note condivise"
-              }
-              aria-label={
-                unreadNotesCount > 0
-                  ? `Note condivise: ${unreadNotesCount} da leggere`
-                  : "Note condivise"
-              }
-              className={`topbar-v2-icon-button topbar-v2-notes-button ${
-                pathname.startsWith(
-                  "/note-condivise"
-                )
-                  ? "active"
-                  : ""
-              }`}
-              onClick={() => {
-                setSearch("");
-                setSearchOpen(false);
-                setSupplierMenuOpen(false);
-                setWarehouseMenuOpen(false);
-              }}
-            >
-              <BellIcon />
-
-              {unreadNotesCount > 0 && (
-                <span className="topbar-v2-notes-badge">
-                  {unreadNotesCount > 99
-                    ? "99+"
-                    : unreadNotesCount}
-                </span>
-              )}
-            </Link>
-
             {canManageUsers && (
               <Link
                 href="/utenti"
@@ -1681,6 +1549,26 @@ export default function TopBar() {
           box-shadow:
             0 0 0 3px
             rgba(59, 130, 246, 0.10);
+        }
+
+        .topbar-v2-supplier-name {
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .topbar-v2-upholstery-badge {
+          margin-left: auto;
+          padding: 3px 6px;
+          flex-shrink: 0;
+          border: 1px solid rgba(96, 165, 250, 0.34);
+          border-radius: 999px;
+          background: rgba(59, 130, 246, 0.12);
+          color: #93c5fd;
+          font-size: 7px;
+          font-weight: 950;
+          letter-spacing: 0.7px;
         }
 
         .topbar-v2-dropdown-empty {
@@ -2040,32 +1928,6 @@ export default function TopBar() {
           background: rgba(59, 130, 246, 0.09);
         }
 
-        .topbar-v2-notes-button {
-          position: relative;
-          flex-shrink: 0;
-        }
-
-        .topbar-v2-notes-badge {
-          position: absolute;
-          top: -6px;
-          right: -7px;
-          min-width: 18px;
-          height: 18px;
-          padding: 0 5px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          box-sizing: border-box;
-          border: 2px solid #07101b;
-          border-radius: 999px;
-          background: #ef4444;
-          color: white;
-          font-size: 8px;
-          font-weight: 950;
-          line-height: 1;
-          box-shadow: 0 4px 12px rgba(239, 68, 68, 0.35);
-        }
-
         .topbar-v2-logout {
           height: 34px;
           padding: 0 9px;
@@ -2410,32 +2272,6 @@ function SearchIcon() {
         d="M15.5 15.5L20 20"
         stroke="currentColor"
         strokeWidth="1.8"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
-function BellIcon() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-    >
-      <path
-        d="M18 9.5C18 6.2 15.7 4 12 4C8.3 4 6 6.2 6 9.5V13.5L4.5 16.5H19.5L18 13.5V9.5Z"
-        stroke="currentColor"
-        strokeWidth="1.7"
-        strokeLinejoin="round"
-      />
-
-      <path
-        d="M9.5 18.5C10 19.5 10.8 20 12 20C13.2 20 14 19.5 14.5 18.5"
-        stroke="currentColor"
-        strokeWidth="1.7"
         strokeLinecap="round"
       />
     </svg>

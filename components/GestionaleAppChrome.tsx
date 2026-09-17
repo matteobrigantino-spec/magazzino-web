@@ -37,6 +37,7 @@ type NavItem = {
   href: string;
   icon:
     | "home"
+    | "production"
     | "warehouse"
     | "orders"
     | "movement"
@@ -60,6 +61,12 @@ const PRIMARY_NAV: NavItem[] = [
     icon: "home",
     permission: "dashboard",
     activePrefixes: ["/gestionale"],
+  },
+  {
+    label: "Produzione",
+    href: "/produzione",
+    icon: "production",
+    activePrefixes: ["/produzione"],
   },
   {
     label: "Magazzino",
@@ -871,6 +878,21 @@ function GestionaleShell({
           onClick={() =>
             router.push(
               "/gestionale"
+            )
+          }
+        />
+
+        <MobileNavButton
+          active={
+            pathname.startsWith(
+              "/produzione"
+            )
+          }
+          label="Produzione"
+          icon="production"
+          onClick={() =>
+            router.push(
+              "/produzione"
             )
           }
         />
@@ -1751,7 +1773,7 @@ function GlobalStyles() {
           display: grid;
           grid-template-columns:
             repeat(
-              4,
+              5,
               1fr
             );
           gap: 4px;
@@ -1845,6 +1867,14 @@ function NavIcon({
   }
 
   if (
+    name === "production"
+  ) {
+    return (
+      <ProductionIcon />
+    );
+  }
+
+  if (
     name === "warehouse"
   ) {
     return (
@@ -1910,6 +1940,37 @@ function NavIcon({
 
   return (
     <SettingsIcon />
+  );
+}
+
+
+function ProductionIcon() {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+    >
+      <path
+        d="M4 20V10L9 13V9L14 12V6H20V20H4Z"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M8 20V16H11V20"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M16.5 9H18"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+    </svg>
   );
 }
 

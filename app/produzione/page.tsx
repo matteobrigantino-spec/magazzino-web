@@ -114,15 +114,13 @@ export default function ProductionPage() {
       const rows = selected.map((boat, index) => {
         const step = currentStepMap.get(boat.id);
         const department = step ? depMap.get(step.department_id) : null;
-        const notes = [boat.note, step?.current_note && step.current_note !== boat.note
-          ? `Nota reparto: ${step.current_note}` : null].filter(Boolean).join("\n");
         return {
           row: Number(pdfFrom) + index, progressive: boat.progressive_no,
           order: boat.order_number, model: boat.model_boat, hull: boat.hull,
           stringers: boat.stringers, deck: boat.deck, accessories: boat.accessories,
           department: department?.name || "-", status: statusLabel[step?.status || "queued"] || step?.status || "-",
           departmentDays: step ? daysFrom(step.entered_at) : 0,
-          totalDays: daysFrom(boat.created_at), note: notes,
+          totalDays: daysFrom(boat.created_at), note: boat.note || "",
         };
       });
       const doc = buildProductionPdf(rows, pdfLogo, {

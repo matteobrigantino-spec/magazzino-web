@@ -35,9 +35,8 @@ export function selectProductionRows<T>(rows: T[], from: string, to: string) {
 
 // Columns where the crew ticks an "X" by hand once that part is physically done.
 const CHECKBOX_COLUMNS = new Set([3, 4, 5, 6]); // Carena, Ragno/Longheroni, Coperta, Accessori
-const CHECKBOX_SIZE = 3.6;
-const CHECKBOX_RIGHT_MARGIN = 3;
-const CHECKBOX_RESERVE = CHECKBOX_SIZE + CHECKBOX_RIGHT_MARGIN + 2;
+const CHECKBOX_SIZE = 3.2;
+const CHECKBOX_RESERVE = 6; // room kept clear at the right of the column for the box
 
 export function buildProductionPdf(rows: ProductionPdfRow[], logo: string, meta: ProductionPdfMeta) {
   if (!rows.length) throw new Error("Nessuna riga selezionata.");
@@ -49,10 +48,12 @@ export function buildProductionPdf(rows: ProductionPdfRow[], logo: string, meta:
   const pageWidth = doc.internal.pageSize.getWidth();
   const margin = 14;
   const tableWidth = pageWidth - margin * 2;
-  const widths = [12, 23, 29, 23, 25, 23, 30, 27, tableWidth - 192];
-  const headings = ["Prog.", "N° ordine", "Modello", "Carena", "Ragno /\nLongheroni", "Coperta", "Accessori", "Reparto", "Note"];
-  const headerY = 58;
-  const bodyStart = 70;
+  // Reparto column removed: the freed width goes to the work columns (room for the
+  // checkbox) and to Note, which is now short since it no longer repeats the department note.
+  const widths = [12, 23, 27, 27, 29, 27, 32, tableWidth - 177];
+  const headings = ["Prog.", "N° ordine", "Modello", "Carena", "Ragno /\nLongheroni", "Coperta", "Accessori", "Note"];
+  const headerY = 64;
+  const bodyStart = 76;
   const bottom = 192;
   const fontSize = 9.5;
   const lineHeight = 4.1;
@@ -80,20 +81,22 @@ export function buildProductionPdf(rows: ProductionPdfRow[], logo: string, meta:
     doc.setFontSize(14);
     doc.text("PROGRAMMA DI PRODUZIONE", pageWidth / 2, cursorY, { align: "center" });
 
-    // Operatore / date on a single left-aligned line, all at the same level.
-    cursorY += 8;
+    // Operatore / date, one under the other, left-aligned.
+    cursorY += 7;
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
     doc.setTextColor(90, 102, 118);
-    const metaLine = [
+    const metaLines = [
       `Operatore: ${meta.operator || "-"}`,
       `Data ordine: ${meta.orderDate || "-"}`,
       `Data ultimo aggiornamento: ${meta.updatedDate || "-"}`,
-    ].join("      ");
-    doc.text(metaLine, margin, cursorY, { align: "left" });
+    ];
+    metaLines.forEach((line) => {
+      doc.text(line, margin, cursorY, { align: "left" });
+      cursorY += 4.3;
+    });
 
     // A light heading band and white rows keep the document clear when printed.
-    // Row positions, timestamps, status and elapsed days are deliberately omitted.
     doc.setFillColor(244, 246, 248);
     doc.rect(margin, headerY, tableWidth, bodyStart - headerY, "F");
     doc.setFontSize(8.5);
@@ -113,7 +116,7 @@ export function buildProductionPdf(rows: ProductionPdfRow[], logo: string, meta:
     doc.setFont("helvetica", "normal");
     doc.setFontSize(fontSize);
     const values = [row.progressive, row.order, row.model, row.hull,
-      row.stringers, row.deck, row.accessories, row.department, row.note];
+      row.stringers, row.deck, row.accessories, row.note];
     const lines: string[][] = values.map((value, index) => {
       doc.setFont("helvetica", index === 1 ? "bold" : "normal");
       const text = String(value ?? "").trim().replace(/\r\n?/g, "\n").replace(/[‐-―]/g, "-");
@@ -154,7 +157,7 @@ export function buildProductionPdf(rows: ProductionPdfRow[], logo: string, meta:
         if (offset === 0 && CHECKBOX_COLUMNS.has(index)) {
           doc.setDrawColor(120, 130, 145);
           doc.roundedRect(
-            x + widths[index] - CHECKBOX_SIZE - CHECKBOX_RIGHT_MARGIN,
+            x + widths[index] - CHECKBOX_SIZE - 2.5,
             y + (height - CHECKBOX_SIZE) / 2,
             CHECKBOX_SIZE,
             CHECKBOX_SIZE,

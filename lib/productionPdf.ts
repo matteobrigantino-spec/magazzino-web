@@ -35,7 +35,9 @@ export function selectProductionRows<T>(rows: T[], from: string, to: string) {
 
 // Columns where the crew ticks an "X" by hand once that part is physically done.
 const CHECKBOX_COLUMNS = new Set([3, 4, 5, 6]); // Carena, Ragno/Longheroni, Coperta, Accessori
-const CHECKBOX_SIZE = 3.4;
+const CHECKBOX_SIZE = 3.6;
+const CHECKBOX_RIGHT_MARGIN = 3;
+const CHECKBOX_RESERVE = CHECKBOX_SIZE + CHECKBOX_RIGHT_MARGIN + 2;
 
 export function buildProductionPdf(rows: ProductionPdfRow[], logo: string, meta: ProductionPdfMeta) {
   if (!rows.length) throw new Error("Nessuna riga selezionata.");
@@ -49,8 +51,8 @@ export function buildProductionPdf(rows: ProductionPdfRow[], logo: string, meta:
   const tableWidth = pageWidth - margin * 2;
   const widths = [12, 23, 29, 23, 25, 23, 30, 27, tableWidth - 192];
   const headings = ["Prog.", "N° ordine", "Modello", "Carena", "Ragno /\nLongheroni", "Coperta", "Accessori", "Reparto", "Note"];
-  const headerY = 62;
-  const bodyStart = 74;
+  const headerY = 58;
+  const bodyStart = 70;
   const bottom = 192;
   const fontSize = 9.5;
   const lineHeight = 4.1;
@@ -71,26 +73,24 @@ export function buildProductionPdf(rows: ProductionPdfRow[], logo: string, meta:
     const logoY = 9;
     doc.addImage(logo, "PNG", logoX, logoY, logoWidth, logoHeight, "production-logo");
 
-    let cursorY = logoY + logoHeight + 6;
+    // Extra breathing room between the logo and the title underneath it.
+    let cursorY = logoY + logoHeight + 10;
     doc.setTextColor(24, 39, 59);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(14);
     doc.text("PROGRAMMA DI PRODUZIONE", pageWidth / 2, cursorY, { align: "center" });
 
-    cursorY += 5.6;
+    // Operatore / date on a single left-aligned line, all at the same level.
+    cursorY += 8;
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(8.5);
+    doc.setFontSize(9);
     doc.setTextColor(90, 102, 118);
-
-    const metaLines = [
+    const metaLine = [
       `Operatore: ${meta.operator || "-"}`,
       `Data ordine: ${meta.orderDate || "-"}`,
       `Data ultimo aggiornamento: ${meta.updatedDate || "-"}`,
-    ];
-    metaLines.forEach((line) => {
-      doc.text(line, pageWidth / 2, cursorY, { align: "center" });
-      cursorY += 4.2;
-    });
+    ].join("      ");
+    doc.text(metaLine, margin, cursorY, { align: "left" });
 
     // A light heading band and white rows keep the document clear when printed.
     // Row positions, timestamps, status and elapsed days are deliberately omitted.
@@ -117,7 +117,7 @@ export function buildProductionPdf(rows: ProductionPdfRow[], logo: string, meta:
     const lines: string[][] = values.map((value, index) => {
       doc.setFont("helvetica", index === 1 ? "bold" : "normal");
       const text = String(value ?? "").trim().replace(/\r\n?/g, "\n").replace(/[‐-―]/g, "-");
-      const reserve = CHECKBOX_COLUMNS.has(index) ? CHECKBOX_SIZE + 3 : 0;
+      const reserve = CHECKBOX_COLUMNS.has(index) ? CHECKBOX_RESERVE : 0;
       return doc.splitTextToSize(text || "-", widths[index] - padding * 2 - reserve);
     });
     const maxLines = Math.max(...lines.map((cell) => cell.length));
@@ -150,13 +150,16 @@ export function buildProductionPdf(rows: ProductionPdfRow[], logo: string, meta:
           doc.text(line, x + padding, y + padding + 3.2 + lineIndex * lineHeight)
         );
         // The crew ticks this box by hand once that part is physically done.
+        // Centered on the row's own height so it never crowds the text beside it.
         if (offset === 0 && CHECKBOX_COLUMNS.has(index)) {
-          doc.setDrawColor(140, 150, 163);
-          doc.rect(
-            x + widths[index] - CHECKBOX_SIZE - 2,
-            y + 2.2,
+          doc.setDrawColor(120, 130, 145);
+          doc.roundedRect(
+            x + widths[index] - CHECKBOX_SIZE - CHECKBOX_RIGHT_MARGIN,
+            y + (height - CHECKBOX_SIZE) / 2,
             CHECKBOX_SIZE,
-            CHECKBOX_SIZE
+            CHECKBOX_SIZE,
+            0.6,
+            0.6
           );
         }
         x += widths[index];

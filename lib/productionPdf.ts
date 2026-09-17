@@ -16,6 +16,12 @@ export type ProductionPdfRow = {
   note: string;
 };
 
+export type ProductionPdfMeta = {
+  operator: string;
+  orderDate: string;
+  updatedDate: string;
+};
+
 // Positions refer to the visible table, not to the production progressive number.
 export function selectProductionRows<T>(rows: T[], from: string, to: string) {
   const first = Number(from);
@@ -27,7 +33,11 @@ export function selectProductionRows<T>(rows: T[], from: string, to: string) {
   return rows.slice(first - 1, last);
 }
 
-export function buildProductionPdf(rows: ProductionPdfRow[], logo: string) {
+// Columns where the crew ticks an "X" by hand once that part is physically done.
+const CHECKBOX_COLUMNS = new Set([3, 4, 5, 6]); // Carena, Ragno/Longheroni, Coperta, Accessori
+const CHECKBOX_SIZE = 3.4;
+
+export function buildProductionPdf(rows: ProductionPdfRow[], logo: string, meta: ProductionPdfMeta) {
   if (!rows.length) throw new Error("Nessuna riga selezionata.");
   if (!logo) throw new Error("Carica il logo aziendale prima di scaricare il PDF.");
 
@@ -39,25 +49,48 @@ export function buildProductionPdf(rows: ProductionPdfRow[], logo: string) {
   const tableWidth = pageWidth - margin * 2;
   const widths = [12, 23, 29, 23, 25, 23, 30, 27, tableWidth - 192];
   const headings = ["Prog.", "N° ordine", "Modello", "Carena", "Ragno /\nLongheroni", "Coperta", "Accessori", "Reparto", "Note"];
-  const headerY = 40;
-  const bodyStart = 52;
+  const headerY = 62;
+  const bodyStart = 74;
   const bottom = 192;
   const fontSize = 9.5;
   const lineHeight = 4.1;
   const padding = 2.5;
   const minRowHeight = 14;
   const image = doc.getImageProperties(logo);
-  const scale = Math.min(48 / image.width, 20 / image.height);
-  const logoWidth = image.width * scale;
-  const logoHeight = image.height * scale;
+
+  // Logo big and centered, with the title and the three metadata lines stacked underneath.
+  const logoMaxWidth = 64;
+  const logoMaxHeight = 24;
+  const logoScale = Math.min(logoMaxWidth / image.width, logoMaxHeight / image.height);
+  const logoWidth = image.width * logoScale;
+  const logoHeight = image.height * logoScale;
   let y = bodyStart;
 
   function header() {
-    doc.addImage(logo, "PNG", margin, 13 + (20 - logoHeight) / 2, logoWidth, logoHeight, "production-logo");
+    const logoX = (pageWidth - logoWidth) / 2;
+    const logoY = 9;
+    doc.addImage(logo, "PNG", logoX, logoY, logoWidth, logoHeight, "production-logo");
+
+    let cursorY = logoY + logoHeight + 6;
     doc.setTextColor(24, 39, 59);
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(17);
-    doc.text("PROGRAMMA DI PRODUZIONE", pageWidth - margin, 26, { align: "right" });
+    doc.setFontSize(14);
+    doc.text("PROGRAMMA DI PRODUZIONE", pageWidth / 2, cursorY, { align: "center" });
+
+    cursorY += 5.6;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.5);
+    doc.setTextColor(90, 102, 118);
+
+    const metaLines = [
+      `Operatore: ${meta.operator || "-"}`,
+      `Data ordine: ${meta.orderDate || "-"}`,
+      `Data ultimo aggiornamento: ${meta.updatedDate || "-"}`,
+    ];
+    metaLines.forEach((line) => {
+      doc.text(line, pageWidth / 2, cursorY, { align: "center" });
+      cursorY += 4.2;
+    });
 
     // A light heading band and white rows keep the document clear when printed.
     // Row positions, timestamps, status and elapsed days are deliberately omitted.
@@ -83,8 +116,9 @@ export function buildProductionPdf(rows: ProductionPdfRow[], logo: string) {
       row.stringers, row.deck, row.accessories, row.department, row.note];
     const lines: string[][] = values.map((value, index) => {
       doc.setFont("helvetica", index === 1 ? "bold" : "normal");
-      const text = String(value ?? "").trim().replace(/\r\n?/g, "\n").replace(/[\u2010-\u2015]/g, "-");
-      return doc.splitTextToSize(text || "-", widths[index] - padding * 2);
+      const text = String(value ?? "").trim().replace(/\r\n?/g, "\n").replace(/[‐-―]/g, "-");
+      const reserve = CHECKBOX_COLUMNS.has(index) ? CHECKBOX_SIZE + 3 : 0;
+      return doc.splitTextToSize(text || "-", widths[index] - padding * 2 - reserve);
     });
     const maxLines = Math.max(...lines.map((cell) => cell.length));
     const fullHeight = Math.max(minRowHeight, maxLines * lineHeight + padding * 2);
@@ -115,6 +149,16 @@ export function buildProductionPdf(rows: ProductionPdfRow[], logo: string) {
         chunk.forEach((line, lineIndex) =>
           doc.text(line, x + padding, y + padding + 3.2 + lineIndex * lineHeight)
         );
+        // The crew ticks this box by hand once that part is physically done.
+        if (offset === 0 && CHECKBOX_COLUMNS.has(index)) {
+          doc.setDrawColor(140, 150, 163);
+          doc.rect(
+            x + widths[index] - CHECKBOX_SIZE - 2,
+            y + 2.2,
+            CHECKBOX_SIZE,
+            CHECKBOX_SIZE
+          );
+        }
         x += widths[index];
       });
       y += height;

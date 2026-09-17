@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { selectProductionRows } from "../../lib/productionPdf";
 import { supabase } from "../../lib/supabaseClient";
 
 type Department = {
@@ -66,6 +67,80 @@ export default function ProductionPage() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+
+  const [pdfFrom, setPdfFrom] = useState("1");
+  const [pdfTo, setPdfTo] = useState("");
+  const [pdfLogo, setPdfLogo] = useState("");
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [logoBusy, setLogoBusy] = useState(false);
+  const [pdfError, setPdfError] = useState("");
+  const [logoMessage, setLogoMessage] = useState("");
+
+  useEffect(() => {
+    try { setPdfLogo(localStorage.getItem("production-pdf-logo") || ""); }
+    catch { /* Export still works when browser storage is unavailable. */ }
+  }, []);
+
+  async function uploadPdfLogo(file?: File) {
+    if (!file) return;
+    setPdfError("");
+    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type) || file.size > 5 * 1024 * 1024) {
+      setPdfError("Scegli un logo PNG, JPG o WebP di massimo 5 MB.");
+      return;
+    }
+    setLogoBusy(true);
+    const url = URL.createObjectURL(file);
+    try {
+      const image = new Image();
+      image.src = url;
+      await image.decode();
+      const scale = Math.min(1, 1200 / Math.max(image.naturalWidth, image.naturalHeight));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+      canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("Impossibile leggere il logo.");
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      const data = canvas.toDataURL("image/png");
+      setPdfLogo(data);
+      try {
+        localStorage.setItem("production-pdf-logo", data);
+        setLogoMessage("Logo memorizzato in questo browser. Sugli altri dispositivi va caricato una volta.");
+      } catch { setLogoMessage("Logo pronto per questa sessione; il browser non permette di memorizzarlo."); }
+    } catch {
+      setPdfError("Impossibile leggere l'immagine. Prova un altro file PNG o JPG.");
+    } finally { URL.revokeObjectURL(url); setLogoBusy(false); }
+  }
+
+  async function downloadProductionPdf() {
+    setPdfError("");
+    setPdfBusy(true);
+    try {
+      const selected = selectProductionRows(activeBoats, pdfFrom, pdfTo);
+      if (!pdfLogo) throw new Error("Carica il logo aziendale prima di scaricare il PDF.");
+      const { buildProductionPdf } = await import("../../lib/productionPdf");
+      const rows = selected.map((boat, index) => {
+        const step = currentStepMap.get(boat.id);
+        const department = step ? depMap.get(step.department_id) : null;
+        const notes = [boat.note, step?.current_note && step.current_note !== boat.note
+          ? `Nota reparto: ${step.current_note}` : null].filter(Boolean).join("\n");
+        return {
+          row: Number(pdfFrom) + index, progressive: boat.progressive_no,
+          order: boat.order_number, model: boat.model_boat, hull: boat.hull,
+          stringers: boat.stringers, deck: boat.deck, accessories: boat.accessories,
+          department: department?.name || "-", status: statusLabel[step?.status || "queued"] || step?.status || "-",
+          departmentDays: step ? daysFrom(step.entered_at) : 0,
+          totalDays: daysFrom(boat.created_at), note: notes,
+        };
+      });
+      const doc = buildProductionPdf(rows, pdfLogo);
+      await doc.save(`produzione_righe_${Number(pdfFrom)}-${Number(pdfTo)}.pdf`, { returnPromise: true });
+    } catch (error) {
+      setPdfError(error instanceof Error ? error.message : "Impossibile creare il PDF. Riprova.");
+    } finally { setPdfBusy(false); }
+  }
 
   const [progressive, setProgressive] = useState("");
   const [orderNumber, setOrderNumber] = useState("");
@@ -525,10 +600,39 @@ export default function ProductionPage() {
           <span className="prod-count">{activeBoats.length}</span>
         </div>
 
+        <div className="prod-pdf-panel">
+          <strong>Scarica le righe in PDF</strong>
+          <p id="pdf-range-help">Usa i numeri della colonna “Riga” della tabella qui sotto, non quelli di “Prog.”. Gli estremi sono inclusi.</p>
+          <div className="prod-pdf-controls">
+            <label>Da riga
+              <input type="number" min="1" max={activeBoats.length} step="1" value={pdfFrom}
+                aria-describedby="pdf-range-help" disabled={pdfBusy} onChange={(e) => setPdfFrom(e.target.value)} />
+            </label>
+            <label>A riga
+              <input type="number" min="1" max={activeBoats.length} step="1" value={pdfTo}
+                aria-describedby="pdf-range-help" placeholder={String(activeBoats.length)} disabled={pdfBusy} onChange={(e) => setPdfTo(e.target.value)} />
+            </label>
+            <button type="button" className="prod-btn secondary" disabled={pdfBusy || !activeBoats.length}
+              onClick={() => { setPdfFrom("1"); setPdfTo(String(activeBoats.length)); }}>Tutte le righe</button>
+            <label className="prod-pdf-logo-upload">{pdfLogo ? "Cambia logo aziendale" : "Carica logo aziendale"}
+              <input type="file" accept="image/png,image/jpeg,image/webp" disabled={pdfBusy || logoBusy}
+                onChange={(e) => { void uploadPdfLogo(e.target.files?.[0]); e.target.value = ""; }} />
+            </label>
+            {pdfLogo && <img src={pdfLogo} alt="Logo aziendale per il PDF" className="prod-pdf-logo" />}
+            <button type="button" className="prod-btn primary" onClick={downloadProductionPdf}
+              disabled={pdfBusy || logoBusy || !activeBoats.length}>
+              {pdfBusy ? "Creazione PDF..." : logoBusy ? "Caricamento logo..." : "Scarica PDF"}
+            </button>
+          </div>
+          {logoMessage && <p role="status">{logoMessage}</p>}
+          {pdfError && <div role="alert" className="prod-message error">{pdfError}</div>}
+        </div>
+
         <div className="prod-table-wrap">
           <table className="prod-table">
             <thead>
               <tr>
+                <th>Riga</th>
                 <th>Prog.</th>
                 <th>N° ordine</th>
                 <th>Modello</th>
@@ -542,12 +646,12 @@ export default function ProductionPage() {
             <tbody>
               {activeBoats.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="prod-empty-cell">
+                  <td colSpan={9} className="prod-empty-cell">
                     Nessun battello attualmente in produzione.
                   </td>
                 </tr>
               ) : (
-                activeBoats.map((boat) => {
+                activeBoats.map((boat, rowIndex) => {
                   const step = currentStepMap.get(boat.id);
                   const dep = step ? depMap.get(step.department_id) : null;
 
@@ -557,6 +661,7 @@ export default function ProductionPage() {
                       onClick={() => router.push(`/produzione/${boat.id}`)}
                       className="prod-click-row"
                     >
+                      <td>{rowIndex + 1}</td>
                       <td><strong>{boat.progressive_no}</strong></td>
                       <td><span className="prod-order">{boat.order_number}</span></td>
                       <td>{boat.model_boat}</td>
@@ -626,6 +731,14 @@ function StatusBadge({ status }: { status: string }) {
 function Styles() {
   return (
     <style jsx global>{`
+      .prod-pdf-panel { margin: 12px 0; padding: 16px; border: 1px solid #31445c; border-radius: 12px; background: #0b192a; }
+      .prod-pdf-panel p { font-size: 12px; color: #b7c7d9; margin: 8px 0; }
+      .prod-pdf-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
+      .prod-pdf-controls label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+      .prod-pdf-controls input[type="number"] { width: 100px; padding: 10px; background: #14283f; color: white; border: 1px solid #51637a; border-radius: 8px; }
+      .prod-pdf-logo-upload { max-width: 240px; }
+      .prod-pdf-logo-upload input { max-width: 100%; font-size: 11px; }
+      .prod-pdf-logo { width: 100px; height: 45px; object-fit: contain; background: white; border-radius: 6px; }
       .prod-page {
         width: 100%;
         max-width: 1500px;

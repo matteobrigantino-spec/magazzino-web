@@ -9,6 +9,7 @@ import {
 
 import { useRouter } from "next/navigation";
 import { supabase } from "../lib/supabaseClient";
+import ProductionIcon from "../components/ProductionIcon";
 
 type Supplier = {
   id: string;
@@ -1408,16 +1409,18 @@ export default function Home() {
 
       {/* AZIONI RAPIDE */}
 
-      {(canViewSuppliers ||
-        canViewOrders ||
-        canViewMovements) && (
-        <section className="home-panel home-actions-panel">
+      <section className="home-panel home-actions-panel">
           <PanelTitle
             title="Azioni rapide"
             subtitle="Accesso diretto alle operazioni principali."
           />
 
           <div className="home-actions-grid">
+            <QuickAction
+              title="Produzione"
+              icon={<ProductionIcon />}
+              onClick={() => router.push("/produzione")}
+            />
             {canViewSuppliers && (
               <QuickAction
                 title="Nuovo fornitore"
@@ -1467,7 +1470,6 @@ export default function Home() {
             )}
           </div>
         </section>
-      )}
 
       {/* PROMEMORIA + ATTIVITÀ */}
 
@@ -2509,7 +2511,7 @@ export default function Home() {
         .home-actions-grid {
           padding: 15px;
           display: grid;
-          grid-template-columns: repeat(4, minmax(0, 1fr));
+          grid-template-columns: repeat(5, minmax(0, 1fr));
           gap: 11px;
         }
 

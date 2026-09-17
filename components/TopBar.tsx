@@ -13,6 +13,7 @@ import {
 } from "react";
 
 import { supabase } from "../lib/supabaseClient";
+import ProductionIcon from "./ProductionIcon";
 
 type Supplier = {
   id: string;
@@ -259,6 +260,10 @@ export default function TopBar() {
   const canManageUsers =
     permissions.manage_users ===
     true;
+
+  const showProductionResult = Boolean(search.trim()) &&
+    normalizeText("produzione battelli reparti programma di produzione pdf")
+      .includes(normalizeText(search.trim()));
 
   /*
     CARICAMENTO DATI
@@ -816,6 +821,17 @@ export default function TopBar() {
             </Link>
           )}
 
+          <Link
+            href="/produzione"
+            title="Produzione"
+            aria-label="Produzione"
+            aria-current={pathname.startsWith("/produzione") ? "page" : undefined}
+            className={`topbar-v2-pill ${pathname.startsWith("/produzione") ? "active" : ""}`}
+          >
+            <ProductionIcon />
+            <span>Produzione</span>
+          </Link>
+
           {/* FORNITORI + MAGAZZINO */}
 
           {canSuppliers && (
@@ -1145,6 +1161,20 @@ export default function TopBar() {
 
             {searchOpen && (
               <div className="topbar-v2-search-panel">
+                {showProductionResult && (
+                  <Link
+                    href="/produzione"
+                    className="topbar-v2-search-result topbar-v2-section-result"
+                    onClick={() => { setSearch(""); setSearchOpen(false); }}
+                  >
+                    <div className="topbar-v2-result-icon"><ProductionIcon /></div>
+                    <div className="topbar-v2-result-main">
+                      <div className="topbar-v2-result-top"><strong>Produzione</strong></div>
+                      <div className="topbar-v2-result-description">Battelli, reparti e PDF</div>
+                    </div>
+                    <div className="topbar-v2-result-arrow">→</div>
+                  </Link>
+                )}
                 {!search.trim() ? (
                   <div className="topbar-v2-search-start">
                     <div className="topbar-v2-search-start-icon">
@@ -1168,7 +1198,7 @@ export default function TopBar() {
                     Caricamento articoli...
                   </div>
                 ) : searchResults.length ===
-                  0 ? (
+                  0 ? (showProductionResult ? null : (
                   <div className="topbar-v2-search-empty">
                     <strong>
                       Nessun articolo trovato
@@ -1179,7 +1209,7 @@ export default function TopBar() {
                       descrizione o fornitore.
                     </span>
                   </div>
-                ) : (
+                )) : (
                   <>
                     <div className="topbar-v2-search-panel-header">
                       <span>
@@ -1390,6 +1420,11 @@ export default function TopBar() {
           align-items: center;
           gap: 8px;
           box-sizing: border-box;
+        }
+
+        .topbar-v2-section-result {
+          text-decoration: none;
+          color: inherit;
         }
 
         .topbar-v2-logo {

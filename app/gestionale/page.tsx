@@ -8,6 +8,7 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabaseClient";
+import ProductionIcon from "../../components/ProductionIcon";
 
 type Supplier = {
   id: string;
@@ -58,6 +59,7 @@ type SearchResult = {
 
 const NAV_ITEMS = [
   { label: "Home", href: "/gestionale", icon: "home" },
+  { label: "Produzione", href: "/produzione", icon: "production" },
   { label: "Magazzino", href: "/suppliers", icon: "warehouse" },
   { label: "Ordini", href: "/orders", icon: "orders" },
   { label: "Movimenti", href: "/movements", icon: "movement" },
@@ -434,6 +436,14 @@ export default function GestionalePage() {
     const term = search.trim().toLowerCase();
 
     const sections: SearchResult[] = [
+      {
+        id: "section-production",
+        kind: "Sezione",
+        title: "Produzione",
+        subtitle: "Battelli, reparti e PDF",
+        href: "/produzione",
+        accent: "blue",
+      },
       {
         id: "section-magazzino",
         kind: "Sezione",
@@ -993,6 +1003,7 @@ export default function GestionalePage() {
                   />
 
                   <div className="gm2-quick-grid">
+                    <QuickTile icon={<ProductionIcon />} label="Produzione" tone="blue" onClick={() => router.push("/produzione")} />
                     <QuickTile icon={<WarehouseIcon />} label="Magazzino" tone="blue" onClick={() => router.push("/suppliers")} />
                     <QuickTile icon={<OrderIcon />} label="Ordini" tone="violet" badge={openOrders.length} onClick={() => router.push("/orders")} />
                     <QuickTile icon={<MovementIcon />} label="Movimenti" tone="cyan" onClick={() => router.push("/movements")} />
@@ -1107,6 +1118,10 @@ export default function GestionalePage() {
           <button type="button" className="active" onClick={() => router.push("/gestionale")}>
             <HomeIcon />
             <span>Home</span>
+          </button>
+          <button type="button" onClick={() => router.push("/produzione")}>
+            <ProductionIcon />
+            <span>Produzione</span>
           </button>
           <button type="button" onClick={() => router.push("/suppliers")}>
             <WarehouseIcon />
@@ -1465,6 +1480,7 @@ function capitalize(value: string) {
 
 function NavIcon({ name }: { name: string }) {
   if (name === "home") return <HomeIcon />;
+  if (name === "production") return <ProductionIcon />;
   if (name === "warehouse") return <WarehouseIcon />;
   if (name === "orders") return <OrderIcon />;
   if (name === "movement") return <MovementIcon />;
@@ -3349,7 +3365,7 @@ function Styles() {
           z-index: 9990;
           height: 62px;
           display: grid;
-          grid-template-columns: repeat(5, 1fr);
+          grid-template-columns: repeat(6, minmax(0, 1fr));
           border-top: 1px solid rgba(99, 139, 188, 0.16);
           background: rgba(4, 11, 19, 0.94);
           backdrop-filter: blur(18px);

@@ -71,48 +71,27 @@ export default function ProductionPage() {
   const [pdfFrom, setPdfFrom] = useState("1");
   const [pdfTo, setPdfTo] = useState("");
   const [pdfLogo, setPdfLogo] = useState("");
+  const [pdfLogoLoading, setPdfLogoLoading] = useState(true);
   const [pdfBusy, setPdfBusy] = useState(false);
-  const [logoBusy, setLogoBusy] = useState(false);
   const [pdfError, setPdfError] = useState("");
-  const [logoMessage, setLogoMessage] = useState("");
 
   useEffect(() => {
-    try { setPdfLogo(localStorage.getItem("production-pdf-logo") || ""); }
-    catch { /* Export still works when browser storage is unavailable. */ }
-  }, []);
+    async function loadPdfLogo() {
+      const { data, error } = await supabase
+        .from("production_settings")
+        .select("pdf_logo")
+        .eq("id", 1)
+        .maybeSingle();
 
-  async function uploadPdfLogo(file?: File) {
-    if (!file) return;
-    setPdfError("");
-    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type) || file.size > 5 * 1024 * 1024) {
-      setPdfError("Scegli un logo PNG, JPG o WebP di massimo 5 MB.");
-      return;
+      if (!error && data) {
+        setPdfLogo(data.pdf_logo || "");
+      }
+
+      setPdfLogoLoading(false);
     }
-    setLogoBusy(true);
-    const url = URL.createObjectURL(file);
-    try {
-      const image = new Image();
-      image.src = url;
-      await image.decode();
-      const scale = Math.min(1, 1200 / Math.max(image.naturalWidth, image.naturalHeight));
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
-      canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
-      const context = canvas.getContext("2d");
-      if (!context) throw new Error("Impossibile leggere il logo.");
-      context.fillStyle = "#ffffff";
-      context.fillRect(0, 0, canvas.width, canvas.height);
-      context.drawImage(image, 0, 0, canvas.width, canvas.height);
-      const data = canvas.toDataURL("image/png");
-      setPdfLogo(data);
-      try {
-        localStorage.setItem("production-pdf-logo", data);
-        setLogoMessage("Logo memorizzato in questo browser. Sugli altri dispositivi va caricato una volta.");
-      } catch { setLogoMessage("Logo pronto per questa sessione; il browser non permette di memorizzarlo."); }
-    } catch {
-      setPdfError("Impossibile leggere l'immagine. Prova un altro file PNG o JPG.");
-    } finally { URL.revokeObjectURL(url); setLogoBusy(false); }
-  }
+
+    loadPdfLogo();
+  }, []);
 
   async function downloadProductionPdf() {
     setPdfError("");
@@ -614,17 +593,17 @@ export default function ProductionPage() {
             </label>
             <button type="button" className="prod-btn secondary" disabled={pdfBusy || !activeBoats.length}
               onClick={() => { setPdfFrom("1"); setPdfTo(String(activeBoats.length)); }}>Tutte le righe</button>
-            <label className="prod-pdf-logo-upload">{pdfLogo ? "Cambia logo aziendale" : "Carica logo aziendale"}
-              <input type="file" accept="image/png,image/jpeg,image/webp" disabled={pdfBusy || logoBusy}
-                onChange={(e) => { void uploadPdfLogo(e.target.files?.[0]); e.target.value = ""; }} />
-            </label>
             {pdfLogo && <img src={pdfLogo} alt="Logo aziendale per il PDF" className="prod-pdf-logo" />}
             <button type="button" className="prod-btn primary" onClick={downloadProductionPdf}
-              disabled={pdfBusy || logoBusy || !activeBoats.length}>
-              {pdfBusy ? "Creazione PDF..." : logoBusy ? "Caricamento logo..." : "Scarica PDF"}
+              disabled={pdfBusy || pdfLogoLoading || !pdfLogo || !activeBoats.length}>
+              {pdfBusy ? "Creazione PDF..." : "Scarica PDF"}
             </button>
           </div>
-          {logoMessage && <p role="status">{logoMessage}</p>}
+          {!pdfLogoLoading && !pdfLogo && (
+            <p role="status" className="prod-pdf-logo-missing">
+              Nessun logo configurato — <Link href="/produzione/configurazioni">caricalo una volta in Configurazioni</Link> e resterà attivo su ogni dispositivo.
+            </p>
+          )}
           {pdfError && <div role="alert" className="prod-message error">{pdfError}</div>}
         </div>
 
@@ -736,9 +715,9 @@ function Styles() {
       .prod-pdf-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
       .prod-pdf-controls label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
       .prod-pdf-controls input[type="number"] { width: 100px; padding: 10px; background: #14283f; color: white; border: 1px solid #51637a; border-radius: 8px; }
-      .prod-pdf-logo-upload { max-width: 240px; }
-      .prod-pdf-logo-upload input { max-width: 100%; font-size: 11px; }
       .prod-pdf-logo { width: 100px; height: 45px; object-fit: contain; background: white; border-radius: 6px; }
+      .prod-pdf-logo-missing { color: #fbbf24; }
+      .prod-pdf-logo-missing a { color: #93c5fd; font-weight: 800; }
       .prod-page {
         width: 100%;
         max-width: 1500px;

@@ -45,9 +45,111 @@ export default function ProductionConfigurationsPage() {
   const [message, setMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
 
+  const [pdfLogo, setPdfLogo] = useState("");
+  const [logoLoading, setLogoLoading] = useState(true);
+  const [logoBusy, setLogoBusy] = useState(false);
+  const [logoMessage, setLogoMessage] = useState("");
+  const [logoError, setLogoError] = useState("");
+
   useEffect(() => {
     loadData();
+    loadLogo();
   }, []);
+
+  async function loadLogo() {
+    setLogoLoading(true);
+
+    const { data, error } = await supabase
+      .from("production_settings")
+      .select("pdf_logo")
+      .eq("id", 1)
+      .maybeSingle();
+
+    if (!error && data) {
+      setPdfLogo(data.pdf_logo || "");
+    }
+
+    setLogoLoading(false);
+  }
+
+  async function uploadLogo(file?: File) {
+    if (!file) return;
+
+    setLogoError("");
+    setLogoMessage("");
+
+    if (
+      !["image/png", "image/jpeg", "image/webp"].includes(file.type) ||
+      file.size > 5 * 1024 * 1024
+    ) {
+      setLogoError("Scegli un logo PNG, JPG o WebP di massimo 5 MB.");
+      return;
+    }
+
+    setLogoBusy(true);
+    const url = URL.createObjectURL(file);
+
+    try {
+      const image = new Image();
+      image.src = url;
+      await image.decode();
+
+      const scale = Math.min(1, 1200 / Math.max(image.naturalWidth, image.naturalHeight));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+      canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("Impossibile leggere il logo.");
+
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+      const data = canvas.toDataURL("image/png");
+
+      const { error } = await supabase
+        .from("production_settings")
+        .upsert({ id: 1, pdf_logo: data });
+
+      if (error) throw error;
+
+      setPdfLogo(data);
+      setLogoMessage("Logo salvato: da ora è disponibile su tutti i dispositivi per il PDF di produzione.");
+    } catch (error) {
+      setLogoError(
+        error instanceof Error
+          ? error.message
+          : "Impossibile salvare il logo. Prova un altro file PNG o JPG."
+      );
+    } finally {
+      URL.revokeObjectURL(url);
+      setLogoBusy(false);
+    }
+  }
+
+  async function removeLogo() {
+    const confirmed = window.confirm("Rimuovere il logo aziendale dal PDF di produzione?");
+    if (!confirmed) return;
+
+    setLogoBusy(true);
+    setLogoError("");
+    setLogoMessage("");
+
+    const { error } = await supabase
+      .from("production_settings")
+      .upsert({ id: 1, pdf_logo: null });
+
+    if (error) {
+      setLogoError("Errore rimozione logo: " + error.message);
+      setLogoBusy(false);
+      return;
+    }
+
+    setPdfLogo("");
+    setLogoMessage("Logo rimosso.");
+    setLogoBusy(false);
+  }
 
   async function loadData() {
     setLoading(true);
@@ -320,6 +422,63 @@ export default function ProductionConfigurationsPage() {
         ))}
       </section>
 
+      <section className="pcfg-card pcfg-logo-card">
+        <div className="pcfg-card-head">
+          <div>
+            <div className="pcfg-eyebrow">CONFIGURAZIONE</div>
+            <h2>Logo aziendale per il PDF</h2>
+            <p>
+              Caricalo una sola volta qui: da questo momento il PDF di
+              produzione lo userà in automatico su qualunque
+              dispositivo o browser, senza doverlo ricaricare ogni volta.
+            </p>
+          </div>
+
+          <span>{pdfLogo ? "Configurato" : "Non configurato"}</span>
+        </div>
+
+        <div className="pcfg-logo-row">
+          <div className="pcfg-logo-preview">
+            {logoLoading ? (
+              <span className="pcfg-logo-placeholder">Caricamento...</span>
+            ) : pdfLogo ? (
+              <img src={pdfLogo} alt="Logo aziendale per il PDF" />
+            ) : (
+              <span className="pcfg-logo-placeholder">Nessun logo</span>
+            )}
+          </div>
+
+          <div className="pcfg-logo-actions">
+            <label className="pcfg-logo-upload">
+              {pdfLogo ? "Cambia logo" : "Carica logo"}
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                disabled={logoBusy || logoLoading}
+                onChange={(e) => {
+                  void uploadLogo(e.target.files?.[0]);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+
+            {pdfLogo && (
+              <button
+                type="button"
+                className="danger"
+                disabled={logoBusy}
+                onClick={removeLogo}
+              >
+                Rimuovi logo
+              </button>
+            )}
+          </div>
+        </div>
+
+        {logoMessage && <div className="pcfg-message success">{logoMessage}</div>}
+        {logoError && <div className="pcfg-message error">{logoError}</div>}
+      </section>
+
       <section className="pcfg-info">
         <strong>Come vengono usati</strong>
         <span>
@@ -416,6 +575,91 @@ function Styles() {
         display: grid;
         grid-template-columns: repeat(2,minmax(0,1fr));
         gap: 11px;
+      }
+
+      .pcfg-logo-card {
+        margin-top: 11px;
+      }
+
+      .pcfg-logo-row {
+        margin-top: 13px;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+
+      .pcfg-logo-preview {
+        width: 140px;
+        height: 60px;
+        flex: 0 0 auto;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px dashed rgba(148,163,184,.28);
+        border-radius: 9px;
+        background: #fff;
+        overflow: hidden;
+      }
+
+      .pcfg-logo-preview img {
+        max-width: 100%;
+        max-height: 100%;
+        object-fit: contain;
+      }
+
+      .pcfg-logo-placeholder {
+        color: #64748b;
+        font-size: 8px;
+        font-weight: 800;
+        text-align: center;
+        padding: 0 8px;
+      }
+
+      .pcfg-logo-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .pcfg-logo-upload {
+        min-height: 38px;
+        padding: 0 14px;
+        display: inline-flex;
+        align-items: center;
+        border: 1px solid #2563eb;
+        border-radius: 8px;
+        background: rgba(37,99,235,.18);
+        color: #93c5fd;
+        cursor: pointer;
+        font-size: 9px;
+        font-weight: 950;
+        position: relative;
+      }
+
+      .pcfg-logo-upload input {
+        position: absolute;
+        inset: 0;
+        opacity: 0;
+        cursor: pointer;
+      }
+
+      .pcfg-logo-actions button.danger {
+        min-height: 38px;
+        padding: 0 12px;
+        border: 1px solid rgba(239,68,68,.28);
+        border-radius: 8px;
+        background: rgba(239,68,68,.08);
+        color: #fca5a5;
+        cursor: pointer;
+        font-size: 9px;
+        font-weight: 900;
+      }
+
+      .pcfg-logo-actions button.danger:disabled {
+        opacity: .5;
+        cursor: wait;
       }
 
       .pcfg-card {

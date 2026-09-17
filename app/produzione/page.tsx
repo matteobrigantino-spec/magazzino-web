@@ -74,6 +74,9 @@ export default function ProductionPage() {
   const [pdfLogoLoading, setPdfLogoLoading] = useState(true);
   const [pdfBusy, setPdfBusy] = useState(false);
   const [pdfError, setPdfError] = useState("");
+  const [pdfOperator, setPdfOperator] = useState("");
+  const [pdfOrderDate, setPdfOrderDate] = useState(() => todayInputValue());
+  const [pdfUpdatedDate, setPdfUpdatedDate] = useState(() => todayInputValue());
 
   useEffect(() => {
     async function loadPdfLogo() {
@@ -91,6 +94,14 @@ export default function ProductionPage() {
     }
 
     loadPdfLogo();
+
+    try {
+      const savedName = localStorage.getItem("magazzino_display_name");
+      const username = localStorage.getItem("magazzino_user");
+      setPdfOperator(savedName || username || "Matteo");
+    } catch {
+      setPdfOperator("Matteo");
+    }
   }, []);
 
   async function downloadProductionPdf() {
@@ -114,7 +125,11 @@ export default function ProductionPage() {
           totalDays: daysFrom(boat.created_at), note: notes,
         };
       });
-      const doc = buildProductionPdf(rows, pdfLogo);
+      const doc = buildProductionPdf(rows, pdfLogo, {
+        operator: pdfOperator.trim() || "Matteo",
+        orderDate: formatItDate(pdfOrderDate),
+        updatedDate: formatItDate(pdfUpdatedDate),
+      });
       await doc.save(`produzione_righe_${Number(pdfFrom)}-${Number(pdfTo)}.pdf`, { returnPromise: true });
     } catch (error) {
       setPdfError(error instanceof Error ? error.message : "Impossibile creare il PDF. Riprova.");
@@ -146,7 +161,7 @@ export default function ProductionPage() {
       supabase
         .from("production_boats")
         .select("id,progressive_no,order_number,model_boat,hull,stringers,deck,accessories,note,status,created_at,completed_at")
-        .order("progressive_no", { ascending: false }),
+        .order("progressive_no", { ascending: true }),
       supabase
         .from("production_department_steps")
         .select("id,boat_id,department_id,status,entered_at,started_at,completed_at,current_note"),
@@ -593,12 +608,26 @@ export default function ProductionPage() {
             </label>
             <button type="button" className="prod-btn secondary" disabled={pdfBusy || !activeBoats.length}
               onClick={() => { setPdfFrom("1"); setPdfTo(String(activeBoats.length)); }}>Tutte le righe</button>
+            <label>Data ordine
+              <input type="date" value={pdfOrderDate} disabled={pdfBusy}
+                onChange={(e) => setPdfOrderDate(e.target.value)} />
+            </label>
+            <label>Data ultimo aggiornamento
+              <input type="date" value={pdfUpdatedDate} disabled={pdfBusy}
+                onChange={(e) => setPdfUpdatedDate(e.target.value)} />
+            </label>
+            <div className="prod-pdf-operator">
+              Operatore: <strong>{pdfOperator || "Matteo"}</strong>
+            </div>
             {pdfLogo && <img src={pdfLogo} alt="Logo aziendale per il PDF" className="prod-pdf-logo" />}
             <button type="button" className="prod-btn primary" onClick={downloadProductionPdf}
               disabled={pdfBusy || pdfLogoLoading || !pdfLogo || !activeBoats.length}>
               {pdfBusy ? "Creazione PDF..." : "Scarica PDF"}
             </button>
           </div>
+          <p className="prod-pdf-checkbox-hint">
+            Nel PDF, Carena, Ragno/Longheroni, Coperta e Accessori hanno una casella vuota da spuntare a mano quando il lavoro è fatto.
+          </p>
           {!pdfLogoLoading && !pdfLogo && (
             <p role="status" className="prod-pdf-logo-missing">
               Nessun logo configurato — <Link href="/produzione/configurazioni">caricalo una volta in Configurazioni</Link> e resterà attivo su ogni dispositivo.
@@ -699,6 +728,21 @@ function Field({
   );
 }
 
+function todayInputValue() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatItDate(value: string) {
+  if (!value) return "";
+  const [year, month, day] = value.split("-");
+  if (!year || !month || !day) return value;
+  return `${day}/${month}/${year}`;
+}
+
 function StatusBadge({ status }: { status: string }) {
   return (
     <span className={`prod-status ${status}`}>
@@ -715,9 +759,13 @@ function Styles() {
       .prod-pdf-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
       .prod-pdf-controls label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
       .prod-pdf-controls input[type="number"] { width: 100px; padding: 10px; background: #14283f; color: white; border: 1px solid #51637a; border-radius: 8px; }
+      .prod-pdf-controls input[type="date"] { padding: 9px 10px; background: #14283f; color: white; border: 1px solid #51637a; border-radius: 8px; font-size: 12px; }
+      .prod-pdf-operator { font-size: 12px; color: #b7c7d9; }
+      .prod-pdf-operator strong { color: white; }
       .prod-pdf-logo { width: 100px; height: 45px; object-fit: contain; background: white; border-radius: 6px; }
       .prod-pdf-logo-missing { color: #fbbf24; }
       .prod-pdf-logo-missing a { color: #93c5fd; font-weight: 800; }
+      .prod-pdf-checkbox-hint { font-size: 11px; color: #8398b1; margin: 4px 0 0; }
       .prod-page {
         width: 100%;
         max-width: 1500px;

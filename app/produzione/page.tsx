@@ -142,6 +142,7 @@ export default function ProductionPage() {
   const [deck, setDeck] = useState("");
   const [accessories, setAccessories] = useState("Standard");
   const [note, setNote] = useState("");
+  const [tubeColor, setTubeColor] = useState("");
 
   useEffect(() => {
     loadData();
@@ -328,7 +329,7 @@ export default function ProductionPage() {
       localStorage.getItem("magazzino_user") ||
       "Matteo";
 
-    const { error } = await supabase.rpc("create_production_boat", {
+    const { data: newBoatId, error } = await supabase.rpc("create_production_boat", {
       p_progressive_no: Number(progressive || 0),
       p_order_number: orderNumber.trim(),
       p_model_boat: modelBoat.trim(),
@@ -346,6 +347,17 @@ export default function ProductionPage() {
       return;
     }
 
+    // Colore tubolare opzionale: se indicato subito, crea gia' la scheda
+    // che vedra' solo il reparto Tubolari (gli altri reparti non la vedono).
+    if (tubeColor.trim() && newBoatId) {
+      await supabase
+        .from("production_tubolari")
+        .upsert(
+          { boat_id: newBoatId, tube_color: tubeColor.trim() },
+          { onConflict: "boat_id" }
+        );
+    }
+
     setMessage(`Ordine ${orderNumber.trim()} inserito in produzione.`);
     setOrderNumber("");
     setModelBoat("");
@@ -354,6 +366,7 @@ export default function ProductionPage() {
     setDeck("");
     setAccessories("Standard");
     setNote("");
+    setTubeColor("");
     setShowNew(false);
     setSaving(false);
     setProgressive("");
@@ -509,6 +522,20 @@ export default function ProductionPage() {
                 value={accessories}
                 onChange={(e) => setAccessories(e.target.value)}
               />
+            </Field>
+
+            <Field label="Colore tubolare (opzionale)">
+              <select
+                value={tubeColor}
+                onChange={(e) => setTubeColor(e.target.value)}
+              >
+                <option value="">Nessuno / non è un gommone...</option>
+                {colorOptions.map((option) => (
+                  <option key={option.id} value={option.name}>
+                    {option.name}
+                  </option>
+                ))}
+              </select>
             </Field>
 
             <Field label="Note" wide>

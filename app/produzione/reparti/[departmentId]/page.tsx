@@ -33,6 +33,20 @@ type Step = {
   entered_at: string;
 };
 
+type ProductionOption = {
+  id: string;
+  option_type: "model" | "color";
+  name: string;
+};
+
+type Tubolare = {
+  id: string;
+  boat_id: string;
+  tube_color: string;
+  tube_done: boolean;
+  tube_mount_done: boolean;
+};
+
 const statusLabel: Record<string, string> = {
   queued: "Da iniziare",
   working: "In lavorazione",
@@ -40,6 +54,10 @@ const statusLabel: Record<string, string> = {
   blocked: "Bloccato",
   completed: "Completato",
 };
+
+function isTubolariName(name: string) {
+  return name.trim().toLowerCase() === "tubolari";
+}
 
 export default function ProductionDepartmentPage({
   params,
@@ -65,6 +83,15 @@ export default function ProductionDepartmentPage({
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+
+  // Scheda Tubolari: colore + i due passaggi da spuntare. Caricata e
+  // mostrata SOLO quando questo reparto e' "Tubolari" - gli altri reparti
+  // non fanno nemmeno la query, quindi non la vedono mai.
+  const [colorOptions, setColorOptions] = useState<ProductionOption[]>([]);
+  const [tubolariMap, setTubolariMap] = useState<Record<string, Tubolare>>({});
+  const [tubeColorDrafts, setTubeColorDrafts] = useState<Record<string, string>>({});
+  const [tubeDoneDrafts, setTubeDoneDrafts] = useState<Record<string, boolean>>({});
+  const [tubeMountDrafts, setTubeMountDrafts] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     loadData();
@@ -109,12 +136,13 @@ export default function ProductionDepartmentPage({
       entered_at: String(row.entered_at || ""),
     }));
 
-    setDepartment({
+    const cleanDepartment = {
       id: String(depRes.data.id),
       name: String(depRes.data.name || ""),
       sort_order: Number(depRes.data.sort_order || 0),
-    });
+    };
 
+    setDepartment(cleanDepartment);
     setSteps(cleanSteps);
 
     setStatusDrafts(
@@ -128,9 +156,14 @@ export default function ProductionDepartmentPage({
     );
 
     const boatIds = Array.from(new Set(cleanSteps.map((step) => step.boat_id)));
+    const tubolariDept = isTubolariName(cleanDepartment.name);
 
     if (boatIds.length === 0) {
       setBoats([]);
+      setTubolariMap({});
+      setTubeColorDrafts({});
+      setTubeDoneDrafts({});
+      setTubeMountDrafts({});
       setLoading(false);
       return;
     }
@@ -161,6 +194,54 @@ export default function ProductionDepartmentPage({
       }))
     );
 
+    if (tubolariDept) {
+      const [tubRes, optionsRes] = await Promise.all([
+        supabase
+          .from("production_tubolari")
+          .select("id,boat_id,tube_color,tube_done,tube_mount_done")
+          .in("boat_id", boatIds),
+        supabase
+          .from("production_options")
+          .select("id,option_type,name")
+          .eq("option_type", "color")
+          .eq("active", true)
+          .order("sort_order", { ascending: true })
+          .order("name", { ascending: true }),
+      ]);
+
+      const cleanTub: Tubolare[] = (tubRes.data || []).map((row: any) => ({
+        id: String(row.id),
+        boat_id: String(row.boat_id),
+        tube_color: String(row.tube_color || ""),
+        tube_done: Boolean(row.tube_done),
+        tube_mount_done: Boolean(row.tube_mount_done),
+      }));
+
+      const tubMap = Object.fromEntries(cleanTub.map((t) => [t.boat_id, t]));
+      setTubolariMap(tubMap);
+      setTubeColorDrafts(
+        Object.fromEntries(boatIds.map((id) => [id, tubMap[id]?.tube_color || ""]))
+      );
+      setTubeDoneDrafts(
+        Object.fromEntries(boatIds.map((id) => [id, tubMap[id]?.tube_done || false]))
+      );
+      setTubeMountDrafts(
+        Object.fromEntries(boatIds.map((id) => [id, tubMap[id]?.tube_mount_done || false]))
+      );
+      setColorOptions(
+        (optionsRes.data || []).map((row: any) => ({
+          id: String(row.id),
+          option_type: "color" as const,
+          name: String(row.name || ""),
+        }))
+      );
+    } else {
+      setTubolariMap({});
+      setTubeColorDrafts({});
+      setTubeDoneDrafts({});
+      setTubeMountDrafts({});
+    }
+
     setLoading(false);
   }
 
@@ -168,6 +249,8 @@ export default function ProductionDepartmentPage({
     () => new Map(boats.map((boat) => [boat.id, boat])),
     [boats]
   );
+
+  const isTubolariDept = Boolean(department && isTubolariName(department.name));
 
   async function saveStatus(step: Step) {
     const nextStatus = statusDrafts[step.id] || step.status;
@@ -207,6 +290,24 @@ export default function ProductionDepartmentPage({
       setErrorMessage("Errore aggiornamento stato: " + error.message);
       setSavingId("");
       return;
+    }
+
+    if (isTubolariDept) {
+      const tubError = await supabase.from("production_tubolari").upsert(
+        {
+          boat_id: step.boat_id,
+          tube_color: (tubeColorDrafts[step.boat_id] || "").trim(),
+          tube_done: Boolean(tubeDoneDrafts[step.boat_id]),
+          tube_mount_done: Boolean(tubeMountDrafts[step.boat_id]),
+        },
+        { onConflict: "boat_id" }
+      );
+
+      if (tubError.error) {
+        setErrorMessage("Errore salvataggio scheda tubolari: " + tubError.error.message);
+        setSavingId("");
+        return;
+      }
     }
 
     const boat = boatMap.get(step.boat_id);
@@ -252,17 +353,29 @@ export default function ProductionDepartmentPage({
     doc.text("REPARTO", 9, 20);
     doc.text(department.name.toUpperCase(), 54, 20);
 
-    const columns = [
-      { x: 9, title: "Prog.", w: 15 },
-      { x: 24, title: "N. ordine", w: 22 },
-      { x: 46, title: "Modello battello", w: 38 },
-      { x: 84, title: "Carena", w: 28 },
-      { x: 112, title: "Ragno/Longheroni", w: 38 },
-      { x: 150, title: "Coperta", w: 28 },
-      { x: 178, title: "Accessori", w: 39 },
-      { x: 217, title: "Stato", w: 30 },
-      { x: 247, title: "Note", w: 41 },
-    ];
+    const columns = isTubolariDept
+      ? [
+          { x: 9, title: "Prog.", w: 14 },
+          { x: 23, title: "N. ordine", w: 20 },
+          { x: 43, title: "Modello battello", w: 34 },
+          { x: 77, title: "Carena", w: 24 },
+          { x: 101, title: "Colore tubolare", w: 30 },
+          { x: 131, title: "Tubo", w: 18 },
+          { x: 149, title: "Montaggio tubo", w: 28 },
+          { x: 177, title: "Stato", w: 26 },
+          { x: 203, title: "Note", w: 33 },
+        ]
+      : [
+          { x: 9, title: "Prog.", w: 15 },
+          { x: 24, title: "N. ordine", w: 22 },
+          { x: 46, title: "Modello battello", w: 38 },
+          { x: 84, title: "Carena", w: 28 },
+          { x: 112, title: "Ragno/Longheroni", w: 38 },
+          { x: 150, title: "Coperta", w: 28 },
+          { x: 178, title: "Accessori", w: 39 },
+          { x: 217, title: "Stato", w: 30 },
+          { x: 247, title: "Note", w: 41 },
+        ];
 
     let y = 29;
 
@@ -280,17 +393,31 @@ export default function ProductionDepartmentPage({
 
     for (const row of rows) {
       const boat = row.boat!;
-      const values = [
-        String(boat.progressive_no),
-        boat.order_number,
-        boat.model_boat,
-        boat.hull,
-        boat.stringers,
-        boat.deck,
-        boat.accessories,
-        statusLabel[row.step.status] || row.step.status,
-        row.step.current_note || boat.note || "",
-      ];
+      const tub = tubolariMap[boat.id];
+
+      const values = isTubolariDept
+        ? [
+            String(boat.progressive_no),
+            boat.order_number,
+            boat.model_boat,
+            boat.hull,
+            tub?.tube_color || "-",
+            tub?.tube_done ? "Fatto" : "-",
+            tub?.tube_mount_done ? "Fatto" : "-",
+            statusLabel[row.step.status] || row.step.status,
+            row.step.current_note || boat.note || "",
+          ]
+        : [
+            String(boat.progressive_no),
+            boat.order_number,
+            boat.model_boat,
+            boat.hull,
+            boat.stringers,
+            boat.deck,
+            boat.accessories,
+            statusLabel[row.step.status] || row.step.status,
+            row.step.current_note || boat.note || "",
+          ];
 
       const noteLines = doc.splitTextToSize(values[8], columns[8].w - 2);
       const modelLines = doc.splitTextToSize(values[2], columns[2].w - 2);
@@ -404,9 +531,19 @@ export default function ProductionDepartmentPage({
                 <th>N° ordine</th>
                 <th>Modello battello</th>
                 <th>Carena</th>
-                <th>Ragno/Longheroni</th>
-                <th>Coperta</th>
-                <th>Accessori</th>
+                {isTubolariDept ? (
+                  <>
+                    <th>Colore tubolare</th>
+                    <th>Tubo</th>
+                    <th>Montaggio tubo</th>
+                  </>
+                ) : (
+                  <>
+                    <th>Ragno/Longheroni</th>
+                    <th>Coperta</th>
+                    <th>Accessori</th>
+                  </>
+                )}
                 <th>Stato giornaliero</th>
                 <th>Note / motivo attesa</th>
                 <th></th>
@@ -442,9 +579,65 @@ export default function ProductionDepartmentPage({
                       </td>
                       <td>{boat.model_boat}</td>
                       <td>{boat.hull || "—"}</td>
-                      <td>{boat.stringers || "—"}</td>
-                      <td>{boat.deck || "—"}</td>
-                      <td>{boat.accessories || "—"}</td>
+                      {isTubolariDept ? (
+                        <>
+                          <td>
+                            <select
+                              className="pdep-tube-select"
+                              value={tubeColorDrafts[boat.id] ?? ""}
+                              onChange={(e) =>
+                                setTubeColorDrafts((current) => ({
+                                  ...current,
+                                  [boat.id]: e.target.value,
+                                }))
+                              }
+                            >
+                              <option value="">Seleziona colore...</option>
+                              {colorOptions.map((option) => (
+                                <option key={option.id} value={option.name}>
+                                  {option.name}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                          <td>
+                            <label className="pdep-tube-check">
+                              <input
+                                type="checkbox"
+                                checked={Boolean(tubeDoneDrafts[boat.id])}
+                                onChange={(e) =>
+                                  setTubeDoneDrafts((current) => ({
+                                    ...current,
+                                    [boat.id]: e.target.checked,
+                                  }))
+                                }
+                              />
+                              Fatto
+                            </label>
+                          </td>
+                          <td>
+                            <label className="pdep-tube-check">
+                              <input
+                                type="checkbox"
+                                checked={Boolean(tubeMountDrafts[boat.id])}
+                                onChange={(e) =>
+                                  setTubeMountDrafts((current) => ({
+                                    ...current,
+                                    [boat.id]: e.target.checked,
+                                  }))
+                                }
+                              />
+                              Fatto
+                            </label>
+                          </td>
+                        </>
+                      ) : (
+                        <>
+                          <td>{boat.stringers || "—"}</td>
+                          <td>{boat.deck || "—"}</td>
+                          <td>{boat.accessories || "—"}</td>
+                        </>
+                      )}
                       <td>
                         <select
                           value={statusDrafts[step.id] || step.status}
@@ -694,7 +887,8 @@ function Styles() {
       }
 
       .pdep-status-select,
-      .pdep-note {
+      .pdep-note,
+      .pdep-tube-select {
         min-height: 31px;
         box-sizing: border-box;
         border: 1px solid rgba(148,163,184,.20);
@@ -715,6 +909,28 @@ function Styles() {
       .pdep-status-select.waiting { color: #fbbf24; }
       .pdep-status-select.blocked { color: #fb7185; }
       .pdep-status-select.completed { color: #86efac; }
+
+      .pdep-tube-select {
+        min-width: 130px;
+        padding: 0 7px;
+      }
+
+      .pdep-tube-check {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        color: #cbd5e1;
+        font-size: 9px;
+        font-weight: 800;
+        cursor: pointer;
+      }
+
+      .pdep-tube-check input {
+        width: 15px;
+        height: 15px;
+        accent-color: #2563eb;
+        cursor: pointer;
+      }
 
       .pdep-note {
         width: 220px;

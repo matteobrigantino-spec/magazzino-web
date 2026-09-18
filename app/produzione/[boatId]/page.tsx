@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { use, useEffect, useMemo, useState } from "react";
+import { Fragment, use, useEffect, useMemo, useState } from "react";
 import { supabase } from "../../../lib/supabaseClient";
 
 type Boat = {
@@ -107,6 +107,14 @@ export default function ProductionBoatDetailPage({
   const [formDeck, setFormDeck] = useState("");
   const [formAccessories, setFormAccessories] = useState("");
   const [formNote, setFormNote] = useState("");
+
+  // Barra di avanzamento a step: un tap sul reparto attuale apre questo
+  // pannellino per cambiarne lo stato, senza uscire dalla scheda.
+  const [stepEditing, setStepEditing] = useState(false);
+  const [stepStatusDraft, setStepStatusDraft] = useState("queued");
+  const [stepNoteDraft, setStepNoteDraft] = useState("");
+  const [stepSaving, setStepSaving] = useState(false);
+  const [stepError, setStepError] = useState("");
 
   useEffect(() => {
     loadData();
@@ -270,6 +278,62 @@ export default function ProductionBoatDetailPage({
   }
 
   const currentStep = sortedSteps.find((step) => step.status !== "completed");
+
+  function openStepEditor() {
+    if (!currentStep) return;
+    setStepStatusDraft(currentStep.status);
+    setStepNoteDraft(currentStep.current_note || "");
+    setStepError("");
+    setStepEditing(true);
+  }
+
+  function closeStepEditor() {
+    setStepEditing(false);
+    setStepError("");
+  }
+
+  async function saveCurrentStep() {
+    if (!currentStep) return;
+    setStepError("");
+
+    if (stepStatusDraft === "blocked" && !stepNoteDraft.trim()) {
+      setStepError("Quando è BLOCCATO inserisci il motivo nelle note.");
+      return;
+    }
+
+    const confirmCompleted =
+      stepStatusDraft === "completed"
+        ? window.confirm(
+            "Confermi COMPLETATO?\n\nIl battello uscirà da questo reparto e passerà automaticamente al reparto successivo."
+          )
+        : true;
+
+    if (!confirmCompleted) return;
+
+    setStepSaving(true);
+
+    const operator =
+      localStorage.getItem("magazzino_display_name") ||
+      localStorage.getItem("magazzino_user") ||
+      "Matteo";
+
+    const { error } = await supabase.rpc("update_production_step_status", {
+      p_step_id: currentStep.id,
+      p_status: stepStatusDraft,
+      p_note: stepNoteDraft.trim() || null,
+      p_changed_by: operator,
+    });
+
+    if (error) {
+      setStepError("Errore aggiornamento stato: " + error.message);
+      setStepSaving(false);
+      return;
+    }
+
+    setStepSaving(false);
+    setStepEditing(false);
+    await loadData();
+  }
 
   function startEditing() {
     if (!boat) return;
@@ -480,38 +544,83 @@ export default function ProductionBoatDetailPage({
         <div className="pbd-head">
           <div>
             <div className="pbd-eyebrow">PERCORSO PRODUTTIVO</div>
-            <h2>Tempi per reparto</h2>
+            <h2>Avanzamento lavoro</h2>
+            <p className="pbd-stepper-hint">
+              Tocca il reparto attuale (quello acceso) per cambiarne lo stato.
+            </p>
           </div>
         </div>
 
-        <div className="pbd-timeline">
-          {departments.map((dep) => {
-            const step = sortedSteps.find((row) => row.department_id === dep.id);
+        <div className="pbd-stepper">
+          <div className="pbd-stepper-row">
+            {departments.map((dep, index) => {
+              const step = sortedSteps.find((row) => row.department_id === dep.id);
+              const status = step ? step.status : "future";
+              const isCurrent = currentStep?.department_id === dep.id;
 
-            return (
-              <div
-                key={dep.id}
-                className={`pbd-step ${step ? step.status : "future"}`}
-              >
-                <div className="pbd-step-number">{dep.sort_order}</div>
-                <div className="pbd-step-copy">
-                  <strong>{dep.name}</strong>
-                  {step ? (
-                    <>
-                      <span>{statusLabel[step.status] || step.status}</span>
-                      <small>
-                        {dayLabel(days(step.entered_at, step.completed_at))} giorni nel reparto
-                      </small>
-                      {step.current_note && <em>{step.current_note}</em>}
-                    </>
-                  ) : (
-                    <span>Non ancora raggiunto</span>
+              return (
+                <Fragment key={dep.id}>
+                  <div className="pbd-stepper-dot-wrap">
+                    <button
+                      type="button"
+                      className={`pbd-dot ${status}`}
+                      disabled={!isCurrent}
+                      onClick={openStepEditor}
+                      title={dep.name}
+                    >
+                      {status === "completed" ? "✓" : dep.sort_order}
+                    </button>
+                    <div className="pbd-stepper-label">
+                      <strong>{dep.name}</strong>
+                      <span>{step ? statusLabel[status] || status : "Non raggiunto"}</span>
+                      {step?.current_note && <em>{step.current_note}</em>}
+                    </div>
+                  </div>
+                  {index < departments.length - 1 && (
+                    <div className={`pbd-stepper-line ${status === "completed" ? "done" : ""}`} />
                   )}
-                </div>
-              </div>
-            );
-          })}
+                </Fragment>
+              );
+            })}
+          </div>
         </div>
+
+        {stepEditing && currentStep && (
+          <div className="pbd-step-editor">
+            {stepError && <div className="pbd-form-error">{stepError}</div>}
+            <div className="pbd-step-editor-row">
+              <label className="pbd-field">
+                <span>Stato · {depMap.get(currentStep.department_id)?.name}</span>
+                <select
+                  value={stepStatusDraft}
+                  onChange={(e) => setStepStatusDraft(e.target.value)}
+                >
+                  <option value="queued">Da iniziare</option>
+                  <option value="working">In lavorazione</option>
+                  <option value="waiting">In attesa</option>
+                  <option value="blocked">Bloccato</option>
+                  <option value="completed">Completato</option>
+                </select>
+              </label>
+              <label className="pbd-field wide">
+                <span>Nota / motivo attesa</span>
+                <input
+                  value={stepNoteDraft}
+                  onChange={(e) => setStepNoteDraft(e.target.value)}
+                  placeholder="Nota giornaliera..."
+                />
+              </label>
+            </div>
+            <div className="pbd-form-actions">
+              <button type="button" className="pbd-back" onClick={closeStepEditor} disabled={stepSaving}>
+                Annulla
+              </button>
+              <button type="button" className="pbd-save-btn" onClick={saveCurrentStep} disabled={stepSaving}>
+                {stepSaving ? "Salvataggio..." : "Salva stato"}
+              </button>
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="pbd-card">
@@ -622,19 +731,27 @@ function Styles() {
       .pbd-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
       .pbd-head h2 { margin:4px 0 0; font-size:17px; }
       .pbd-head > span { min-width:29px; min-height:29px; display:grid; place-items:center; border:1px solid rgba(96,165,250,.23); border-radius:999px; color:#93c5fd; font-size:9px; font-weight:950; }
-      .pbd-timeline { margin-top:13px; display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
-      .pbd-step { min-height:94px; padding:12px; display:grid; grid-template-columns:auto 1fr; gap:10px; border:1px solid rgba(148,163,184,.12); border-radius:10px; background:rgba(255,255,255,.016); }
-      .pbd-step.working { border-color:rgba(59,130,246,.30); background:rgba(59,130,246,.06); }
-      .pbd-step.waiting { border-color:rgba(245,158,11,.27); background:rgba(245,158,11,.05); }
-      .pbd-step.blocked { border-color:rgba(244,63,94,.28); background:rgba(244,63,94,.05); }
-      .pbd-step.completed { border-color:rgba(34,197,94,.24); background:rgba(34,197,94,.04); }
-      .pbd-step.future { opacity:.42; }
-      .pbd-step-number { width:30px; height:30px; display:grid; place-items:center; border-radius:8px; background:rgba(59,130,246,.10); color:#93c5fd; font-size:8px; font-weight:950; }
-      .pbd-step-copy strong,.pbd-step-copy span,.pbd-step-copy small,.pbd-step-copy em { display:block; }
-      .pbd-step-copy strong { font-size:11px; }
-      .pbd-step-copy span { margin-top:4px; color:#9eb0c5; font-size:8px; font-weight:800; }
-      .pbd-step-copy small { margin-top:4px; color:#7187a1; font-size:8px; }
-      .pbd-step-copy em { margin-top:5px; color:#c4d2e1; font-size:8px; font-style:normal; }
+      .pbd-stepper-hint { margin:5px 0 0; color:#7187a1; font-size:9px; font-weight:700; }
+      .pbd-stepper { margin-top:16px; overflow-x:auto; padding-bottom:4px; }
+      .pbd-stepper-row { min-width:min-content; display:flex; align-items:flex-start; }
+      .pbd-stepper-dot-wrap { flex:0 0 auto; width:118px; display:flex; flex-direction:column; align-items:center; text-align:center; }
+      .pbd-dot { width:38px; height:38px; flex:0 0 auto; display:grid; place-items:center; border-radius:50%; border:2px solid rgba(148,163,184,.30); background:#0b1828; color:#9eb0c5; font-size:12px; font-weight:950; cursor:default; }
+      .pbd-dot.future { opacity:.45; }
+      .pbd-dot.queued { border-color:rgba(148,163,184,.45); color:#cbd5e1; }
+      .pbd-dot.working { border-color:#3b82f6; background:rgba(59,130,246,.16); color:#bfdbfe; box-shadow:0 0 0 4px rgba(59,130,246,.12); }
+      .pbd-dot.waiting { border-color:#f59e0b; background:rgba(245,158,11,.14); color:#fde68a; box-shadow:0 0 0 4px rgba(245,158,11,.10); }
+      .pbd-dot.blocked { border-color:#f43f5e; background:rgba(244,63,94,.16); color:#fecdd3; box-shadow:0 0 0 4px rgba(244,63,94,.10); }
+      .pbd-dot.completed { border-color:#22c55e; background:rgba(34,197,94,.18); color:#bbf7d0; }
+      .pbd-dot:not(:disabled) { cursor:pointer; }
+      .pbd-dot:not(:disabled):hover { filter:brightness(1.15); }
+      .pbd-stepper-label { margin-top:8px; display:flex; flex-direction:column; gap:2px; }
+      .pbd-stepper-label strong { font-size:9px; font-weight:900; }
+      .pbd-stepper-label span { color:#8ea2ba; font-size:8px; font-weight:800; text-transform:uppercase; letter-spacing:.4px; }
+      .pbd-stepper-label em { margin-top:2px; color:#c4d2e1; font-size:8px; font-style:normal; }
+      .pbd-stepper-line { flex:1 1 auto; min-width:18px; height:2px; margin-top:19px; background:rgba(148,163,184,.22); }
+      .pbd-stepper-line.done { background:#22c55e; }
+      .pbd-step-editor { margin-top:18px; padding:14px; border:1px solid rgba(96,165,250,.22); border-radius:10px; background:rgba(59,130,246,.05); }
+      .pbd-step-editor-row { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
       .pbd-history { margin-top:12px; display:flex; flex-direction:column; }
       .pbd-history-row { padding:10px 0; display:grid; grid-template-columns:auto 1fr; gap:11px; border-top:1px solid rgba(148,163,184,.09); }
       .pbd-history-row:first-child { border-top:0; }
@@ -648,8 +765,8 @@ function Styles() {
       .pbd-history-copy small { margin-top:3px; display:block; color:#667d99; font-size:8px; }
       .pbd-history-copy p { margin:5px 0 0; color:#bbc8d7; font-size:9px; }
       .pbd-empty { padding:30px; color:#7388a3; text-align:center; font-size:10px; }
-      @media(max-width:850px){ .pbd-hero{align-items:stretch;flex-direction:column}.pbd-specs{grid-template-columns:repeat(2,minmax(0,1fr))}.pbd-timeline{grid-template-columns:1fr}.pbd-edit-grid{grid-template-columns:repeat(2,minmax(0,1fr))} }
-      @media(max-width:520px){ .pbd-edit-grid{grid-template-columns:1fr}.pbd-field.wide{grid-column:span 1} }
+      @media(max-width:850px){ .pbd-hero{align-items:stretch;flex-direction:column}.pbd-specs{grid-template-columns:repeat(2,minmax(0,1fr))}.pbd-edit-grid{grid-template-columns:repeat(2,minmax(0,1fr))} }
+      @media(max-width:520px){ .pbd-edit-grid{grid-template-columns:1fr}.pbd-field.wide{grid-column:span 1}.pbd-step-editor-row{grid-template-columns:1fr} }
     `}</style>
   );
 }

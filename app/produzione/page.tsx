@@ -404,6 +404,9 @@ export default function ProductionPage() {
           <Link href="/produzione/reparti" className="prod-btn secondary">
             Gestisci reparti
           </Link>
+          <Link href="/produzione/consegne" className="prod-btn secondary">
+            Consegne
+          </Link>
           <button
             type="button"
             className="prod-btn primary"

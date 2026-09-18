@@ -40,15 +40,18 @@ const CHECKBOX_COLUMNS = new Set([3, 4, 5, 6]); // Carena, Ragno/Longheroni, Cop
 // scaled from these so the whole selection - 5 boats or 40 - always lands on
 // a single page instead of spilling onto a second one.
 const BASE_FONT_SIZE = 9.5;
-const BASE_LINE_HEIGHT = 4.1;
-const BASE_PADDING = 2.5;
+const BASE_LINE_HEIGHT = 3.9;
+// Less whitespace padding above/below the text than before: every row was
+// spending almost as much height on empty margin as on the letters
+// themselves, so at high row counts the text auto-fit down to were smaller
+// than they needed to be. Trimming this frees that space for the font size.
+const BASE_PADDING = 1.5;
 const BASE_CHECKBOX_SIZE = 4.5;
 const BASE_CHECKBOX_RESERVE = 8; // room kept clear at the right of the value for the box
-// A very low floor: like Excel's "fit to one page" print option, the whole
-// selection must land on a single sheet even when that means shrinking a lot.
-// There is no separate fixed minimum row height - the row only ever needs to
-// be as tall as its own text line plus the tick box, both scaled together.
-const MIN_SCALE = 0.22;
+// Like Excel's "fit to one page" print option, the whole selection must land
+// on a single sheet even when that means shrinking a lot - but not below a
+// size a person can still actually read and tick with a pen.
+const MIN_SCALE = 0.3;
 const MAX_SCALE = 1.6; // ceiling so a handful of rows don't blow up into giant text
 
 export function buildProductionPdf(rows: ProductionPdfRow[], logo: string, meta: ProductionPdfMeta) {

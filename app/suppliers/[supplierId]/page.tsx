@@ -4,6 +4,7 @@ import React, { use, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import jsPDF from "jspdf";
 import { supabase } from "../../../lib/supabaseClient";
+import { fetchCompanyLogo, drawCompanyLogoTopRight } from "../../../lib/pdfLogo";
 
 type Item = {
   id: string;
@@ -119,6 +120,12 @@ export default function SupplierDetail({
   const [kitSaving, setKitSaving] = useState(false);
   const [kitMessage, setKitMessage] = useState("");
   const [kitError, setKitError] = useState("");
+
+  const [companyLogo, setCompanyLogo] = useState("");
+
+  useEffect(() => {
+    fetchCompanyLogo().then(setCompanyLogo);
+  }, []);
 
   /*
     PERMESSI ECONOMICI
@@ -601,6 +608,8 @@ export default function SupplierDetail({
     title: string,
     subtitle: string
   ) {
+    drawCompanyLogoTopRight(doc, companyLogo);
+
     doc.setFont("helvetica", "bold");
     doc.setFontSize(18);
 

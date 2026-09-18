@@ -5,6 +5,7 @@ import { use, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import jsPDF from "jspdf";
 import { supabase } from "../../../../lib/supabaseClient";
+import { fetchCompanyLogo, drawCompanyLogoTopRight } from "../../../../lib/pdfLogo";
 
 type Department = {
   id: string;
@@ -433,7 +434,7 @@ export default function ProductionDepartmentPage({
     await loadData();
   }
 
-  function generatePdf() {
+  async function generatePdf() {
     if (!department) return;
 
     const pdfRows = [...rows].sort((a, b) => a.boat.progressive_no - b.boat.progressive_no);
@@ -448,6 +449,9 @@ export default function ProductionDepartmentPage({
       unit: "mm",
       format: "a4",
     });
+
+    const companyLogo = await fetchCompanyLogo();
+    drawCompanyLogoTopRight(doc, companyLogo, { maxWidth: 34, maxHeight: 16 });
 
     const operator =
       localStorage.getItem("magazzino_display_name") ||

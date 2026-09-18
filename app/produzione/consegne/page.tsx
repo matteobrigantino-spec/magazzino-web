@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import jsPDF from "jspdf";
 import { supabase } from "../../../lib/supabaseClient";
+import { fetchCompanyLogo, drawCompanyLogoTopRight } from "../../../lib/pdfLogo";
 
 type Boat = {
   id: string;
@@ -358,7 +359,7 @@ export default function ProductionDeliveriesPage() {
     return y + 8;
   }
 
-  function generateTripPdf(delivery: Delivery) {
+  async function generateTripPdf(delivery: Delivery) {
     const rows = tripRows(delivery);
     if (rows.length === 0) {
       setErrorMessage("Questo viaggio non ha battelli da stampare.");
@@ -366,6 +367,8 @@ export default function ProductionDeliveriesPage() {
     }
 
     const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+    const companyLogo = await fetchCompanyLogo();
+    drawCompanyLogoTopRight(doc, companyLogo, { maxWidth: 28, maxHeight: 13 });
     doc.setFont("helvetica", "bold");
     doc.setFontSize(13);
     doc.text("PROGRAMMA DI CONSEGNA", 12, 16);
@@ -377,13 +380,15 @@ export default function ProductionDeliveriesPage() {
     doc.save(`Consegna_${safeDate}${safeTitle ? "_" + safeTitle : ""}.pdf`);
   }
 
-  function generateMonthPdf() {
+  async function generateMonthPdf() {
     if (deliveries.length === 0) {
       setErrorMessage("Non ci sono viaggi da stampare in questo mese.");
       return;
     }
 
     const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+    const companyLogo = await fetchCompanyLogo();
+    drawCompanyLogoTopRight(doc, companyLogo, { maxWidth: 28, maxHeight: 13 });
     doc.setFont("helvetica", "bold");
     doc.setFontSize(13);
 

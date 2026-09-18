@@ -12,6 +12,7 @@ import { useRouter } from "next/navigation";
 import jsPDF from "jspdf";
 
 import { supabase } from "../../../../lib/supabaseClient";
+import { fetchCompanyLogo, drawCompanyLogoTopRight } from "../../../../lib/pdfLogo";
 
 type UpholsteryKit = {
   id: string;
@@ -680,7 +681,7 @@ export default function UpholsteryWarehousePage({
     await loadData();
   }
 
-  function generateKitsPdf(
+  async function generateKitsPdf(
     includePrices: boolean
   ) {
     if (
@@ -703,6 +704,9 @@ export default function UpholsteryWarehousePage({
         format: "a4",
       });
 
+    const companyLogo =
+      await fetchCompanyLogo();
+
     const pageWidth =
       doc.internal.pageSize.getWidth();
 
@@ -715,6 +719,12 @@ export default function UpholsteryWarehousePage({
     let y = 13;
 
     function drawHeader() {
+      drawCompanyLogoTopRight(
+        doc,
+        companyLogo,
+        { maxWidth: 26, maxHeight: 12 }
+      );
+
       doc.setFont(
         "helvetica",
         "bold"

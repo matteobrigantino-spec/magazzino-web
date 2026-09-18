@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../lib/supabaseClient";
 import { jsPDF } from "jspdf";
+import { fetchCompanyLogo, drawCompanyLogoTopRight } from "../../lib/pdfLogo";
 
 type MovementRow = {
   date: string;
@@ -633,7 +634,7 @@ export default function MovementsPage() {
     PDF CODICI INESISTENTI
     REPORT SEPARATO
   */
-  function createMissingCodesPdf(
+  async function createMissingCodesPdf(
     missing: MissingRow[]
   ) {
     if (
@@ -644,6 +645,14 @@ export default function MovementsPage() {
 
     const pdf =
       new jsPDF();
+
+    const companyLogo =
+      await fetchCompanyLogo();
+
+    drawCompanyLogoTopRight(
+      pdf,
+      companyLogo
+    );
 
     pdf.setFontSize(18);
 
@@ -757,7 +766,7 @@ export default function MovementsPage() {
   /*
     PDF SCORTE BASSE
   */
-  function createLowStockPdf(
+  async function createLowStockPdf(
     items: Array<
       LowStockItem & {
         supplier_name: string;
@@ -775,6 +784,14 @@ export default function MovementsPage() {
         orientation:
           "landscape",
       });
+
+    const companyLogo =
+      await fetchCompanyLogo();
+
+    drawCompanyLogoTopRight(
+      pdf,
+      companyLogo
+    );
 
     pdf.setFontSize(18);
 
@@ -1221,6 +1238,9 @@ export default function MovementsPage() {
         format: "a4",
       });
 
+    const companyLogo =
+      await fetchCompanyLogo();
+
     const pageWidth =
       pdf.internal.pageSize.getWidth();
 
@@ -1251,6 +1271,11 @@ export default function MovementsPage() {
     let y = 12;
 
     function drawPdfHeader() {
+      drawCompanyLogoTopRight(
+        pdf,
+        companyLogo
+      );
+
       pdf.setFont(
         "helvetica",
         "bold"

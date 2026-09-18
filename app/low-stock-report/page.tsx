@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { supabase } from "../../lib/supabaseClient";
 import { jsPDF } from "jspdf";
+import { fetchCompanyLogo, drawCompanyLogoTopRight } from "../../lib/pdfLogo";
 
 type LowStockItem = {
   id: string;
@@ -155,7 +156,7 @@ export default function LowStockReportPage() {
     };
   }, [items]);
 
-  function createPdf() {
+  async function createPdf() {
     if (filteredItems.length === 0) {
       alert("Non ci sono articoli da esportare.");
       return;
@@ -164,6 +165,9 @@ export default function LowStockReportPage() {
     const pdf = new jsPDF({
       orientation: "landscape",
     });
+
+    const companyLogo = await fetchCompanyLogo();
+    drawCompanyLogoTopRight(pdf, companyLogo);
 
     pdf.setFontSize(18);
     pdf.text("REPORT SCORTE MINIME", 14, 17);

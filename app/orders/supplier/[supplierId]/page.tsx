@@ -4,6 +4,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "../../../../lib/supabaseClient";
 import jsPDF from "jspdf";
+import { fetchCompanyLogo, drawCompanyLogoTopRight } from "../../../../lib/pdfLogo";
 
 type Supplier = {
   id: string;
@@ -475,7 +476,7 @@ export default function SupplierOrderPage() {
     - order_items rimangono corretti
     - on_order rimane corretto
   */
-  function createOrderPdf(
+  async function createOrderPdf(
     orderId: string,
     orderLines: OrderLine[]
   ) {
@@ -488,6 +489,9 @@ export default function SupplierOrderPage() {
       unit: "mm",
       format: "a4",
     });
+
+    const companyLogo = await fetchCompanyLogo();
+    drawCompanyLogoTopRight(doc, companyLogo);
 
     const pageWidth =
       doc.internal.pageSize.getWidth();
@@ -1033,7 +1037,7 @@ export default function SupplierOrderPage() {
     */
     try {
       const doc =
-        createOrderPdf(
+        await createOrderPdf(
           orderId,
           lines
         );

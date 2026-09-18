@@ -9,6 +9,7 @@ import {
 
 import { jsPDF } from "jspdf";
 import { supabase } from "../../lib/supabaseClient";
+import { fetchCompanyLogo, drawCompanyLogoTopRight } from "../../lib/pdfLogo";
 
 type MissingRow = {
   id: string;
@@ -376,7 +377,7 @@ export default function CodiciDaInserirePage() {
   /*
     GENERA PDF
   */
-  function generatePdf() {
+  async function generatePdf() {
     if (
       groupedCodes.length ===
       0
@@ -399,6 +400,14 @@ export default function CodiciDaInserirePage() {
         format:
           "a4",
       });
+
+    const companyLogo =
+      await fetchCompanyLogo();
+
+    drawCompanyLogoTopRight(
+      pdf,
+      companyLogo
+    );
 
     const pageWidth =
       pdf.internal.pageSize.getWidth();

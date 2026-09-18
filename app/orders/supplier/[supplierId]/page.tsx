@@ -666,12 +666,22 @@ export default function SupplierOrderPage() {
           78
         );
 
-      const variantTexts = line.variants.map(
-        (variant) =>
-          `• ${variant.color} / ${variant.details_logos} / ${variant.stitching} / ${variant.quilting}` +
-          (variant.note ? ` — ${variant.note}` : "") +
-          ` — ${variant.qty} pz`
-      );
+      const variantTexts = line.variants.map((variant) => {
+        const parts: string[] = [];
+        if (variant.color) parts.push(`Colore: ${variant.color}`);
+        if (variant.details_logos)
+          parts.push(`Dettagli: ${variant.details_logos}`);
+        if (variant.stitching)
+          parts.push(`Cucitura: ${variant.stitching}`);
+        if (variant.quilting)
+          parts.push(`Trapuntatura: ${variant.quilting}`);
+
+        return (
+          `• ${parts.join("  |  ")}` +
+          (variant.note ? `  |  Nota: ${variant.note}` : "") +
+          `  —  ${variant.qty} pz`
+        );
+      });
 
       const variantLinesWrapped = variantTexts.flatMap((text) =>
         doc.splitTextToSize(text, 78)
@@ -681,7 +691,7 @@ export default function SupplierOrderPage() {
         Math.max(
           6,
           descriptionLines.length * 4 +
-            variantLinesWrapped.length * 3.3
+            variantLinesWrapped.length * 4.2
         );
 
       /*
@@ -732,12 +742,15 @@ export default function SupplierOrderPage() {
       );
 
       if (variantLinesWrapped.length > 0) {
-        doc.setFontSize(6.6);
+        doc.setFontSize(7.2);
+        doc.setTextColor(70, 70, 70);
         doc.text(
           variantLinesWrapped,
           columns.description,
-          y + descriptionLines.length * 4 + 2
+          y + descriptionLines.length * 4 + 3,
+          { lineHeightFactor: 1.5 }
         );
+        doc.setTextColor(0, 0, 0);
         doc.setFontSize(8);
       }
 

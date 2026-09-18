@@ -42,10 +42,13 @@ const CHECKBOX_COLUMNS = new Set([3, 4, 5, 6]); // Carena, Ragno/Longheroni, Cop
 const BASE_FONT_SIZE = 9.5;
 const BASE_LINE_HEIGHT = 4.1;
 const BASE_PADDING = 2.5;
-const BASE_MIN_ROW_HEIGHT = 16;
 const BASE_CHECKBOX_SIZE = 4.5;
 const BASE_CHECKBOX_RESERVE = 8; // room kept clear at the right of the value for the box
-const MIN_SCALE = 0.55; // floor so text/checkboxes never shrink past being usable on paper
+// A very low floor: like Excel's "fit to one page" print option, the whole
+// selection must land on a single sheet even when that means shrinking a lot.
+// There is no separate fixed minimum row height - the row only ever needs to
+// be as tall as its own text line plus the tick box, both scaled together.
+const MIN_SCALE = 0.22;
 const MAX_SCALE = 1.6; // ceiling so a handful of rows don't blow up into giant text
 
 export function buildProductionPdf(rows: ProductionPdfRow[], logo: string, meta: ProductionPdfMeta) {
@@ -84,8 +87,8 @@ export function buildProductionPdf(rows: ProductionPdfRow[], logo: string, meta:
   function measureTotalHeight(scale: number) {
     const pad = BASE_PADDING * scale;
     const lh = BASE_LINE_HEIGHT * scale;
-    const minH = BASE_MIN_ROW_HEIGHT * scale;
     const reserve = BASE_CHECKBOX_RESERVE * scale;
+    const checkboxFloor = BASE_CHECKBOX_SIZE * scale + 2 * scale;
     doc.setFontSize(BASE_FONT_SIZE * scale);
     let total = 0;
     rows.forEach((row) => {
@@ -99,7 +102,7 @@ export function buildProductionPdf(rows: ProductionPdfRow[], logo: string, meta:
         const cellLines = doc.splitTextToSize(text || "-", widths[index] - pad * 2 - res);
         maxLines = Math.max(maxLines, cellLines.length);
       });
-      total += Math.max(minH, maxLines * lh + pad * 2);
+      total += Math.max(checkboxFloor, maxLines * lh + pad * 2);
     });
     return total;
   }
@@ -122,8 +125,8 @@ export function buildProductionPdf(rows: ProductionPdfRow[], logo: string, meta:
   const fontSize = BASE_FONT_SIZE * scale;
   const lineHeight = BASE_LINE_HEIGHT * scale;
   const padding = BASE_PADDING * scale;
-  const minRowHeight = BASE_MIN_ROW_HEIGHT * scale;
   const CHECKBOX_SIZE = BASE_CHECKBOX_SIZE * scale;
+  const minRowHeight = CHECKBOX_SIZE + 2 * scale; // the row must at least fit its own tick box
   const CHECKBOX_RESERVE = BASE_CHECKBOX_RESERVE * scale;
   const baselineOffset = 3.2 * scale;
   const checkboxGap = 2 * scale;

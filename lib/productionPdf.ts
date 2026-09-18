@@ -35,8 +35,18 @@ export function selectProductionRows<T>(rows: T[], from: string, to: string) {
 
 // Columns where the crew ticks an "X" by hand once that part is physically done.
 const CHECKBOX_COLUMNS = new Set([3, 4, 5, 6]); // Carena, Ragno/Longheroni, Coperta, Accessori
-const CHECKBOX_SIZE = 4.5;
-const CHECKBOX_RESERVE = 8; // room kept clear at the right of the column for the box
+
+// "Comfortable" sizes used when few boats are selected. Everything below is
+// scaled from these so the whole selection - 5 boats or 40 - always lands on
+// a single page instead of spilling onto a second one.
+const BASE_FONT_SIZE = 9.5;
+const BASE_LINE_HEIGHT = 4.1;
+const BASE_PADDING = 2.5;
+const BASE_MIN_ROW_HEIGHT = 16;
+const BASE_CHECKBOX_SIZE = 4.5;
+const BASE_CHECKBOX_RESERVE = 8; // room kept clear at the right of the value for the box
+const MIN_SCALE = 0.55; // floor so text/checkboxes never shrink past being usable on paper
+const MAX_SCALE = 1.6; // ceiling so a handful of rows don't blow up into giant text
 
 export function buildProductionPdf(rows: ProductionPdfRow[], logo: string, meta: ProductionPdfMeta) {
   if (!rows.length) throw new Error("Nessuna riga selezionata.");
@@ -55,11 +65,7 @@ export function buildProductionPdf(rows: ProductionPdfRow[], logo: string, meta:
   const headings = ["Prog.", "N° ordine", "Modello", "Carena", "Ragno /\nLongheroni", "Coperta", "Accessori", "Note"];
   const headerY = 64;
   const bodyStart = 76;
-  const bottom = 192;
-  const fontSize = 9.5;
-  const lineHeight = 4.1;
-  const padding = 2.5;
-  const minRowHeight = 16;
+  const bottom = 194;
   const image = doc.getImageProperties(logo);
 
   // Logo big and centered, with the title and the three metadata lines stacked underneath.
@@ -68,6 +74,61 @@ export function buildProductionPdf(rows: ProductionPdfRow[], logo: string, meta:
   const logoScale = Math.min(logoMaxWidth / image.width, logoMaxHeight / image.height);
   const logoWidth = image.width * logoScale;
   const logoHeight = image.height * logoScale;
+
+  // --- Auto-fit: find the largest scale (within bounds) at which every
+  // selected boat still fits between bodyStart and bottom. Measuring is done
+  // with the real column widths/wrapping rules, then the winning scale drives
+  // font size, row height, padding and the checkbox itself.
+  const availableHeight = bottom - bodyStart;
+
+  function measureTotalHeight(scale: number) {
+    const pad = BASE_PADDING * scale;
+    const lh = BASE_LINE_HEIGHT * scale;
+    const minH = BASE_MIN_ROW_HEIGHT * scale;
+    const reserve = BASE_CHECKBOX_RESERVE * scale;
+    doc.setFontSize(BASE_FONT_SIZE * scale);
+    let total = 0;
+    rows.forEach((row) => {
+      const values = [row.progressive, row.order, row.model, row.hull,
+        row.stringers, row.deck, row.accessories, row.note];
+      let maxLines = 1;
+      values.forEach((value, index) => {
+        doc.setFont("helvetica", index === 1 ? "bold" : "normal");
+        const text = String(value ?? "").trim().replace(/\r\n?/g, "\n").replace(/[‐-―]/g, "-");
+        const res = CHECKBOX_COLUMNS.has(index) ? reserve : 0;
+        const cellLines = doc.splitTextToSize(text || "-", widths[index] - pad * 2 - res);
+        maxLines = Math.max(maxLines, cellLines.length);
+      });
+      total += Math.max(minH, maxLines * lh + pad * 2);
+    });
+    return total;
+  }
+
+  let scale: number;
+  if (measureTotalHeight(MAX_SCALE) <= availableHeight) {
+    scale = MAX_SCALE; // few boats: use the comfortable ceiling size
+  } else if (measureTotalHeight(MIN_SCALE) > availableHeight) {
+    scale = MIN_SCALE; // unusually long list: smallest still-readable size
+  } else {
+    let lo = MIN_SCALE;
+    let hi = MAX_SCALE;
+    for (let i = 0; i < 18; i++) {
+      const mid = (lo + hi) / 2;
+      if (measureTotalHeight(mid) <= availableHeight) lo = mid; else hi = mid;
+    }
+    scale = lo;
+  }
+
+  const fontSize = BASE_FONT_SIZE * scale;
+  const lineHeight = BASE_LINE_HEIGHT * scale;
+  const padding = BASE_PADDING * scale;
+  const minRowHeight = BASE_MIN_ROW_HEIGHT * scale;
+  const CHECKBOX_SIZE = BASE_CHECKBOX_SIZE * scale;
+  const CHECKBOX_RESERVE = BASE_CHECKBOX_RESERVE * scale;
+  const baselineOffset = 3.2 * scale;
+  const checkboxGap = 2 * scale;
+  const checkboxRightMargin = 1.5 * scale;
+
   let y = bodyStart;
 
   function header() {
@@ -106,7 +167,7 @@ export function buildProductionPdf(rows: ProductionPdfRow[], logo: string, meta:
     headings.forEach((label, index) => {
       const labels = label.split("\n");
       const firstBaseline = headerY + (labels.length === 1 ? 7 : 5.2);
-      labels.forEach((line, lineIndex) => doc.text(line, x + padding, firstBaseline + lineIndex * 3.5));
+      labels.forEach((line, lineIndex) => doc.text(line, x + BASE_PADDING, firstBaseline + lineIndex * 3.5));
       x += widths[index];
     });
 
@@ -146,7 +207,8 @@ export function buildProductionPdf(rows: ProductionPdfRow[], logo: string, meta:
       header();
     }
 
-    // Very long notes continue across pages without being cut off.
+    // Very long notes continue across pages without being cut off. In the
+    // normal case (auto-fit found a scale that fits) this never triggers.
     let offset = 0;
     while (offset < maxLines) {
       const available = Math.floor((bottom - y - padding * 2) / lineHeight);
@@ -166,7 +228,7 @@ export function buildProductionPdf(rows: ProductionPdfRow[], logo: string, meta:
         if (offset > 0 && index < 2 && !chunk.length) chunk = cell.slice(0, 1);
         doc.setFont("helvetica", index === 1 ? "bold" : "normal");
         chunk.forEach((line, lineIndex) =>
-          doc.text(line, x + padding, y + padding + 3.2 + lineIndex * lineHeight)
+          doc.text(line, x + padding, y + padding + baselineOffset + lineIndex * lineHeight)
         );
         // The crew ticks this box by hand once that part is physically done.
         // It is pinned right next to its OWN value ("Bianco [ ]" reads as one
@@ -178,8 +240,8 @@ export function buildProductionPdf(rows: ProductionPdfRow[], logo: string, meta:
           const firstLine = chunk[0] || "-";
           doc.setFont("helvetica", "normal");
           const textWidth = doc.getTextWidth(firstLine);
-          const maxBoxX = x + widths[index] - CHECKBOX_SIZE - 1.5;
-          const boxX = Math.min(x + padding + textWidth + 2, maxBoxX);
+          const maxBoxX = x + widths[index] - CHECKBOX_SIZE - checkboxRightMargin;
+          const boxX = Math.min(x + padding + textWidth + checkboxGap, maxBoxX);
           const boxY = y + (height - CHECKBOX_SIZE) / 2;
           doc.setDrawColor(90, 100, 115);
           doc.setLineWidth(0.35);

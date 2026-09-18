@@ -35,8 +35,8 @@ export function selectProductionRows<T>(rows: T[], from: string, to: string) {
 
 // Columns where the crew ticks an "X" by hand once that part is physically done.
 const CHECKBOX_COLUMNS = new Set([3, 4, 5, 6]); // Carena, Ragno/Longheroni, Coperta, Accessori
-const CHECKBOX_SIZE = 3.2;
-const CHECKBOX_RESERVE = 6; // room kept clear at the right of the column for the box
+const CHECKBOX_SIZE = 4.5;
+const CHECKBOX_RESERVE = 8; // room kept clear at the right of the column for the box
 
 export function buildProductionPdf(rows: ProductionPdfRow[], logo: string, meta: ProductionPdfMeta) {
   if (!rows.length) throw new Error("Nessuna riga selezionata.");
@@ -49,8 +49,9 @@ export function buildProductionPdf(rows: ProductionPdfRow[], logo: string, meta:
   const margin = 14;
   const tableWidth = pageWidth - margin * 2;
   // Reparto column removed: the freed width goes to the work columns (room for the
-  // checkbox) and to Note, which is now short since it no longer repeats the department note.
-  const widths = [12, 23, 27, 27, 29, 27, 32, tableWidth - 177];
+  // checkbox, made bigger and clearly boxed-in below) and to Note, which is now
+  // short since it no longer repeats the department note.
+  const widths = [12, 23, 27, 29, 31, 29, 34, tableWidth - 185];
   const headings = ["Prog.", "N° ordine", "Modello", "Carena", "Ragno /\nLongheroni", "Coperta", "Accessori", "Note"];
   const headerY = 64;
   const bodyStart = 76;
@@ -58,7 +59,7 @@ export function buildProductionPdf(rows: ProductionPdfRow[], logo: string, meta:
   const fontSize = 9.5;
   const lineHeight = 4.1;
   const padding = 2.5;
-  const minRowHeight = 14;
+  const minRowHeight = 16;
   const image = doc.getImageProperties(logo);
 
   // Logo big and centered, with the title and the three metadata lines stacked underneath.
@@ -108,6 +109,21 @@ export function buildProductionPdf(rows: ProductionPdfRow[], logo: string, meta:
       labels.forEach((line, lineIndex) => doc.text(line, x + padding, firstBaseline + lineIndex * 3.5));
       x += widths[index];
     });
+
+    // A visible grid: vertical lines between every column, so it is unmistakable
+    // which text (and which checkbox) belongs to Carena vs Ragno/Longheroni vs
+    // Coperta vs Accessori, even when the crew is skimming the page quickly.
+    doc.setDrawColor(190, 197, 207);
+    doc.setLineWidth(0.25);
+    let gridX = margin;
+    widths.forEach((w, index) => {
+      gridX += w;
+      if (index < widths.length - 1) doc.line(gridX, headerY, gridX, bottom);
+    });
+    doc.setDrawColor(150, 159, 172);
+    doc.rect(margin, headerY, tableWidth, bottom - headerY);
+    doc.setLineWidth(0.2);
+
     y = bodyStart;
   }
 
@@ -153,17 +169,16 @@ export function buildProductionPdf(rows: ProductionPdfRow[], logo: string, meta:
           doc.text(line, x + padding, y + padding + 3.2 + lineIndex * lineHeight)
         );
         // The crew ticks this box by hand once that part is physically done.
-        // Centered on the row's own height so it never crowds the text beside it.
+        // It sits tucked against its own column's grid line (not floating in
+        // open space) so it visibly belongs to Carena / Ragno-Longheroni /
+        // Coperta / Accessori and never reads as belonging to the next column.
         if (offset === 0 && CHECKBOX_COLUMNS.has(index)) {
-          doc.setDrawColor(120, 130, 145);
-          doc.roundedRect(
-            x + widths[index] - CHECKBOX_SIZE - 2.5,
-            y + (height - CHECKBOX_SIZE) / 2,
-            CHECKBOX_SIZE,
-            CHECKBOX_SIZE,
-            0.6,
-            0.6
-          );
+          const boxX = x + widths[index] - CHECKBOX_SIZE - 2.2;
+          const boxY = y + (height - CHECKBOX_SIZE) / 2;
+          doc.setDrawColor(90, 100, 115);
+          doc.setLineWidth(0.35);
+          doc.roundedRect(boxX, boxY, CHECKBOX_SIZE, CHECKBOX_SIZE, 0.7, 0.7);
+          doc.setLineWidth(0.2);
         }
         x += widths[index];
       });

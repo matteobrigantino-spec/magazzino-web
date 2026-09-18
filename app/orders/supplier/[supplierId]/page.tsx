@@ -655,22 +655,25 @@ export default function SupplierOrderPage() {
     }
 
     /*
-      SCHEDE COLORE/DETTAGLI (kit tappezzeria)
+      DETTAGLI COLORE (kit tappezzeria)
 
-      Chi prepara il kit in laboratorio deve capire a colpo d'occhio
-      quale colore/dettaglio/cucitura/trapuntatura usare, senza
-      dover decifrare una riga fitta di barre. Ogni variante viene
-      quindi stampata come una scheda separata, con etichetta e
-      valore ognuno sulla propria riga.
+      Chi prepara il kit deve capire a colpo d'occhio quale
+      colore/dettaglio/cucitura/trapuntatura usare, senza dover
+      decifrare una riga fitta di barre - ma senza nemmeno un
+      riquadro pesante che appesantisce il PDF. Una sottile riga
+      verticale a sinistra basta a segnalare "questo è un dettaglio
+      della riga sopra"; le etichette restano in grigio discreto,
+      i valori in nero.
     */
     const VARIANT_CARD_WIDTH = 80;
-    const VARIANT_CARD_PADDING = 3;
-    const VARIANT_LABEL_WIDTH = 32;
+    const VARIANT_INDENT = 4;
+    const VARIANT_LABEL_WIDTH = 30;
     const VARIANT_FONT_SIZE = 8;
-    const VARIANT_LINE_HEIGHT_FACTOR = 1.3;
+    const VARIANT_LINE_HEIGHT_FACTOR = 1.25;
     const VARIANT_LINE_HEIGHT =
       VARIANT_FONT_SIZE * 0.352778 * VARIANT_LINE_HEIGHT_FACTOR;
-    const VARIANT_HEADER_HEIGHT = 7;
+    const VARIANT_HEADER_BLOCK = 6.5;
+    const VARIANT_BOTTOM_PAD = 1.5;
     const VARIANT_CARD_GAP = 2.5;
 
     function buildVariantFields(variant: LineVariant) {
@@ -709,9 +712,7 @@ export default function SupplierOrderPage() {
       doc.setFontSize(VARIANT_FONT_SIZE);
 
       const valueMaxWidth =
-        VARIANT_CARD_WIDTH -
-        VARIANT_CARD_PADDING * 2 -
-        VARIANT_LABEL_WIDTH;
+        VARIANT_CARD_WIDTH - VARIANT_INDENT - VARIANT_LABEL_WIDTH;
 
       const fields = buildVariantFields(variant).map((field) => ({
         label: field.label,
@@ -724,9 +725,9 @@ export default function SupplierOrderPage() {
       );
 
       const height =
-        VARIANT_CARD_PADDING * 2 +
-        VARIANT_HEADER_HEIGHT +
-        fieldLineCount * VARIANT_LINE_HEIGHT;
+        VARIANT_HEADER_BLOCK +
+        fieldLineCount * VARIANT_LINE_HEIGHT +
+        VARIANT_BOTTOM_PAD;
 
       return { fields, height };
     }
@@ -742,62 +743,46 @@ export default function SupplierOrderPage() {
       index: number,
       total: number
     ) {
-      doc.setDrawColor(200, 208, 220);
-      doc.setFillColor(247, 249, 252);
-      doc.roundedRect(
-        x,
-        yTop,
-        VARIANT_CARD_WIDTH,
-        layout.height,
-        1.2,
-        1.2,
-        "FD"
-      );
+      doc.setDrawColor(210, 215, 224);
+      doc.setLineWidth(0.4);
+      doc.line(x, yTop + 0.5, x, yTop + layout.height - 0.5);
+      doc.setLineWidth(0.2);
 
-      doc.setFillColor(37, 99, 235);
-      doc.rect(x, yTop, 1.4, layout.height, "F");
+      const contentX = x + VARIANT_INDENT;
+      const headerBaseline = yTop + 3;
 
-      const headerBaseline = yTop + VARIANT_CARD_PADDING + 3;
-
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(7.5);
-      doc.setTextColor(37, 99, 235);
+      doc.setFont("helvetica", "italic");
+      doc.setFontSize(7.2);
+      doc.setTextColor(140, 146, 156);
 
       doc.text(
         total > 1
-          ? `COLORE ${index + 1} DI ${total}`
-          : "DETTAGLI KIT",
-        x + VARIANT_CARD_PADDING + 2,
+          ? `Colore ${index + 1} di ${total}`
+          : "Dettagli kit",
+        contentX,
         headerBaseline
       );
 
       doc.text(
-        `${variant.qty} PZ`,
-        x + VARIANT_CARD_WIDTH - VARIANT_CARD_PADDING,
+        `${variant.qty} pz`,
+        x + VARIANT_CARD_WIDTH,
         headerBaseline,
         { align: "right" }
       );
 
-      doc.setDrawColor(215, 220, 230);
-      doc.line(
-        x + VARIANT_CARD_PADDING,
-        headerBaseline + 2,
-        x + VARIANT_CARD_WIDTH - VARIANT_CARD_PADDING,
-        headerBaseline + 2
-      );
-
-      let cy = yTop + VARIANT_CARD_PADDING + VARIANT_HEADER_HEIGHT + 1;
-      const labelX = x + VARIANT_CARD_PADDING + 2;
+      let cy = yTop + VARIANT_HEADER_BLOCK;
+      const labelX = contentX;
       const valueX = labelX + VARIANT_LABEL_WIDTH;
 
       layout.fields.forEach((field) => {
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(VARIANT_FONT_SIZE);
-        doc.setTextColor(30, 41, 59);
-        doc.text(`${field.label}:`, labelX, cy);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(7.5);
+        doc.setTextColor(115, 122, 132);
+        doc.text(`${field.label}`, labelX, cy);
 
         doc.setFont("helvetica", "normal");
-        doc.setTextColor(15, 23, 42);
+        doc.setFontSize(VARIANT_FONT_SIZE);
+        doc.setTextColor(30, 32, 38);
         doc.text(field.lines, valueX, cy, {
           lineHeightFactor: VARIANT_LINE_HEIGHT_FACTOR,
         });

@@ -6,6 +6,7 @@ import { supabase } from "../../../lib/supabaseClient";
 
 type OrderRow = {
   id: string;
+  order_number: number | null;
   supplier_id: string;
   status: string;
   order_date: string | null;
@@ -175,7 +176,7 @@ export default function OrderDetailPage() {
       await supabase
         .from("orders")
         .select(
-          "id,supplier_id,status,order_date,created_at,pdf_url,pdf_path"
+          "id,order_number,supplier_id,status,order_date,created_at,pdf_url,pdf_path"
         )
         .eq("id", orderId)
         .single();
@@ -924,7 +925,9 @@ export default function OrderDetailPage() {
                 fontWeight: 850,
               }}
             >
-              Dettaglio ordine
+              {order.order_number
+                ? `Ordine N. ${order.order_number}`
+                : "Dettaglio ordine"}
             </h1>
 
             <StatusBadge

@@ -11,6 +11,7 @@ type Supplier = {
 
 type Order = {
   id: string;
+  order_number: number | null;
   supplier_id: string;
   status: string;
   order_date: string | null;
@@ -113,7 +114,7 @@ export default function OrdersPage() {
     const { data: ordersData, error: ordersError } = await supabase
       .from("orders")
       .select(
-        "id,supplier_id,status,order_date,created_at,pdf_url,pdf_path"
+        "id,order_number,supplier_id,status,order_date,created_at,pdf_url,pdf_path"
       )
       .order("created_at", { ascending: false });
 
@@ -633,6 +634,22 @@ function OrderCard({
           >
             {order.supplier_name}
           </div>
+
+          {order.order_number && (
+            <span
+              style={{
+                padding: "3px 9px",
+                borderRadius: 20,
+                border: "1px solid var(--border-color)",
+                background: "var(--input-bg)",
+                fontSize: 11,
+                fontWeight: 800,
+                opacity: 0.75,
+              }}
+            >
+              N. {order.order_number}
+            </span>
+          )}
 
           <StatusBadge status={order.status} />
         </div>

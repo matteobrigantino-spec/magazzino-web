@@ -478,7 +478,8 @@ export default function SupplierOrderPage() {
   */
   async function createOrderPdf(
     orderId: string,
-    orderLines: OrderLine[]
+    orderLines: OrderLine[],
+    orderNumber: number | null
   ) {
     if (!supplier) {
       throw new Error("Fornitore non disponibile");
@@ -511,7 +512,9 @@ export default function SupplierOrderPage() {
     doc.setFontSize(18);
 
     doc.text(
-      "ORDINE FORNITORE",
+      orderNumber
+        ? `ORDINE FORNITORE N. ${orderNumber}`
+        : "ORDINE FORNITORE",
       marginLeft,
       y
     );
@@ -543,13 +546,17 @@ export default function SupplierOrderPage() {
 
     y += 5;
 
-    doc.text(
-      `ID ordine: ${orderId}`,
-      marginLeft,
-      y
-    );
+    if (!orderNumber) {
+      doc.text(
+        `ID ordine: ${orderId}`,
+        marginLeft,
+        y
+      );
 
-    y += 8;
+      y += 5;
+    }
+
+    y += 3;
 
     doc.setDrawColor(180);
 
@@ -1048,11 +1055,27 @@ export default function SupplierOrderPage() {
       Anche se il PDF fallisce:
       NON dobbiamo ricreare l'ordine.
     */
+    let orderNumber: number | null = null;
+
+    try {
+      const { data: orderRow } = await supabase
+        .from("orders")
+        .select("order_number")
+        .eq("id", orderId)
+        .maybeSingle();
+
+      orderNumber =
+        orderRow?.order_number ?? null;
+    } catch {
+      orderNumber = null;
+    }
+
     try {
       const doc =
         await createOrderPdf(
           orderId,
-          lines
+          lines,
+          orderNumber
         );
 
       const pdfBlob =

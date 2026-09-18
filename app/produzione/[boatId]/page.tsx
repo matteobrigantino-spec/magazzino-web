@@ -45,6 +45,14 @@ type History = {
   changed_at: string;
 };
 
+type ProductionOption = {
+  id: string;
+  option_type: "model" | "color";
+  name: string;
+  active: boolean;
+  sort_order: number;
+};
+
 const statusLabel: Record<string, string> = {
   queued: "Da iniziare",
   working: "In lavorazione",
@@ -83,8 +91,22 @@ export default function ProductionBoatDetailPage({
   const [departments, setDepartments] = useState<Department[]>([]);
   const [steps, setSteps] = useState<Step[]>([]);
   const [history, setHistory] = useState<History[]>([]);
+  const [productionOptions, setProductionOptions] = useState<ProductionOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
+
+  // Editing the boat's own details (order number, model, colors, accessories,
+  // note) from this page, instead of only being able to look at them.
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [formOrderNumber, setFormOrderNumber] = useState("");
+  const [formModelBoat, setFormModelBoat] = useState("");
+  const [formHull, setFormHull] = useState("");
+  const [formStringers, setFormStringers] = useState("");
+  const [formDeck, setFormDeck] = useState("");
+  const [formAccessories, setFormAccessories] = useState("");
+  const [formNote, setFormNote] = useState("");
 
   useEffect(() => {
     loadData();
@@ -93,7 +115,7 @@ export default function ProductionBoatDetailPage({
   async function loadData() {
     setLoading(true);
 
-    const [boatRes, depRes, stepRes] = await Promise.all([
+    const [boatRes, depRes, stepRes, optionsRes] = await Promise.all([
       supabase
         .from("production_boats")
         .select("id,progressive_no,order_number,model_boat,hull,stringers,deck,accessories,note,status,created_at,completed_at")
@@ -107,6 +129,12 @@ export default function ProductionBoatDetailPage({
         .from("production_department_steps")
         .select("id,boat_id,department_id,status,current_note,entered_at,started_at,completed_at")
         .eq("boat_id", boatId),
+      supabase
+        .from("production_options")
+        .select("id,option_type,name,active,sort_order")
+        .eq("active", true)
+        .order("sort_order", { ascending: true })
+        .order("name", { ascending: true }),
     ]);
 
     if (boatRes.error || !boatRes.data) {
@@ -121,7 +149,7 @@ export default function ProductionBoatDetailPage({
       return;
     }
 
-    setBoat({
+    const cleanBoat: Boat = {
       id: String(boatRes.data.id),
       progressive_no: Number(boatRes.data.progressive_no || 0),
       order_number: String(boatRes.data.order_number || ""),
@@ -134,7 +162,16 @@ export default function ProductionBoatDetailPage({
       status: String(boatRes.data.status || ""),
       created_at: String(boatRes.data.created_at || ""),
       completed_at: boatRes.data.completed_at ? String(boatRes.data.completed_at) : null,
-    });
+    };
+
+    setBoat(cleanBoat);
+    setFormOrderNumber(cleanBoat.order_number);
+    setFormModelBoat(cleanBoat.model_boat);
+    setFormHull(cleanBoat.hull);
+    setFormStringers(cleanBoat.stringers);
+    setFormDeck(cleanBoat.deck);
+    setFormAccessories(cleanBoat.accessories);
+    setFormNote(cleanBoat.note || "");
 
     const cleanDeps = (depRes.data || []).map((row: any) => ({
       id: String(row.id),
@@ -155,6 +192,18 @@ export default function ProductionBoatDetailPage({
 
     setDepartments(cleanDeps);
     setSteps(cleanSteps);
+
+    if (!optionsRes.error) {
+      setProductionOptions(
+        (optionsRes.data || []).map((row: any) => ({
+          id: String(row.id),
+          option_type: String(row.option_type) as "model" | "color",
+          name: String(row.name || ""),
+          active: row.active !== false,
+          sort_order: Number(row.sort_order || 0),
+        }))
+      );
+    }
 
     const stepIds = cleanSteps.map((step: Step) => step.id);
 
@@ -202,7 +251,82 @@ export default function ProductionBoatDetailPage({
     [steps, depMap]
   );
 
+  const modelOptions = useMemo(
+    () => productionOptions.filter((option) => option.option_type === "model"),
+    [productionOptions]
+  );
+
+  const colorOptions = useMemo(
+    () => productionOptions.filter((option) => option.option_type === "color"),
+    [productionOptions]
+  );
+
+  // If the boat was saved with a model/color that is no longer in the active
+  // list (renamed or deactivated later), keep showing it as a selectable
+  // option so opening "Modifica" never silently blanks out real data.
+  function withCurrentValue(options: ProductionOption[], current: string) {
+    if (!current || options.some((option) => option.name === current)) return options;
+    return [...options, { id: `current-${current}`, option_type: "color" as const, name: current, active: true, sort_order: -1 }];
+  }
+
   const currentStep = sortedSteps.find((step) => step.status !== "completed");
+
+  function startEditing() {
+    if (!boat) return;
+    setFormOrderNumber(boat.order_number);
+    setFormModelBoat(boat.model_boat);
+    setFormHull(boat.hull);
+    setFormStringers(boat.stringers);
+    setFormDeck(boat.deck);
+    setFormAccessories(boat.accessories);
+    setFormNote(boat.note || "");
+    setSaveError("");
+    setEditing(true);
+  }
+
+  function cancelEditing() {
+    setEditing(false);
+    setSaveError("");
+  }
+
+  async function saveEdits() {
+    setSaveError("");
+
+    if (!formOrderNumber.trim() || !formModelBoat.trim()) {
+      setSaveError("Numero d'ordine e Modello battello sono obbligatori.");
+      return;
+    }
+
+    if (!formHull || !formStringers || !formDeck) {
+      setSaveError("Seleziona il colore di Carena, Ragno/Longheroni e Coperta.");
+      return;
+    }
+
+    setSaving(true);
+
+    const { error } = await supabase
+      .from("production_boats")
+      .update({
+        order_number: formOrderNumber.trim(),
+        model_boat: formModelBoat.trim(),
+        hull: formHull.trim(),
+        stringers: formStringers.trim(),
+        deck: formDeck.trim(),
+        accessories: formAccessories.trim(),
+        note: formNote.trim() || null,
+      })
+      .eq("id", boatId);
+
+    if (error) {
+      setSaveError("Errore salvataggio modifiche: " + error.message);
+      setSaving(false);
+      return;
+    }
+
+    setSaving(false);
+    setEditing(false);
+    await loadData();
+  }
 
   if (loading) {
     return (
@@ -248,20 +372,109 @@ export default function ProductionBoatDetailPage({
               {depMap.get(currentStep.department_id)?.name || "Reparto attuale"}
             </Link>
           )}
+          {!editing && (
+            <button type="button" className="pbd-edit-btn" onClick={startEditing}>
+              Modifica
+            </button>
+          )}
         </div>
       </section>
 
-      <section className="pbd-specs">
-        <Info label="Carena" value={boat.hull || "—"} />
-        <Info label="Ragno / Longheroni" value={boat.stringers || "—"} />
-        <Info label="Coperta" value={boat.deck || "—"} />
-        <Info label="Accessori" value={boat.accessories || "—"} />
-      </section>
+      {editing ? (
+        <section className="pbd-card">
+          <div className="pbd-head">
+            <div>
+              <div className="pbd-eyebrow">MODIFICA BATTELLO</div>
+              <h2>Aggiorna dati e note</h2>
+            </div>
+          </div>
 
-      <section className="pbd-card">
-        <div className="pbd-eyebrow">NOTE ORDINE</div>
-        <div className="pbd-note">{boat.note || "Nessuna nota inserita."}</div>
-      </section>
+          {saveError && <div className="pbd-form-error">{saveError}</div>}
+
+          <div className="pbd-edit-grid">
+            <EditField label="Numero d'ordine *">
+              <input
+                value={formOrderNumber}
+                onChange={(e) => setFormOrderNumber(e.target.value)}
+              />
+            </EditField>
+
+            <EditField label="Modello battello *">
+              <select value={formModelBoat} onChange={(e) => setFormModelBoat(e.target.value)}>
+                <option value="">Seleziona modello...</option>
+                {withCurrentValue(modelOptions, formModelBoat).map((option) => (
+                  <option key={option.id} value={option.name}>{option.name}</option>
+                ))}
+              </select>
+            </EditField>
+
+            <EditField label="Carena">
+              <select value={formHull} onChange={(e) => setFormHull(e.target.value)}>
+                <option value="">Seleziona colore...</option>
+                {withCurrentValue(colorOptions, formHull).map((option) => (
+                  <option key={option.id} value={option.name}>{option.name}</option>
+                ))}
+              </select>
+            </EditField>
+
+            <EditField label="Ragno / Longheroni">
+              <select value={formStringers} onChange={(e) => setFormStringers(e.target.value)}>
+                <option value="">Seleziona colore...</option>
+                {withCurrentValue(colorOptions, formStringers).map((option) => (
+                  <option key={option.id} value={option.name}>{option.name}</option>
+                ))}
+              </select>
+            </EditField>
+
+            <EditField label="Coperta">
+              <select value={formDeck} onChange={(e) => setFormDeck(e.target.value)}>
+                <option value="">Seleziona colore...</option>
+                {withCurrentValue(colorOptions, formDeck).map((option) => (
+                  <option key={option.id} value={option.name}>{option.name}</option>
+                ))}
+              </select>
+            </EditField>
+
+            <EditField label="Accessori">
+              <input
+                value={formAccessories}
+                onChange={(e) => setFormAccessories(e.target.value)}
+              />
+            </EditField>
+
+            <EditField label="Note" wide>
+              <textarea
+                value={formNote}
+                onChange={(e) => setFormNote(e.target.value)}
+                placeholder="Es. Gruppo consolle Selva"
+              />
+            </EditField>
+          </div>
+
+          <div className="pbd-form-actions">
+            <button type="button" className="pbd-back" onClick={cancelEditing} disabled={saving}>
+              Annulla
+            </button>
+            <button type="button" className="pbd-save-btn" onClick={saveEdits} disabled={saving}>
+              {saving ? "Salvataggio..." : "Salva modifiche"}
+            </button>
+          </div>
+        </section>
+      ) : (
+        <>
+          <section className="pbd-specs">
+            <Info label="Carena" value={boat.hull || "—"} />
+            <Info label="Ragno / Longheroni" value={boat.stringers || "—"} />
+            <Info label="Coperta" value={boat.deck || "—"} />
+            <Info label="Accessori" value={boat.accessories || "—"} />
+          </section>
+
+          <section className="pbd-card">
+            <div className="pbd-eyebrow">NOTE ORDINE</div>
+            <div className="pbd-note">{boat.note || "Nessuna nota inserita."}</div>
+          </section>
+        </>
+      )}
 
       <section className="pbd-card">
         <div className="pbd-head">
@@ -356,6 +569,23 @@ function Info({ label, value }: { label: string; value: string }) {
   );
 }
 
+function EditField({
+  label,
+  children,
+  wide = false,
+}: {
+  label: string;
+  children: React.ReactNode;
+  wide?: boolean;
+}) {
+  return (
+    <label className={`pbd-field ${wide ? "wide" : ""}`}>
+      <span>{label}</span>
+      {children}
+    </label>
+  );
+}
+
 function Styles() {
   return (
     <style jsx global>{`
@@ -366,9 +596,12 @@ function Styles() {
       .pbd-hero h1 { margin:5px 0 0; font-size:27px; font-weight:950; letter-spacing:-.6px; }
       .pbd-hero p { margin:6px 0 0; color:#91a4bc; font-size:10px; }
       .pbd-actions { display:flex; align-items:center; flex-wrap:wrap; gap:7px; }
-      .pbd-back,.pbd-current { min-height:38px; padding:0 12px; display:inline-flex; align-items:center; border-radius:8px; text-decoration:none; font-size:9px; font-weight:900; }
+      .pbd-back,.pbd-current,.pbd-edit-btn,.pbd-save-btn { min-height:38px; padding:0 12px; display:inline-flex; align-items:center; border-radius:8px; text-decoration:none; font-size:9px; font-weight:900; cursor:pointer; border:0; }
       .pbd-back { border:1px solid rgba(148,163,184,.22); background:rgba(255,255,255,.035); color:#e2e8f0; }
       .pbd-current { border:1px solid rgba(59,130,246,.30); background:rgba(59,130,246,.10); color:#93c5fd; }
+      .pbd-edit-btn { border:1px solid rgba(96,165,250,.32); background:rgba(59,130,246,.14); color:#bfdbfe; }
+      .pbd-save-btn { border:1px solid #2563eb; background:#2563eb; color:#fff; }
+      .pbd-save-btn:disabled,.pbd-back:disabled { opacity:.55; cursor:wait; }
       .pbd-error { margin-bottom:10px; padding:11px 13px; border:1px solid rgba(239,68,68,.28); border-radius:9px; background:rgba(239,68,68,.08); color:#fca5a5; font-size:10px; font-weight:800; }
       .pbd-specs { margin-top:11px; display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; }
       .pbd-specs > div { padding:13px; border:1px solid rgba(148,163,184,.14); border-radius:10px; background:#0b192a; }
@@ -377,6 +610,15 @@ function Styles() {
       .pbd-specs strong { margin-top:4px; font-size:12px; }
       .pbd-card { margin-top:11px; padding:16px; border:1px solid rgba(148,163,184,.15); border-radius:13px; background:#0b1828; }
       .pbd-note { margin-top:9px; padding:12px; border:1px solid rgba(96,165,250,.15); border-radius:9px; background:rgba(59,130,246,.04); color:#d9e6f5; font-size:11px; line-height:1.6; white-space:pre-wrap; }
+      .pbd-form-error { margin-top:10px; padding:10px 12px; border:1px solid rgba(239,68,68,.28); border-radius:9px; background:rgba(239,68,68,.08); color:#fca5a5; font-size:10px; font-weight:800; }
+      .pbd-edit-grid { margin-top:14px; display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }
+      .pbd-field { min-width:0; }
+      .pbd-field.wide { grid-column:span 2; }
+      .pbd-field > span { margin-bottom:5px; display:block; color:#8ea2ba; font-size:8px; font-weight:900; text-transform:uppercase; letter-spacing:.6px; }
+      .pbd-field input,.pbd-field textarea,.pbd-field select { width:100%; min-height:39px; box-sizing:border-box; padding:0 10px; border:1px solid rgba(148,163,184,.19); border-radius:8px; outline:none; background:#081524; color:#fff; font-size:11px; }
+      .pbd-field textarea { min-height:70px; padding:10px; resize:vertical; }
+      .pbd-field input:focus,.pbd-field textarea:focus,.pbd-field select:focus { border-color:rgba(96,165,250,.55); }
+      .pbd-form-actions { margin-top:14px; display:flex; justify-content:flex-end; gap:8px; }
       .pbd-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
       .pbd-head h2 { margin:4px 0 0; font-size:17px; }
       .pbd-head > span { min-width:29px; min-height:29px; display:grid; place-items:center; border:1px solid rgba(96,165,250,.23); border-radius:999px; color:#93c5fd; font-size:9px; font-weight:950; }
@@ -406,7 +648,8 @@ function Styles() {
       .pbd-history-copy small { margin-top:3px; display:block; color:#667d99; font-size:8px; }
       .pbd-history-copy p { margin:5px 0 0; color:#bbc8d7; font-size:9px; }
       .pbd-empty { padding:30px; color:#7388a3; text-align:center; font-size:10px; }
-      @media(max-width:850px){ .pbd-hero{align-items:stretch;flex-direction:column}.pbd-specs{grid-template-columns:repeat(2,minmax(0,1fr))}.pbd-timeline{grid-template-columns:1fr} }
+      @media(max-width:850px){ .pbd-hero{align-items:stretch;flex-direction:column}.pbd-specs{grid-template-columns:repeat(2,minmax(0,1fr))}.pbd-timeline{grid-template-columns:1fr}.pbd-edit-grid{grid-template-columns:repeat(2,minmax(0,1fr))} }
+      @media(max-width:520px){ .pbd-edit-grid{grid-template-columns:1fr}.pbd-field.wide{grid-column:span 1} }
     `}</style>
   );
 }

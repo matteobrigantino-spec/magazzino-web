@@ -617,7 +617,6 @@ export default function ProductionPage() {
             <div className="prod-pdf-operator">
               Operatore: <strong>{pdfOperator || "Matteo"}</strong>
             </div>
-            {pdfLogo && <img src={pdfLogo} alt="Logo aziendale per il PDF" className="prod-pdf-logo" />}
             <button type="button" className="prod-btn primary" onClick={downloadProductionPdf}
               disabled={pdfBusy || pdfLogoLoading || !pdfLogo || !activeBoats.length}>
               {pdfBusy ? "Creazione PDF..." : "Scarica PDF"}
@@ -760,7 +759,6 @@ function Styles() {
       .prod-pdf-controls input[type="date"] { padding: 9px 10px; background: #14283f; color: white; border: 1px solid #51637a; border-radius: 8px; font-size: 12px; }
       .prod-pdf-operator { font-size: 12px; color: #b7c7d9; }
       .prod-pdf-operator strong { color: white; }
-      .prod-pdf-logo { width: 100px; height: 45px; object-fit: contain; background: white; border-radius: 6px; }
       .prod-pdf-logo-missing { color: #fbbf24; }
       .prod-pdf-logo-missing a { color: #93c5fd; font-weight: 800; }
       .prod-pdf-checkbox-hint { font-size: 11px; color: #8398b1; margin: 4px 0 0; }

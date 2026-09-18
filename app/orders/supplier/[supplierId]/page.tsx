@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "../../../../lib/supabaseClient";
 import jsPDF from "jspdf";
@@ -8,6 +8,7 @@ import jsPDF from "jspdf";
 type Supplier = {
   id: string;
   name: string;
+  upholstery_enabled?: boolean;
 };
 
 type Item = {
@@ -23,9 +24,32 @@ type Item = {
   on_order: number;
 };
 
+type UpholsteryOptionType =
+  | "color"
+  | "details_logos"
+  | "stitching"
+  | "quilting";
+
+type UpholsteryOption = {
+  id: string;
+  option_type: UpholsteryOptionType;
+  name: string;
+};
+
+type LineVariant = {
+  id: string;
+  qty: number;
+  color: string;
+  details_logos: string;
+  stitching: string;
+  quilting: string;
+  note: string;
+};
+
 type OrderLine = {
   item: Item;
   qty: number;
+  variants: LineVariant[];
 };
 
 type AtomicOrderResult = {
@@ -58,9 +82,141 @@ export default function SupplierOrderPage() {
     "success" | "error" | ""
   >("");
 
+  // Colore/dettagli riga per riga: solo per i fornitori con Gestione
+  // Tappezzerie attiva. Non cambia come funziona l'ordine (quantità e
+  // box restano uguali): è solo una suddivisione facoltativa della
+  // quantità già scelta, per sapere quanti pezzi vanno in ogni colore.
+  const [upholsteryOptions, setUpholsteryOptions] = useState<{
+    color: UpholsteryOption[];
+    details_logos: UpholsteryOption[];
+    stitching: UpholsteryOption[];
+    quilting: UpholsteryOption[];
+  }>({ color: [], details_logos: [], stitching: [], quilting: [] });
+
+  const [openVariantItemId, setOpenVariantItemId] = useState("");
+  const [variantDraft, setVariantDraft] = useState({
+    qty: "1",
+    color: "",
+    details_logos: "",
+    stitching: "",
+    quilting: "",
+    note: "",
+  });
+
   useEffect(() => {
     loadData();
   }, [supplierId]);
+
+  useEffect(() => {
+    if (!supplier?.upholstery_enabled) {
+      setUpholsteryOptions({
+        color: [],
+        details_logos: [],
+        stitching: [],
+        quilting: [],
+      });
+      return;
+    }
+
+    async function loadUpholsteryOptions() {
+      const { data, error } = await supabase
+        .from("upholstery_options")
+        .select("id,option_type,name,active,sort_order")
+        .eq("supplier_id", supplierId)
+        .eq("active", true)
+        .order("sort_order", { ascending: true })
+        .order("name", { ascending: true });
+
+      if (error) return;
+
+      const grouped = {
+        color: [] as UpholsteryOption[],
+        details_logos: [] as UpholsteryOption[],
+        stitching: [] as UpholsteryOption[],
+        quilting: [] as UpholsteryOption[],
+      };
+
+      for (const row of data || []) {
+        const type = String((row as any).option_type) as UpholsteryOptionType;
+        if (!grouped[type]) continue;
+        grouped[type].push({
+          id: String((row as any).id),
+          option_type: type,
+          name: String((row as any).name || ""),
+        });
+      }
+
+      setUpholsteryOptions(grouped);
+    }
+
+    loadUpholsteryOptions();
+  }, [supplierId, supplier?.upholstery_enabled]);
+
+  function openVariantEditor(itemId: string) {
+    setOpenVariantItemId(itemId);
+    setVariantDraft({
+      qty: "1",
+      color: upholsteryOptions.color[0]?.name || "",
+      details_logos: upholsteryOptions.details_logos[0]?.name || "",
+      stitching: upholsteryOptions.stitching[0]?.name || "",
+      quilting: upholsteryOptions.quilting[0]?.name || "",
+      note: "",
+    });
+  }
+
+  function closeVariantEditor() {
+    setOpenVariantItemId("");
+  }
+
+  function addVariant(itemId: string) {
+    if (
+      !variantDraft.color ||
+      !variantDraft.details_logos ||
+      !variantDraft.stitching ||
+      !variantDraft.quilting
+    ) {
+      return;
+    }
+
+    const qty = Math.max(1, Math.round(Number(variantDraft.qty || 1)));
+
+    setLines((current) =>
+      current.map((line) =>
+        line.item.id === itemId
+          ? {
+              ...line,
+              variants: [
+                ...line.variants,
+                {
+                  id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                  qty,
+                  color: variantDraft.color,
+                  details_logos: variantDraft.details_logos,
+                  stitching: variantDraft.stitching,
+                  quilting: variantDraft.quilting,
+                  note: variantDraft.note.trim(),
+                },
+              ],
+            }
+          : line
+      )
+    );
+
+    setVariantDraft((current) => ({ ...current, qty: "1", note: "" }));
+  }
+
+  function removeVariant(itemId: string, variantId: string) {
+    setLines((current) =>
+      current.map((line) =>
+        line.item.id === itemId
+          ? {
+              ...line,
+              variants: line.variants.filter((v) => v.id !== variantId),
+            }
+          : line
+      )
+    );
+  }
 
   async function loadData() {
     setLoading(true);
@@ -73,7 +229,7 @@ export default function SupplierOrderPage() {
     const { data: supplierData, error: supplierError } =
       await supabase
         .from("suppliers")
-        .select("id,name")
+        .select("id,name,upholstery_enabled")
         .eq("id", supplierId)
         .single();
 
@@ -171,6 +327,7 @@ export default function SupplierOrderPage() {
         return {
           item,
           qty: suggestedQty,
+          variants: [],
         };
       })
       .filter((line) => line.qty > 0);
@@ -302,6 +459,7 @@ export default function SupplierOrderPage() {
             1,
             Number(item.box_qty || 1)
           ),
+          variants: [],
         },
       ];
     });
@@ -504,10 +662,22 @@ export default function SupplierOrderPage() {
           78
         );
 
+      const variantTexts = line.variants.map(
+        (variant) =>
+          `• ${variant.color} / ${variant.details_logos} / ${variant.stitching} / ${variant.quilting}` +
+          (variant.note ? ` — ${variant.note}` : "") +
+          ` — ${variant.qty} pz`
+      );
+
+      const variantLinesWrapped = variantTexts.flatMap((text) =>
+        doc.splitTextToSize(text, 78)
+      );
+
       const rowHeight =
         Math.max(
           6,
-          descriptionLines.length * 4
+          descriptionLines.length * 4 +
+            variantLinesWrapped.length * 3.3
         );
 
       /*
@@ -556,6 +726,16 @@ export default function SupplierOrderPage() {
         columns.description,
         y
       );
+
+      if (variantLinesWrapped.length > 0) {
+        doc.setFontSize(6.6);
+        doc.text(
+          variantLinesWrapped,
+          columns.description,
+          y + descriptionLines.length * 4 + 2
+        );
+        doc.setFontSize(8);
+      }
 
       const lineBoxQty = Math.max(
         1,
@@ -784,6 +964,65 @@ export default function SupplierOrderPage() {
       setSaving(false);
 
       return;
+    }
+
+    /*
+      COLORE/DETTAGLI PER RIGA (solo Tappezzerie)
+
+      L'ordine è già sicuro (righe e quantità create sopra). Questo
+      salva solo la suddivisione per colore, come informazione in
+      più: se fallisce non tocchiamo l'ordine già creato, avvisiamo
+      soltanto.
+    */
+    const linesWithVariants = lines.filter(
+      (line) => line.variants.length > 0
+    );
+
+    if (linesWithVariants.length > 0) {
+      try {
+        const { data: orderItemsData, error: orderItemsError } =
+          await supabase
+            .from("order_items")
+            .select("id,item_id")
+            .eq("order_id", orderId);
+
+        if (orderItemsError) throw orderItemsError;
+
+        const orderItemIdByItemId = new Map(
+          (orderItemsData || []).map((row: any) => [
+            String(row.item_id),
+            String(row.id),
+          ])
+        );
+
+        const variantRows = linesWithVariants.flatMap((line) => {
+          const orderItemId = orderItemIdByItemId.get(line.item.id);
+          if (!orderItemId) return [];
+
+          return line.variants.map((variant) => ({
+            order_item_id: orderItemId,
+            qty: variant.qty,
+            color: variant.color,
+            details_logos: variant.details_logos,
+            stitching: variant.stitching,
+            quilting: variant.quilting,
+            note: variant.note || null,
+          }));
+        });
+
+        if (variantRows.length > 0) {
+          const { error: variantsError } = await supabase
+            .from("order_item_variants")
+            .insert(variantRows);
+
+          if (variantsError) throw variantsError;
+        }
+      } catch (variantsSaveError: any) {
+        console.error(
+          "Errore salvataggio colore/dettagli riga:",
+          variantsSaveError
+        );
+      }
     }
 
     /*
@@ -1227,6 +1466,12 @@ export default function SupplierOrderPage() {
                 <TableHead>
                   Azione
                 </TableHead>
+
+                {supplier?.upholstery_enabled && (
+                  <TableHead>
+                    Colore / dettagli
+                  </TableHead>
+                )}
               </tr>
             </thead>
 
@@ -1234,7 +1479,11 @@ export default function SupplierOrderPage() {
               {lines.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={12}
+                    colSpan={
+                      supplier?.upholstery_enabled
+                        ? 13
+                        : 12
+                    }
                     style={{
                       padding: 40,
                       textAlign:
@@ -1249,8 +1498,8 @@ export default function SupplierOrderPage() {
                 </tr>
               ) : (
                 lines.map((line) => (
+                  <Fragment key={line.item.id}>
                   <tr
-                    key={line.item.id}
                     style={{
                       borderTop:
                         "1px solid var(--border-color)",
@@ -1430,7 +1679,255 @@ export default function SupplierOrderPage() {
                         Togli
                       </button>
                     </TableCell>
+
+                    {supplier?.upholstery_enabled && (
+                      <TableCell>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            openVariantItemId === line.item.id
+                              ? closeVariantEditor()
+                              : openVariantEditor(line.item.id)
+                          }
+                          style={{
+                            padding: "7px 10px",
+                            borderRadius: 7,
+                            border: "1px solid rgba(96,165,250,0.35)",
+                            background: "rgba(59,130,246,0.08)",
+                            color: "#3b82f6",
+                            cursor: "pointer",
+                            fontWeight: 750,
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {line.variants.length > 0
+                            ? `${line.variants.length} colore/i`
+                            : "+ Colore"}
+                        </button>
+                      </TableCell>
+                    )}
                   </tr>
+
+                  {supplier?.upholstery_enabled &&
+                    openVariantItemId === line.item.id && (
+                      <tr>
+                        <td
+                          colSpan={13}
+                          style={{
+                            padding: "12px 14px",
+                            background: "rgba(59,130,246,0.05)",
+                            borderBottom:
+                              "1px solid var(--border-color)",
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: "flex",
+                              flexWrap: "wrap",
+                              gap: 8,
+                              alignItems: "flex-end",
+                            }}
+                          >
+                            <VariantField label="Colore">
+                              <select
+                                value={variantDraft.color}
+                                onChange={(e) =>
+                                  setVariantDraft((c) => ({
+                                    ...c,
+                                    color: e.target.value,
+                                  }))
+                                }
+                              >
+                                <option value="">Seleziona...</option>
+                                {upholsteryOptions.color.map((opt) => (
+                                  <option key={opt.id} value={opt.name}>
+                                    {opt.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </VariantField>
+
+                            <VariantField label="Dettagli e loghi">
+                              <select
+                                value={variantDraft.details_logos}
+                                onChange={(e) =>
+                                  setVariantDraft((c) => ({
+                                    ...c,
+                                    details_logos: e.target.value,
+                                  }))
+                                }
+                              >
+                                <option value="">Seleziona...</option>
+                                {upholsteryOptions.details_logos.map((opt) => (
+                                  <option key={opt.id} value={opt.name}>
+                                    {opt.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </VariantField>
+
+                            <VariantField label="Cucitura">
+                              <select
+                                value={variantDraft.stitching}
+                                onChange={(e) =>
+                                  setVariantDraft((c) => ({
+                                    ...c,
+                                    stitching: e.target.value,
+                                  }))
+                                }
+                              >
+                                <option value="">Seleziona...</option>
+                                {upholsteryOptions.stitching.map((opt) => (
+                                  <option key={opt.id} value={opt.name}>
+                                    {opt.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </VariantField>
+
+                            <VariantField label="Trapuntatura">
+                              <select
+                                value={variantDraft.quilting}
+                                onChange={(e) =>
+                                  setVariantDraft((c) => ({
+                                    ...c,
+                                    quilting: e.target.value,
+                                  }))
+                                }
+                              >
+                                <option value="">Seleziona...</option>
+                                {upholsteryOptions.quilting.map((opt) => (
+                                  <option key={opt.id} value={opt.name}>
+                                    {opt.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </VariantField>
+
+                            <VariantField label="Pezzi">
+                              <input
+                                type="number"
+                                min="1"
+                                step="1"
+                                value={variantDraft.qty}
+                                onChange={(e) =>
+                                  setVariantDraft((c) => ({
+                                    ...c,
+                                    qty: e.target.value,
+                                  }))
+                                }
+                                style={{ width: 64 }}
+                              />
+                            </VariantField>
+
+                            <VariantField label="Nota (facoltativa)">
+                              <input
+                                value={variantDraft.note}
+                                onChange={(e) =>
+                                  setVariantDraft((c) => ({
+                                    ...c,
+                                    note: e.target.value,
+                                  }))
+                                }
+                                style={{ width: 140 }}
+                              />
+                            </VariantField>
+
+                            <button
+                              type="button"
+                              onClick={() => addVariant(line.item.id)}
+                              style={{
+                                padding: "9px 14px",
+                                borderRadius: 7,
+                                border: "1px solid #2563eb",
+                                background: "#2563eb",
+                                color: "#fff",
+                                cursor: "pointer",
+                                fontWeight: 800,
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              + Aggiungi
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={closeVariantEditor}
+                              style={{
+                                padding: "9px 14px",
+                                borderRadius: 7,
+                                border: "1px solid var(--border-color)",
+                                background: "transparent",
+                                color: "inherit",
+                                cursor: "pointer",
+                                fontWeight: 700,
+                              }}
+                            >
+                              Chiudi
+                            </button>
+                          </div>
+
+                          {line.variants.length > 0 && (
+                            <div style={{ marginTop: 10 }}>
+                              {line.variants.map((variant) => (
+                                <div
+                                  key={variant.id}
+                                  style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 8,
+                                    padding: "6px 0",
+                                    fontSize: 12,
+                                  }}
+                                >
+                                  <span>
+                                    {variant.color} / {variant.details_logos} /{" "}
+                                    {variant.stitching} / {variant.quilting}
+                                    {variant.note ? ` — ${variant.note}` : ""}
+                                  </span>
+                                  <strong>{variant.qty} pz</strong>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      removeVariant(line.item.id, variant.id)
+                                    }
+                                    style={{
+                                      marginLeft: "auto",
+                                      padding: "4px 9px",
+                                      borderRadius: 6,
+                                      border:
+                                        "1px solid rgba(239,68,68,0.35)",
+                                      background: "rgba(239,68,68,0.08)",
+                                      color: "#ef4444",
+                                      cursor: "pointer",
+                                      fontSize: 11,
+                                      fontWeight: 750,
+                                    }}
+                                  >
+                                    Rimuovi
+                                  </button>
+                                </div>
+                              ))}
+                              <div
+                                style={{
+                                  marginTop: 4,
+                                  fontSize: 11,
+                                  opacity: 0.6,
+                                }}
+                              >
+                                Totale assegnato:{" "}
+                                {line.variants.reduce(
+                                  (sum, v) => sum + v.qty,
+                                  0
+                                )}{" "}
+                                / {line.qty} pz
+                              </div>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                 ))
               )}
             </tbody>
@@ -1810,6 +2307,30 @@ function TableCell({
     >
       {children}
     </td>
+  );
+}
+
+function VariantField({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 4,
+        fontSize: 10,
+      }}
+    >
+      <span style={{ opacity: 0.6, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.4 }}>
+        {label}
+      </span>
+      {children}
+    </label>
   );
 }
 

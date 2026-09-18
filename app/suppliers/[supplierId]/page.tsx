@@ -28,6 +28,54 @@ type UserPermissions = {
   [key: string]: boolean | undefined;
 };
 
+type UpholsteryOptionType =
+  | "color"
+  | "details_logos"
+  | "stitching"
+  | "quilting";
+
+type UpholsteryOption = {
+  id: string;
+  option_type: UpholsteryOptionType;
+  name: string;
+};
+
+type UpholsteryOptionGroups = {
+  color: UpholsteryOption[];
+  details_logos: UpholsteryOption[];
+  stitching: UpholsteryOption[];
+  quilting: UpholsteryOption[];
+};
+
+type KitDraft = {
+  matricola: string;
+  scannerCode: string;
+  unitPrice: string;
+  color: string;
+  detailsLogos: string;
+  stitching: string;
+  quilting: string;
+  note: string;
+};
+
+const EMPTY_UPHOLSTERY_GROUPS: UpholsteryOptionGroups = {
+  color: [],
+  details_logos: [],
+  stitching: [],
+  quilting: [],
+};
+
+const EMPTY_KIT_DRAFT: KitDraft = {
+  matricola: "",
+  scannerCode: "",
+  unitPrice: "",
+  color: "",
+  detailsLogos: "",
+  stitching: "",
+  quilting: "",
+  note: "",
+};
+
 export default function SupplierDetail({
   params,
 }: {
@@ -62,6 +110,15 @@ export default function SupplierDetail({
 
   const [permissionsReady, setPermissionsReady] =
     useState(false);
+
+  const [upholsteryOptions, setUpholsteryOptions] =
+    useState<UpholsteryOptionGroups>(EMPTY_UPHOLSTERY_GROUPS);
+
+  const [openKitItemId, setOpenKitItemId] = useState("");
+  const [kitDraft, setKitDraft] = useState<KitDraft>(EMPTY_KIT_DRAFT);
+  const [kitSaving, setKitSaving] = useState(false);
+  const [kitMessage, setKitMessage] = useState("");
+  const [kitError, setKitError] = useState("");
 
   /*
     PERMESSI ECONOMICI
@@ -270,6 +327,203 @@ export default function SupplierDetail({
     canViewInventoryValue,
   ]);
 
+  /*
+    OPZIONI TAPPEZZERIA (colore, dettagli e loghi, cucitura,
+    trapuntatura) per il "+ Registra kit" rapido da questa
+    schermata, senza dover aprire Gestione Tappezzerie.
+  */
+  useEffect(() => {
+    if (!upholsteryEnabled) {
+      setUpholsteryOptions(EMPTY_UPHOLSTERY_GROUPS);
+      return;
+    }
+
+    async function loadUpholsteryOptions() {
+      const { data, error } = await supabase
+        .from("upholstery_options")
+        .select("id,option_type,name")
+        .eq("supplier_id", supplierId)
+        .eq("active", true)
+        .order("sort_order", { ascending: true })
+        .order("name", { ascending: true });
+
+      if (error) return;
+
+      const groups: UpholsteryOptionGroups = {
+        color: [],
+        details_logos: [],
+        stitching: [],
+        quilting: [],
+      };
+
+      for (const row of data || []) {
+        const type = String((row as any).option_type) as UpholsteryOptionType;
+        if (!groups[type]) continue;
+        groups[type].push({
+          id: String((row as any).id),
+          option_type: type,
+          name: String((row as any).name || ""),
+        });
+      }
+
+      setUpholsteryOptions(groups);
+    }
+
+    loadUpholsteryOptions();
+  }, [supplierId, upholsteryEnabled]);
+
+  async function openKitEditor(item: Item) {
+    setOpenKitItemId(item.id);
+    setKitMessage("");
+    setKitError("");
+    setKitDraft({
+      matricola: "",
+      scannerCode: item.code,
+      unitPrice: item.price > 0 ? String(item.price) : "",
+      color: upholsteryOptions.color[0]?.name || "",
+      detailsLogos: upholsteryOptions.details_logos[0]?.name || "",
+      stitching: upholsteryOptions.stitching[0]?.name || "",
+      quilting: upholsteryOptions.quilting[0]?.name || "",
+      note: "",
+    });
+
+    const { data, error } = await supabase.rpc(
+      "next_upholstery_matricola",
+      { p_supplier_id: supplierId }
+    );
+
+    if (!error && data !== null && data !== undefined) {
+      setKitDraft((current) => ({ ...current, matricola: String(data) }));
+    }
+  }
+
+  function closeKitEditor() {
+    setOpenKitItemId("");
+    setKitMessage("");
+    setKitError("");
+  }
+
+  function hasUpholsteryChoices() {
+    return (
+      upholsteryOptions.color.length > 0 &&
+      upholsteryOptions.details_logos.length > 0 &&
+      upholsteryOptions.stitching.length > 0 &&
+      upholsteryOptions.quilting.length > 0
+    );
+  }
+
+  async function saveKit(item: Item) {
+    setKitMessage("");
+    setKitError("");
+
+    const matricolaNumber = Number(kitDraft.matricola);
+
+    if (
+      !Number.isInteger(matricolaNumber) ||
+      matricolaNumber < 1 ||
+      matricolaNumber > 10000
+    ) {
+      setKitError("La Matricola Kit deve essere un numero da 1 a 10000.");
+      return;
+    }
+
+    if (!kitDraft.scannerCode.trim()) {
+      setKitError("Inserisci il Codice scanner.");
+      return;
+    }
+
+    const priceNumber = Number(
+      kitDraft.unitPrice.trim().replace(",", ".")
+    );
+
+    if (!Number.isFinite(priceNumber) || priceNumber <= 0) {
+      setKitError("Inserisci il prezzo del kit, maggiore di zero.");
+      return;
+    }
+
+    if (
+      !kitDraft.color ||
+      !kitDraft.detailsLogos ||
+      !kitDraft.stitching ||
+      !kitDraft.quilting
+    ) {
+      setKitError("Seleziona Colore, Dettagli e loghi, Cucitura e Trapuntatura.");
+      return;
+    }
+
+    setKitSaving(true);
+
+    const { error } = await supabase.rpc("create_upholstery_stock_kit", {
+      p_supplier_id: supplierId,
+      p_item_id: item.id,
+      p_matricola: matricolaNumber,
+      p_scanner_code: kitDraft.scannerCode.trim(),
+      p_unit_price: priceNumber,
+      p_color: kitDraft.color,
+      p_details_logos: kitDraft.detailsLogos,
+      p_stitching: kitDraft.stitching,
+      p_quilting: kitDraft.quilting,
+      p_note: kitDraft.note.trim() || null,
+    });
+
+    if (error) {
+      const lower = error.message.toLowerCase();
+
+      if (
+        lower.includes("matricola") ||
+        lower.includes("duplicate") ||
+        lower.includes("unique")
+      ) {
+        setKitError(
+          "Questa Matricola Kit è già utilizzata. Verrà proposto un altro numero."
+        );
+      } else {
+        setKitError("Errore inserimento kit: " + error.message);
+      }
+
+      const { data: retryMatricola } = await supabase.rpc(
+        "next_upholstery_matricola",
+        { p_supplier_id: supplierId }
+      );
+
+      if (retryMatricola !== null && retryMatricola !== undefined) {
+        setKitDraft((current) => ({
+          ...current,
+          matricola: String(retryMatricola),
+        }));
+      }
+
+      setKitSaving(false);
+      return;
+    }
+
+    setItems((current) =>
+      current.map((row) =>
+        row.id === item.id ? { ...row, stock: row.stock + 1 } : row
+      )
+    );
+
+    setKitMessage(
+      `Kit #${matricolaNumber} inserito in giacenza. Giacenza articolo aumentata di 1.`
+    );
+
+    setKitDraft((current) => ({ ...current, unitPrice: "", note: "" }));
+
+    const { data: nextMatricola } = await supabase.rpc(
+      "next_upholstery_matricola",
+      { p_supplier_id: supplierId }
+    );
+
+    if (nextMatricola !== null && nextMatricola !== undefined) {
+      setKitDraft((current) => ({
+        ...current,
+        matricola: String(nextMatricola),
+      }));
+    }
+
+    setKitSaving(false);
+  }
+
   function isLowStock(item: Item) {
     return item.min_stock > 0 && item.stock <= item.min_stock;
   }
@@ -315,7 +569,8 @@ export default function SupplierDetail({
   const tableColumnCount =
     6 +
     (canViewPrices ? 1 : 0) +
-    (canViewInventoryValue ? 1 : 0);
+    (canViewInventoryValue ? 1 : 0) +
+    (upholsteryEnabled ? 1 : 0);
 
   function getPdfDate() {
     return new Intl.DateTimeFormat("it-IT", {
@@ -1391,6 +1646,12 @@ export default function SupplierDetail({
                     Valore
                   </th>
                 )}
+
+                {upholsteryEnabled && (
+                  <th style={headerStyle}>
+                    Azioni
+                  </th>
+                )}
               </tr>
             </thead>
 
@@ -1418,9 +1679,12 @@ export default function SupplierDetail({
                   const lowStock =
                     isLowStock(item);
 
+                  const kitOpen =
+                    openKitItemId === item.id;
+
                   return (
+                    <React.Fragment key={item.id}>
                     <tr
-                      key={item.id}
                       style={{
                         borderBottom:
                           "1px solid var(--border-color)",
@@ -1540,7 +1804,315 @@ export default function SupplierDetail({
                           </strong>
                         </td>
                       )}
+
+                      {upholsteryEnabled && (
+                        <td style={cellStyle}>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              kitOpen
+                                ? closeKitEditor()
+                                : openKitEditor(item)
+                            }
+                            style={{
+                              padding: "7px 11px",
+                              borderRadius: 7,
+                              border:
+                                "1px solid rgba(37,99,235,0.35)",
+                              background:
+                                "rgba(37,99,235,0.08)",
+                              color: "#2563eb",
+                              cursor: "pointer",
+                              fontWeight: 750,
+                              fontSize: 12,
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {kitOpen ? "Chiudi" : "+ Registra kit"}
+                          </button>
+                        </td>
+                      )}
                     </tr>
+
+                    {upholsteryEnabled && kitOpen && (
+                      <tr>
+                        <td
+                          colSpan={tableColumnCount}
+                          style={{
+                            padding: "14px 16px",
+                            background:
+                              "rgba(37,99,235,0.05)",
+                            borderBottom:
+                              "1px solid var(--border-color)",
+                          }}
+                        >
+                          <div
+                            style={{
+                              marginBottom: 10,
+                              fontSize: 12,
+                              fontWeight: 850,
+                            }}
+                          >
+                            Registra nuovo kit in giacenza —{" "}
+                            {item.supplier_code || item.code}
+                          </div>
+
+                          {!hasUpholsteryChoices() && (
+                            <div
+                              style={{
+                                marginBottom: 10,
+                                padding: "9px 11px",
+                                borderRadius: 8,
+                                border:
+                                  "1px solid rgba(250,204,21,0.4)",
+                                background:
+                                  "rgba(250,204,21,0.10)",
+                                fontSize: 11,
+                              }}
+                            >
+                              Configura almeno un Colore, un valore
+                              in Dettagli e loghi, una Cucitura e
+                              una Trapuntatura in Gestione
+                              Tappezzerie prima di registrare un
+                              kit.
+                            </div>
+                          )}
+
+                          {kitError && (
+                            <div
+                              style={{
+                                marginBottom: 10,
+                                padding: "9px 11px",
+                                borderRadius: 8,
+                                border:
+                                  "1px solid rgba(239,68,68,0.35)",
+                                background:
+                                  "rgba(239,68,68,0.08)",
+                                color: "#b91c1c",
+                                fontSize: 11,
+                                fontWeight: 700,
+                              }}
+                            >
+                              {kitError}
+                            </div>
+                          )}
+
+                          {kitMessage && (
+                            <div
+                              style={{
+                                marginBottom: 10,
+                                padding: "9px 11px",
+                                borderRadius: 8,
+                                border:
+                                  "1px solid rgba(34,197,94,0.35)",
+                                background:
+                                  "rgba(34,197,94,0.08)",
+                                color: "#166534",
+                                fontSize: 11,
+                                fontWeight: 700,
+                              }}
+                            >
+                              {kitMessage}
+                            </div>
+                          )}
+
+                          <div
+                            style={{
+                              display: "flex",
+                              flexWrap: "wrap",
+                              gap: 10,
+                              alignItems: "flex-end",
+                            }}
+                          >
+                            <KitField label="Matricola">
+                              <input
+                                type="number"
+                                min="1"
+                                max="10000"
+                                step="1"
+                                value={kitDraft.matricola}
+                                onChange={(e) =>
+                                  setKitDraft((current) => ({
+                                    ...current,
+                                    matricola: e.target.value,
+                                  }))
+                                }
+                                style={kitInputStyle}
+                              />
+                            </KitField>
+
+                            <KitField label="Codice scanner">
+                              <input
+                                value={kitDraft.scannerCode}
+                                onChange={(e) =>
+                                  setKitDraft((current) => ({
+                                    ...current,
+                                    scannerCode: e.target.value,
+                                  }))
+                                }
+                                style={kitInputStyle}
+                              />
+                            </KitField>
+
+                            <KitField label="Prezzo kit">
+                              <input
+                                type="number"
+                                min="0.01"
+                                step="0.01"
+                                value={kitDraft.unitPrice}
+                                onChange={(e) =>
+                                  setKitDraft((current) => ({
+                                    ...current,
+                                    unitPrice: e.target.value,
+                                  }))
+                                }
+                                style={kitInputStyle}
+                              />
+                            </KitField>
+
+                            <KitField label="Colore">
+                              <select
+                                value={kitDraft.color}
+                                onChange={(e) =>
+                                  setKitDraft((current) => ({
+                                    ...current,
+                                    color: e.target.value,
+                                  }))
+                                }
+                                style={kitInputStyle}
+                              >
+                                {upholsteryOptions.color.map(
+                                  (option) => (
+                                    <option
+                                      key={option.id}
+                                      value={option.name}
+                                    >
+                                      {option.name}
+                                    </option>
+                                  )
+                                )}
+                              </select>
+                            </KitField>
+
+                            <KitField label="Dettagli e loghi">
+                              <select
+                                value={kitDraft.detailsLogos}
+                                onChange={(e) =>
+                                  setKitDraft((current) => ({
+                                    ...current,
+                                    detailsLogos: e.target.value,
+                                  }))
+                                }
+                                style={kitInputStyle}
+                              >
+                                {upholsteryOptions.details_logos.map(
+                                  (option) => (
+                                    <option
+                                      key={option.id}
+                                      value={option.name}
+                                    >
+                                      {option.name}
+                                    </option>
+                                  )
+                                )}
+                              </select>
+                            </KitField>
+
+                            <KitField label="Cucitura">
+                              <select
+                                value={kitDraft.stitching}
+                                onChange={(e) =>
+                                  setKitDraft((current) => ({
+                                    ...current,
+                                    stitching: e.target.value,
+                                  }))
+                                }
+                                style={kitInputStyle}
+                              >
+                                {upholsteryOptions.stitching.map(
+                                  (option) => (
+                                    <option
+                                      key={option.id}
+                                      value={option.name}
+                                    >
+                                      {option.name}
+                                    </option>
+                                  )
+                                )}
+                              </select>
+                            </KitField>
+
+                            <KitField label="Trapuntatura">
+                              <select
+                                value={kitDraft.quilting}
+                                onChange={(e) =>
+                                  setKitDraft((current) => ({
+                                    ...current,
+                                    quilting: e.target.value,
+                                  }))
+                                }
+                                style={kitInputStyle}
+                              >
+                                {upholsteryOptions.quilting.map(
+                                  (option) => (
+                                    <option
+                                      key={option.id}
+                                      value={option.name}
+                                    >
+                                      {option.name}
+                                    </option>
+                                  )
+                                )}
+                              </select>
+                            </KitField>
+
+                            <KitField label="Nota (facoltativa)">
+                              <input
+                                value={kitDraft.note}
+                                onChange={(e) =>
+                                  setKitDraft((current) => ({
+                                    ...current,
+                                    note: e.target.value,
+                                  }))
+                                }
+                                style={kitInputStyle}
+                              />
+                            </KitField>
+
+                            <button
+                              type="button"
+                              onClick={() => saveKit(item)}
+                              disabled={
+                                kitSaving || !hasUpholsteryChoices()
+                              }
+                              style={{
+                                minHeight: 38,
+                                padding: "0 16px",
+                                borderRadius: 8,
+                                border: "1px solid #1d4ed8",
+                                background: "#2563eb",
+                                color: "white",
+                                cursor: kitSaving
+                                  ? "not-allowed"
+                                  : "pointer",
+                                fontWeight: 850,
+                                fontSize: 12,
+                                opacity:
+                                  kitSaving ||
+                                  !hasUpholsteryChoices()
+                                    ? 0.55
+                                    : 1,
+                              }}
+                            >
+                              {kitSaving
+                                ? "Salvataggio..."
+                                : "Salva kit"}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    </React.Fragment>
                   );
                 })
               )}
@@ -1564,6 +2136,49 @@ export default function SupplierDetail({
 }
 
 /* ---------------- COMPONENTI ---------------- */
+
+function KitField({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 4,
+        fontSize: 10,
+      }}
+    >
+      <span
+        style={{
+          opacity: 0.6,
+          fontWeight: 800,
+          textTransform: "uppercase",
+          letterSpacing: 0.4,
+        }}
+      >
+        {label}
+      </span>
+      {children}
+    </label>
+  );
+}
+
+const kitInputStyle: React.CSSProperties = {
+  minHeight: 38,
+  padding: "0 10px",
+  minWidth: 140,
+  border: "1px solid var(--border-color)",
+  borderRadius: 7,
+  background: "var(--input-bg)",
+  color: "var(--foreground)",
+  outline: "none",
+  fontSize: 12,
+};
 
 function SummaryCard({
   title,

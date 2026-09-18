@@ -23,6 +23,7 @@ type Department = {
   id: string;
   name: string;
   sort_order: number;
+  active: boolean;
 };
 
 type Step = {
@@ -137,7 +138,7 @@ export default function ProductionBoatDetailPage({
         .maybeSingle(),
       supabase
         .from("production_departments")
-        .select("id,name,sort_order")
+        .select("id,name,sort_order,active")
         .order("sort_order", { ascending: true }),
       supabase
         .from("production_department_steps")
@@ -201,6 +202,7 @@ export default function ProductionBoatDetailPage({
       id: String(row.id),
       name: String(row.name || ""),
       sort_order: Number(row.sort_order || 0),
+      active: row.active !== false,
     }));
 
     const cleanSteps = (stepRes.data || []).map((row: any) => ({
@@ -257,6 +259,14 @@ export default function ProductionBoatDetailPage({
 
   const depMap = useMemo(
     () => new Map(departments.map((dep) => [dep.id, dep])),
+    [departments]
+  );
+
+  // La barra a step mostra solo i reparti ATTUALMENTE attivi: quelli
+  // disattivati (rinominati/sostituiti) restano nello storico ma non
+  // devono più comparire come tappe del percorso.
+  const activeDepartments = useMemo(
+    () => departments.filter((dep) => dep.active),
     [departments]
   );
 
@@ -593,7 +603,7 @@ export default function ProductionBoatDetailPage({
 
         <div className="pbd-stepper">
           <div className="pbd-stepper-row">
-            {departments.map((dep, index) => {
+            {activeDepartments.map((dep, index) => {
               const step = sortedSteps.find((row) => row.department_id === dep.id);
               const status = step ? step.status : "future";
               const isCurrent = currentStep?.department_id === dep.id;
@@ -616,7 +626,7 @@ export default function ProductionBoatDetailPage({
                       {step?.current_note && <em>{step.current_note}</em>}
                     </div>
                   </div>
-                  {index < departments.length - 1 && (
+                  {index < activeDepartments.length - 1 && (
                     <div className={`pbd-stepper-line ${status === "completed" ? "done" : ""}`} />
                   )}
                 </Fragment>

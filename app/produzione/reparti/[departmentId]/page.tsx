@@ -101,25 +101,153 @@ export default function ProductionDepartmentPage({
     setLoading(true);
     setErrorMessage("");
 
-    const [depRes, stepRes] = await Promise.all([
-      supabase
-        .from("production_departments")
-        .select("id,name,sort_order")
-        .eq("id", departmentId)
-        .maybeSingle(),
-      supabase
-        .from("production_department_steps")
-        .select("id,boat_id,department_id,status,current_note,entered_at")
-        .eq("department_id", departmentId)
-        .neq("status", "completed")
-        .order("entered_at", { ascending: true }),
-    ]);
+    const depRes = await supabase
+      .from("production_departments")
+      .select("id,name,sort_order")
+      .eq("id", departmentId)
+      .maybeSingle();
 
     if (depRes.error || !depRes.data) {
       setErrorMessage("Reparto non trovato.");
       setLoading(false);
       return;
     }
+
+    const cleanDepartment = {
+      id: String(depRes.data.id),
+      name: String(depRes.data.name || ""),
+      sort_order: Number(depRes.data.sort_order || 0),
+    };
+
+    setDepartment(cleanDepartment);
+
+    const tubolariDept = isTubolariName(cleanDepartment.name);
+
+    if (tubolariDept) {
+      // Tubolari: mostra TUTTI gli ordini attivi, non solo quelli il cui
+      // passaggio è già arrivato qui - così si può preparare/stampare la
+      // scheda tubolare in anticipo, indipendentemente da dove si trova
+      // davvero oggi il battello nel percorso produttivo.
+      const boatRes = await supabase
+        .from("production_boats")
+        .select("id,progressive_no,order_number,model_boat,hull,stringers,deck,accessories,note")
+        .eq("status", "active")
+        .order("progressive_no", { ascending: true });
+
+      if (boatRes.error) {
+        setErrorMessage("Errore caricamento battelli: " + boatRes.error.message);
+        setLoading(false);
+        return;
+      }
+
+      const cleanBoats: Boat[] = (boatRes.data || []).map((row: any) => ({
+        id: String(row.id),
+        progressive_no: Number(row.progressive_no || 0),
+        order_number: String(row.order_number || ""),
+        model_boat: String(row.model_boat || ""),
+        hull: String(row.hull || ""),
+        stringers: String(row.stringers || ""),
+        deck: String(row.deck || ""),
+        accessories: String(row.accessories || ""),
+        note: row.note ? String(row.note) : null,
+      }));
+
+      setBoats(cleanBoats);
+
+      const boatIds = cleanBoats.map((boat) => boat.id);
+
+      if (boatIds.length === 0) {
+        setSteps([]);
+        setStatusDrafts({});
+        setNoteDrafts({});
+        setTubolariMap({});
+        setTubeColorDrafts({});
+        setTubeDoneDrafts({});
+        setTubeMountDrafts({});
+        setColorOptions([]);
+        setLoading(false);
+        return;
+      }
+
+      const [stepRes, tubRes, optionsRes] = await Promise.all([
+        supabase
+          .from("production_department_steps")
+          .select("id,boat_id,department_id,status,current_note,entered_at")
+          .eq("department_id", departmentId)
+          .in("boat_id", boatIds),
+        supabase
+          .from("production_tubolari")
+          .select("id,boat_id,tube_color,tube_done,tube_mount_done")
+          .in("boat_id", boatIds),
+        supabase
+          .from("production_options")
+          .select("id,option_type,name")
+          .eq("option_type", "color")
+          .eq("active", true)
+          .order("sort_order", { ascending: true })
+          .order("name", { ascending: true }),
+      ]);
+
+      if (stepRes.error) {
+        setErrorMessage("Errore caricamento reparto: " + stepRes.error.message);
+        setLoading(false);
+        return;
+      }
+
+      const cleanSteps: Step[] = (stepRes.data || []).map((row: any) => ({
+        id: String(row.id),
+        boat_id: String(row.boat_id),
+        department_id: String(row.department_id),
+        status: String(row.status || "queued"),
+        current_note: row.current_note ? String(row.current_note) : null,
+        entered_at: String(row.entered_at || ""),
+      }));
+
+      setSteps(cleanSteps);
+      setStatusDrafts(Object.fromEntries(cleanSteps.map((step) => [step.id, step.status])));
+      setNoteDrafts(
+        Object.fromEntries(cleanSteps.map((step) => [step.id, step.current_note || ""]))
+      );
+
+      const cleanTub: Tubolare[] = (tubRes.data || []).map((row: any) => ({
+        id: String(row.id),
+        boat_id: String(row.boat_id),
+        tube_color: String(row.tube_color || ""),
+        tube_done: Boolean(row.tube_done),
+        tube_mount_done: Boolean(row.tube_mount_done),
+      }));
+
+      const tubMap = Object.fromEntries(cleanTub.map((t) => [t.boat_id, t]));
+      setTubolariMap(tubMap);
+      setTubeColorDrafts(
+        Object.fromEntries(boatIds.map((id) => [id, tubMap[id]?.tube_color || ""]))
+      );
+      setTubeDoneDrafts(
+        Object.fromEntries(boatIds.map((id) => [id, tubMap[id]?.tube_done || false]))
+      );
+      setTubeMountDrafts(
+        Object.fromEntries(boatIds.map((id) => [id, tubMap[id]?.tube_mount_done || false]))
+      );
+      setColorOptions(
+        (optionsRes.data || []).map((row: any) => ({
+          id: String(row.id),
+          option_type: "color" as const,
+          name: String(row.name || ""),
+        }))
+      );
+
+      setLoading(false);
+      return;
+    }
+
+    // Reparti normali: comportamento invariato - solo i battelli il cui
+    // passaggio in QUESTO reparto è ancora aperto (sequenziale).
+    const stepRes = await supabase
+      .from("production_department_steps")
+      .select("id,boat_id,department_id,status,current_note,entered_at")
+      .eq("department_id", departmentId)
+      .neq("status", "completed")
+      .order("entered_at", { ascending: true });
 
     if (stepRes.error) {
       setErrorMessage("Errore caricamento reparto: " + stepRes.error.message);
@@ -136,34 +264,23 @@ export default function ProductionDepartmentPage({
       entered_at: String(row.entered_at || ""),
     }));
 
-    const cleanDepartment = {
-      id: String(depRes.data.id),
-      name: String(depRes.data.name || ""),
-      sort_order: Number(depRes.data.sort_order || 0),
-    };
-
-    setDepartment(cleanDepartment);
     setSteps(cleanSteps);
-
     setStatusDrafts(
       Object.fromEntries(cleanSteps.map((step) => [step.id, step.status]))
     );
-
     setNoteDrafts(
-      Object.fromEntries(
-        cleanSteps.map((step) => [step.id, step.current_note || ""])
-      )
+      Object.fromEntries(cleanSteps.map((step) => [step.id, step.current_note || ""]))
     );
+    setTubolariMap({});
+    setTubeColorDrafts({});
+    setTubeDoneDrafts({});
+    setTubeMountDrafts({});
+    setColorOptions([]);
 
     const boatIds = Array.from(new Set(cleanSteps.map((step) => step.boat_id)));
-    const tubolariDept = isTubolariName(cleanDepartment.name);
 
     if (boatIds.length === 0) {
       setBoats([]);
-      setTubolariMap({});
-      setTubeColorDrafts({});
-      setTubeDoneDrafts({});
-      setTubeMountDrafts({});
       setLoading(false);
       return;
     }
@@ -194,54 +311,6 @@ export default function ProductionDepartmentPage({
       }))
     );
 
-    if (tubolariDept) {
-      const [tubRes, optionsRes] = await Promise.all([
-        supabase
-          .from("production_tubolari")
-          .select("id,boat_id,tube_color,tube_done,tube_mount_done")
-          .in("boat_id", boatIds),
-        supabase
-          .from("production_options")
-          .select("id,option_type,name")
-          .eq("option_type", "color")
-          .eq("active", true)
-          .order("sort_order", { ascending: true })
-          .order("name", { ascending: true }),
-      ]);
-
-      const cleanTub: Tubolare[] = (tubRes.data || []).map((row: any) => ({
-        id: String(row.id),
-        boat_id: String(row.boat_id),
-        tube_color: String(row.tube_color || ""),
-        tube_done: Boolean(row.tube_done),
-        tube_mount_done: Boolean(row.tube_mount_done),
-      }));
-
-      const tubMap = Object.fromEntries(cleanTub.map((t) => [t.boat_id, t]));
-      setTubolariMap(tubMap);
-      setTubeColorDrafts(
-        Object.fromEntries(boatIds.map((id) => [id, tubMap[id]?.tube_color || ""]))
-      );
-      setTubeDoneDrafts(
-        Object.fromEntries(boatIds.map((id) => [id, tubMap[id]?.tube_done || false]))
-      );
-      setTubeMountDrafts(
-        Object.fromEntries(boatIds.map((id) => [id, tubMap[id]?.tube_mount_done || false]))
-      );
-      setColorOptions(
-        (optionsRes.data || []).map((row: any) => ({
-          id: String(row.id),
-          option_type: "color" as const,
-          name: String(row.name || ""),
-        }))
-      );
-    } else {
-      setTubolariMap({});
-      setTubeColorDrafts({});
-      setTubeDoneDrafts({});
-      setTubeMountDrafts({});
-    }
-
     setLoading(false);
   }
 
@@ -251,6 +320,52 @@ export default function ProductionDepartmentPage({
   );
 
   const isTubolariDept = Boolean(department && isTubolariName(department.name));
+
+  // Righe della tabella: per Tubolari è un battello per ogni ordine attivo
+  // (il passaggio reparto, se esiste già, è opzionale); per gli altri
+  // reparti resta un battello per ogni passaggio ancora aperto qui.
+  const rows = useMemo(() => {
+    if (isTubolariDept) {
+      return boats.map((boat) => ({
+        key: `boat-${boat.id}`,
+        boat,
+        step: steps.find((s) => s.boat_id === boat.id) || null,
+      }));
+    }
+
+    return steps
+      .map((step) => ({ key: `step-${step.id}`, step, boat: boatMap.get(step.boat_id) }))
+      .filter(
+        (row): row is { key: string; step: Step; boat: Boat } => Boolean(row.boat)
+      );
+  }, [isTubolariDept, boats, steps, boatMap]);
+
+  async function saveTubeOnly(boatId: string) {
+    setSavingId(boatId);
+    setMessage("");
+    setErrorMessage("");
+
+    const tubError = await supabase.from("production_tubolari").upsert(
+      {
+        boat_id: boatId,
+        tube_color: (tubeColorDrafts[boatId] || "").trim(),
+        tube_done: Boolean(tubeDoneDrafts[boatId]),
+        tube_mount_done: Boolean(tubeMountDrafts[boatId]),
+      },
+      { onConflict: "boat_id" }
+    );
+
+    if (tubError.error) {
+      setErrorMessage("Errore salvataggio scheda tubolari: " + tubError.error.message);
+      setSavingId("");
+      return;
+    }
+
+    const boat = boatMap.get(boatId);
+    setMessage(`Ordine ${boat?.order_number || ""}: scheda tubolari aggiornata.`);
+    setSavingId("");
+    await loadData();
+  }
 
   async function saveStatus(step: Step) {
     const nextStatus = statusDrafts[step.id] || step.status;
@@ -321,12 +436,9 @@ export default function ProductionDepartmentPage({
   function generatePdf() {
     if (!department) return;
 
-    const rows = steps
-      .map((step) => ({ step, boat: boatMap.get(step.boat_id) }))
-      .filter((row) => row.boat)
-      .sort((a, b) => (a.boat!.progressive_no - b.boat!.progressive_no));
+    const pdfRows = [...rows].sort((a, b) => a.boat.progressive_no - b.boat.progressive_no);
 
-    if (rows.length === 0) {
+    if (pdfRows.length === 0) {
       setErrorMessage("Non ci sono battelli da inserire nel programma del reparto.");
       return;
     }
@@ -391,9 +503,13 @@ export default function ProductionDepartmentPage({
     doc.setFont("helvetica", "normal");
     doc.setFontSize(6.2);
 
-    for (const row of rows) {
-      const boat = row.boat!;
+    for (const row of pdfRows) {
+      const boat = row.boat;
       const tub = tubolariMap[boat.id];
+      const stepStatusText = row.step
+        ? statusLabel[row.step.status] || row.step.status
+        : "Non ancora arrivato";
+      const noteText = row.step?.current_note || boat.note || "";
 
       const values = isTubolariDept
         ? [
@@ -404,8 +520,8 @@ export default function ProductionDepartmentPage({
             tub?.tube_color || "-",
             tub?.tube_done ? "Fatto" : "-",
             tub?.tube_mount_done ? "Fatto" : "-",
-            statusLabel[row.step.status] || row.step.status,
-            row.step.current_note || boat.note || "",
+            stepStatusText,
+            noteText,
           ]
         : [
             String(boat.progressive_no),
@@ -415,8 +531,8 @@ export default function ProductionDepartmentPage({
             boat.stringers,
             boat.deck,
             boat.accessories,
-            statusLabel[row.step.status] || row.step.status,
-            row.step.current_note || boat.note || "",
+            stepStatusText,
+            noteText,
           ];
 
       const noteLines = doc.splitTextToSize(values[8], columns[8].w - 2);
@@ -505,20 +621,20 @@ export default function ProductionDepartmentPage({
 
       <section className="pdep-summary">
         <div>
-          <span>BATTELLI NEL REPARTO</span>
-          <strong>{steps.length}</strong>
+          <span>{isTubolariDept ? "ORDINI ATTIVI" : "BATTELLI NEL REPARTO"}</span>
+          <strong>{rows.length}</strong>
         </div>
         <div>
           <span>IN LAVORAZIONE</span>
-          <strong>{steps.filter((step) => step.status === "working").length}</strong>
+          <strong>{rows.filter((row) => row.step?.status === "working").length}</strong>
         </div>
         <div>
           <span>IN ATTESA</span>
-          <strong>{steps.filter((step) => step.status === "waiting").length}</strong>
+          <strong>{rows.filter((row) => row.step?.status === "waiting").length}</strong>
         </div>
         <div>
           <span>BLOCCATI</span>
-          <strong>{steps.filter((step) => step.status === "blocked").length}</strong>
+          <strong>{rows.filter((row) => row.step?.status === "blocked").length}</strong>
         </div>
       </section>
 
@@ -550,20 +666,22 @@ export default function ProductionDepartmentPage({
               </tr>
             </thead>
             <tbody>
-              {steps.length === 0 ? (
+              {rows.length === 0 ? (
                 <tr>
                   <td colSpan={10} className="pdep-empty">
-                    Nessun battello attualmente in questo reparto.
+                    {isTubolariDept
+                      ? "Nessun ordine attivo in produzione."
+                      : "Nessun battello attualmente in questo reparto."}
                   </td>
                 </tr>
               ) : (
-                steps.map((step) => {
-                  const boat = boatMap.get(step.boat_id);
-                  if (!boat) return null;
+                rows.map((row) => {
+                  const boat = row.boat;
+                  const step = row.step;
 
                   return (
                     <tr
-                      key={step.id}
+                      key={row.key}
                       className="pdep-row"
                       onDoubleClick={() => router.push(`/produzione/${boat.id}`)}
                     >
@@ -639,46 +757,54 @@ export default function ProductionDepartmentPage({
                         </>
                       )}
                       <td>
-                        <select
-                          value={statusDrafts[step.id] || step.status}
-                          onChange={(e) =>
-                            setStatusDrafts((current) => ({
-                              ...current,
-                              [step.id]: e.target.value,
-                            }))
-                          }
-                          className={`pdep-status-select ${
-                            statusDrafts[step.id] || step.status
-                          }`}
-                        >
-                          <option value="queued">Da iniziare</option>
-                          <option value="working">In lavorazione</option>
-                          <option value="waiting">In attesa</option>
-                          <option value="blocked">Bloccato</option>
-                          <option value="completed">Completato</option>
-                        </select>
+                        {step ? (
+                          <select
+                            value={statusDrafts[step.id] || step.status}
+                            onChange={(e) =>
+                              setStatusDrafts((current) => ({
+                                ...current,
+                                [step.id]: e.target.value,
+                              }))
+                            }
+                            className={`pdep-status-select ${
+                              statusDrafts[step.id] || step.status
+                            }`}
+                          >
+                            <option value="queued">Da iniziare</option>
+                            <option value="working">In lavorazione</option>
+                            <option value="waiting">In attesa</option>
+                            <option value="blocked">Bloccato</option>
+                            <option value="completed">Completato</option>
+                          </select>
+                        ) : (
+                          <span className="pdep-not-arrived">Non ancora arrivato</span>
+                        )}
                       </td>
                       <td>
-                        <input
-                          className="pdep-note"
-                          value={noteDrafts[step.id] ?? step.current_note ?? ""}
-                          onChange={(e) =>
-                            setNoteDrafts((current) => ({
-                              ...current,
-                              [step.id]: e.target.value,
-                            }))
-                          }
-                          placeholder="Nota giornaliera..."
-                        />
+                        {step ? (
+                          <input
+                            className="pdep-note"
+                            value={noteDrafts[step.id] ?? step.current_note ?? ""}
+                            onChange={(e) =>
+                              setNoteDrafts((current) => ({
+                                ...current,
+                                [step.id]: e.target.value,
+                              }))
+                            }
+                            placeholder="Nota giornaliera..."
+                          />
+                        ) : (
+                          <span className="pdep-note-readonly">{boat.note || "—"}</span>
+                        )}
                       </td>
                       <td>
                         <button
                           type="button"
                           className="pdep-save"
-                          disabled={savingId === step.id}
-                          onClick={() => saveStatus(step)}
+                          disabled={savingId === (step ? step.id : boat.id)}
+                          onClick={() => (step ? saveStatus(step) : saveTubeOnly(boat.id))}
                         >
-                          {savingId === step.id ? "..." : "Salva"}
+                          {savingId === (step ? step.id : boat.id) ? "..." : "Salva"}
                         </button>
                       </td>
                     </tr>
@@ -935,6 +1061,18 @@ function Styles() {
       .pdep-note {
         width: 220px;
         padding: 0 8px;
+      }
+
+      .pdep-not-arrived {
+        color: #7388a3;
+        font-size: 8px;
+        font-weight: 800;
+        font-style: italic;
+      }
+
+      .pdep-note-readonly {
+        color: #9eb0c5;
+        font-size: 9px;
       }
 
       .pdep-save {

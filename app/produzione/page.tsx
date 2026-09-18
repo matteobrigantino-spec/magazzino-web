@@ -770,6 +770,7 @@ function formatItDate(value: string) {
 function StatusBadge({ status }: { status: string }) {
   return (
     <span className={`prod-status ${status}`}>
+      <em className={`prod-status-dot ${status}`} />
       {statusLabel[status] || status.toUpperCase()}
     </span>
   );
@@ -1170,42 +1171,61 @@ function Styles() {
 
       .prod-status {
         display: inline-flex;
-        padding: 5px 7px;
+        align-items: center;
+        gap: 5px;
+        padding: 6px 9px;
         border-radius: 999px;
-        font-size: 7px;
+        font-size: 8px;
         font-weight: 950;
+        letter-spacing: .2px;
         white-space: nowrap;
       }
 
-      .prod-status.queued {
-        border: 1px solid rgba(148,163,184,.22);
-        background: rgba(148,163,184,.07);
-        color: #cbd5e1;
+      .prod-status-dot {
+        width: 6px;
+        height: 6px;
+        flex: 0 0 auto;
+        border-radius: 50%;
+        font-style: normal;
       }
+
+      .prod-status.queued {
+        border: 1px solid rgba(148,163,184,.30);
+        background: rgba(148,163,184,.10);
+        color: #dbe3ed;
+      }
+      .prod-status-dot.queued { background: #94a3b8; }
 
       .prod-status.working {
-        border: 1px solid rgba(59,130,246,.30);
-        background: rgba(59,130,246,.10);
-        color: #93c5fd;
+        border: 1px solid rgba(59,130,246,.45);
+        background: rgba(59,130,246,.16);
+        color: #bfdbfe;
+        box-shadow: 0 0 0 3px rgba(59,130,246,.08);
       }
+      .prod-status-dot.working { background: #3b82f6; }
 
       .prod-status.waiting {
-        border: 1px solid rgba(245,158,11,.30);
-        background: rgba(245,158,11,.08);
-        color: #fbbf24;
+        border: 1px solid rgba(245,158,11,.45);
+        background: rgba(245,158,11,.14);
+        color: #fde68a;
+        box-shadow: 0 0 0 3px rgba(245,158,11,.08);
       }
+      .prod-status-dot.waiting { background: #f59e0b; }
 
       .prod-status.blocked {
-        border: 1px solid rgba(244,63,94,.32);
-        background: rgba(244,63,94,.08);
-        color: #fb7185;
+        border: 1px solid rgba(244,63,94,.48);
+        background: rgba(244,63,94,.16);
+        color: #fecdd3;
+        box-shadow: 0 0 0 3px rgba(244,63,94,.08);
       }
+      .prod-status-dot.blocked { background: #f43f5e; }
 
       .prod-status.completed {
-        border: 1px solid rgba(34,197,94,.30);
-        background: rgba(34,197,94,.08);
-        color: #86efac;
+        border: 1px solid rgba(34,197,94,.45);
+        background: rgba(34,197,94,.16);
+        color: #bbf7d0;
       }
+      .prod-status-dot.completed { background: #22c55e; }
 
       .prod-empty,
       .prod-empty-cell {

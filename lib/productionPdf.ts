@@ -188,6 +188,12 @@ export function buildProductionPdf(rows: ProductionPdfRow[], logo: string, meta:
         }
         x += widths[index];
       });
+      // A horizontal line under every row so each boat is clearly its own
+      // block, not just separated by blank space.
+      doc.setDrawColor(160, 169, 182);
+      doc.setLineWidth(0.25);
+      doc.line(margin, y + height, margin + tableWidth, y + height);
+      doc.setLineWidth(0.2);
       y += height;
       offset += count;
       if (offset < maxLines) {

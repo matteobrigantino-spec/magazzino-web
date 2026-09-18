@@ -107,6 +107,12 @@ export default function ProductionBoatDetailPage({
   const [formDeck, setFormDeck] = useState("");
   const [formAccessories, setFormAccessories] = useState("");
   const [formNote, setFormNote] = useState("");
+  const [formTubeColor, setFormTubeColor] = useState("");
+
+  // Colore tubolare: si può impostare anche qui, sulla scheda del
+  // battello, non solo alla creazione o dal reparto Tubolari - utile
+  // per i battelli inseriti prima di arrivare a quel reparto.
+  const [tubeColorCurrent, setTubeColorCurrent] = useState("");
 
   // Barra di avanzamento a step: un tap sul reparto attuale apre questo
   // pannellino per cambiarne lo stato, senza uscire dalla scheda.
@@ -123,7 +129,7 @@ export default function ProductionBoatDetailPage({
   async function loadData() {
     setLoading(true);
 
-    const [boatRes, depRes, stepRes, optionsRes] = await Promise.all([
+    const [boatRes, depRes, stepRes, optionsRes, tubRes] = await Promise.all([
       supabase
         .from("production_boats")
         .select("id,progressive_no,order_number,model_boat,hull,stringers,deck,accessories,note,status,created_at,completed_at")
@@ -143,6 +149,11 @@ export default function ProductionBoatDetailPage({
         .eq("active", true)
         .order("sort_order", { ascending: true })
         .order("name", { ascending: true }),
+      supabase
+        .from("production_tubolari")
+        .select("boat_id,tube_color")
+        .eq("boat_id", boatId)
+        .maybeSingle(),
     ]);
 
     if (boatRes.error || !boatRes.data) {
@@ -180,6 +191,11 @@ export default function ProductionBoatDetailPage({
     setFormDeck(cleanBoat.deck);
     setFormAccessories(cleanBoat.accessories);
     setFormNote(cleanBoat.note || "");
+
+    const cleanTubeColor =
+      !tubRes.error && tubRes.data ? String((tubRes.data as any).tube_color || "") : "";
+    setTubeColorCurrent(cleanTubeColor);
+    setFormTubeColor(cleanTubeColor);
 
     const cleanDeps = (depRes.data || []).map((row: any) => ({
       id: String(row.id),
@@ -344,6 +360,7 @@ export default function ProductionBoatDetailPage({
     setFormDeck(boat.deck);
     setFormAccessories(boat.accessories);
     setFormNote(boat.note || "");
+    setFormTubeColor(tubeColorCurrent);
     setSaveError("");
     setEditing(true);
   }
@@ -383,6 +400,19 @@ export default function ProductionBoatDetailPage({
 
     if (error) {
       setSaveError("Errore salvataggio modifiche: " + error.message);
+      setSaving(false);
+      return;
+    }
+
+    const tubError = await supabase
+      .from("production_tubolari")
+      .upsert(
+        { boat_id: boatId, tube_color: formTubeColor.trim() },
+        { onConflict: "boat_id" }
+      );
+
+    if (tubError.error) {
+      setSaveError("Errore salvataggio colore tubolare: " + tubError.error.message);
       setSaving(false);
       return;
     }
@@ -499,6 +529,15 @@ export default function ProductionBoatDetailPage({
               </select>
             </EditField>
 
+            <EditField label="Colore tubolare (facoltativo)">
+              <select value={formTubeColor} onChange={(e) => setFormTubeColor(e.target.value)}>
+                <option value="">Nessuno / non è un gommone...</option>
+                {withCurrentValue(colorOptions, formTubeColor).map((option) => (
+                  <option key={option.id} value={option.name}>{option.name}</option>
+                ))}
+              </select>
+            </EditField>
+
             <EditField label="Accessori">
               <input
                 value={formAccessories}
@@ -531,6 +570,7 @@ export default function ProductionBoatDetailPage({
             <Info label="Ragno / Longheroni" value={boat.stringers || "—"} />
             <Info label="Coperta" value={boat.deck || "—"} />
             <Info label="Accessori" value={boat.accessories || "—"} />
+            <Info label="Colore tubolare" value={tubeColorCurrent || "—"} />
           </section>
 
           <section className="pbd-card">

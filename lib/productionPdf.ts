@@ -113,14 +113,14 @@ export function buildProductionPdf(rows: ProductionPdfRow[], logo: string, meta:
     // A visible grid: vertical lines between every column, so it is unmistakable
     // which text (and which checkbox) belongs to Carena vs Ragno/Longheroni vs
     // Coperta vs Accessori, even when the crew is skimming the page quickly.
-    doc.setDrawColor(190, 197, 207);
-    doc.setLineWidth(0.25);
+    doc.setDrawColor(160, 169, 182);
+    doc.setLineWidth(0.3);
     let gridX = margin;
     widths.forEach((w, index) => {
       gridX += w;
       if (index < widths.length - 1) doc.line(gridX, headerY, gridX, bottom);
     });
-    doc.setDrawColor(150, 159, 172);
+    doc.setDrawColor(130, 140, 155);
     doc.rect(margin, headerY, tableWidth, bottom - headerY);
     doc.setLineWidth(0.2);
 
@@ -169,11 +169,17 @@ export function buildProductionPdf(rows: ProductionPdfRow[], logo: string, meta:
           doc.text(line, x + padding, y + padding + 3.2 + lineIndex * lineHeight)
         );
         // The crew ticks this box by hand once that part is physically done.
-        // It sits tucked against its own column's grid line (not floating in
-        // open space) so it visibly belongs to Carena / Ragno-Longheroni /
-        // Coperta / Accessori and never reads as belonging to the next column.
+        // It is pinned right next to its OWN value ("Bianco [ ]" reads as one
+        // unit) instead of floating at the far edge of the column, where it
+        // could look like it belongs to the next column instead. It only
+        // falls back toward the column's right edge when the value itself is
+        // too long to leave room beside it.
         if (offset === 0 && CHECKBOX_COLUMNS.has(index)) {
-          const boxX = x + widths[index] - CHECKBOX_SIZE - 2.2;
+          const firstLine = chunk[0] || "-";
+          doc.setFont("helvetica", "normal");
+          const textWidth = doc.getTextWidth(firstLine);
+          const maxBoxX = x + widths[index] - CHECKBOX_SIZE - 1.5;
+          const boxX = Math.min(x + padding + textWidth + 2, maxBoxX);
           const boxY = y + (height - CHECKBOX_SIZE) / 2;
           doc.setDrawColor(90, 100, 115);
           doc.setLineWidth(0.35);

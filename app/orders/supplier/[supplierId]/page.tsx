@@ -654,6 +654,162 @@ export default function SupplierOrderPage() {
       );
     }
 
+    /*
+      SCHEDE COLORE/DETTAGLI (kit tappezzeria)
+
+      Chi prepara il kit in laboratorio deve capire a colpo d'occhio
+      quale colore/dettaglio/cucitura/trapuntatura usare, senza
+      dover decifrare una riga fitta di barre. Ogni variante viene
+      quindi stampata come una scheda separata, con etichetta e
+      valore ognuno sulla propria riga.
+    */
+    const VARIANT_CARD_WIDTH = 80;
+    const VARIANT_CARD_PADDING = 3;
+    const VARIANT_LABEL_WIDTH = 32;
+    const VARIANT_FONT_SIZE = 8;
+    const VARIANT_LINE_HEIGHT_FACTOR = 1.3;
+    const VARIANT_LINE_HEIGHT =
+      VARIANT_FONT_SIZE * 0.352778 * VARIANT_LINE_HEIGHT_FACTOR;
+    const VARIANT_HEADER_HEIGHT = 7;
+    const VARIANT_CARD_GAP = 2.5;
+
+    function buildVariantFields(variant: LineVariant) {
+      const fields: { label: string; value: string }[] = [];
+
+      if (variant.color) {
+        fields.push({ label: "Colore", value: variant.color });
+      }
+
+      if (variant.details_logos) {
+        fields.push({
+          label: "Dettagli e loghi",
+          value: variant.details_logos,
+        });
+      }
+
+      if (variant.stitching) {
+        fields.push({ label: "Cucitura", value: variant.stitching });
+      }
+
+      if (variant.quilting) {
+        fields.push({ label: "Trapuntatura", value: variant.quilting });
+      }
+
+      if (variant.note) {
+        fields.push({ label: "Nota", value: variant.note });
+      }
+
+      return fields.length > 0
+        ? fields
+        : [{ label: "Dettagli", value: "-" }];
+    }
+
+    function layoutVariantCard(variant: LineVariant) {
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(VARIANT_FONT_SIZE);
+
+      const valueMaxWidth =
+        VARIANT_CARD_WIDTH -
+        VARIANT_CARD_PADDING * 2 -
+        VARIANT_LABEL_WIDTH;
+
+      const fields = buildVariantFields(variant).map((field) => ({
+        label: field.label,
+        lines: doc.splitTextToSize(field.value, valueMaxWidth),
+      }));
+
+      const fieldLineCount = fields.reduce(
+        (sum, field) => sum + field.lines.length,
+        0
+      );
+
+      const height =
+        VARIANT_CARD_PADDING * 2 +
+        VARIANT_HEADER_HEIGHT +
+        fieldLineCount * VARIANT_LINE_HEIGHT;
+
+      return { fields, height };
+    }
+
+    function drawVariantCard(
+      x: number,
+      yTop: number,
+      variant: LineVariant,
+      layout: {
+        fields: { label: string; lines: string[] }[];
+        height: number;
+      },
+      index: number,
+      total: number
+    ) {
+      doc.setDrawColor(200, 208, 220);
+      doc.setFillColor(247, 249, 252);
+      doc.roundedRect(
+        x,
+        yTop,
+        VARIANT_CARD_WIDTH,
+        layout.height,
+        1.2,
+        1.2,
+        "FD"
+      );
+
+      doc.setFillColor(37, 99, 235);
+      doc.rect(x, yTop, 1.4, layout.height, "F");
+
+      const headerBaseline = yTop + VARIANT_CARD_PADDING + 3;
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(7.5);
+      doc.setTextColor(37, 99, 235);
+
+      doc.text(
+        total > 1
+          ? `COLORE ${index + 1} DI ${total}`
+          : "DETTAGLI KIT",
+        x + VARIANT_CARD_PADDING + 2,
+        headerBaseline
+      );
+
+      doc.text(
+        `${variant.qty} PZ`,
+        x + VARIANT_CARD_WIDTH - VARIANT_CARD_PADDING,
+        headerBaseline,
+        { align: "right" }
+      );
+
+      doc.setDrawColor(215, 220, 230);
+      doc.line(
+        x + VARIANT_CARD_PADDING,
+        headerBaseline + 2,
+        x + VARIANT_CARD_WIDTH - VARIANT_CARD_PADDING,
+        headerBaseline + 2
+      );
+
+      let cy = yTop + VARIANT_CARD_PADDING + VARIANT_HEADER_HEIGHT + 1;
+      const labelX = x + VARIANT_CARD_PADDING + 2;
+      const valueX = labelX + VARIANT_LABEL_WIDTH;
+
+      layout.fields.forEach((field) => {
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(VARIANT_FONT_SIZE);
+        doc.setTextColor(30, 41, 59);
+        doc.text(`${field.label}:`, labelX, cy);
+
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(15, 23, 42);
+        doc.text(field.lines, valueX, cy, {
+          lineHeightFactor: VARIANT_LINE_HEIGHT_FACTOR,
+        });
+
+        cy += field.lines.length * VARIANT_LINE_HEIGHT;
+      });
+
+      doc.setTextColor(0, 0, 0);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+    }
+
     drawTableHeader();
 
     doc.setFontSize(8);
@@ -673,32 +829,26 @@ export default function SupplierOrderPage() {
           78
         );
 
-      const variantTexts = line.variants.map((variant) => {
-        const parts: string[] = [];
-        if (variant.color) parts.push(`Colore: ${variant.color}`);
-        if (variant.details_logos)
-          parts.push(`Dettagli: ${variant.details_logos}`);
-        if (variant.stitching)
-          parts.push(`Cucitura: ${variant.stitching}`);
-        if (variant.quilting)
-          parts.push(`Trapuntatura: ${variant.quilting}`);
+      const variantLayouts = line.variants.map((variant) =>
+        layoutVariantCard(variant)
+      );
 
-        return (
-          `• ${parts.join("  |  ")}` +
-          (variant.note ? `  |  Nota: ${variant.note}` : "") +
-          `  —  ${variant.qty} pz`
-        );
-      });
+      const variantsTopGap =
+        variantLayouts.length > 0 ? 3 : 0;
 
-      const variantLinesWrapped = variantTexts.flatMap((text) =>
-        doc.splitTextToSize(text, 78)
+      const variantsHeight = variantLayouts.reduce(
+        (sum, layout, index) =>
+          sum + layout.height + (index > 0 ? VARIANT_CARD_GAP : 0),
+        0
       );
 
       const rowHeight =
         Math.max(
           6,
           descriptionLines.length * 4 +
-            variantLinesWrapped.length * 4.2
+            (variantsHeight > 0
+              ? variantsTopGap + variantsHeight
+              : 0)
         );
 
       /*
@@ -748,16 +898,27 @@ export default function SupplierOrderPage() {
         y
       );
 
-      if (variantLinesWrapped.length > 0) {
-        doc.setFontSize(7.2);
-        doc.setTextColor(70, 70, 70);
-        doc.text(
-          variantLinesWrapped,
-          columns.description,
-          y + descriptionLines.length * 4 + 3,
-          { lineHeightFactor: 1.5 }
-        );
+      if (variantLayouts.length > 0) {
+        let cardY =
+          y + descriptionLines.length * 4 + variantsTopGap;
+
+        line.variants.forEach((variant, index) => {
+          const layout = variantLayouts[index];
+
+          drawVariantCard(
+            columns.description,
+            cardY,
+            variant,
+            layout,
+            index,
+            line.variants.length
+          );
+
+          cardY += layout.height + VARIANT_CARD_GAP;
+        });
+
         doc.setTextColor(0, 0, 0);
+        doc.setFont("helvetica", "normal");
         doc.setFontSize(8);
       }
 

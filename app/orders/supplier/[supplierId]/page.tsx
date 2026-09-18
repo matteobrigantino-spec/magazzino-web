@@ -927,18 +927,22 @@ export default function SupplierOrderPage() {
         Number(line.item.box_qty || 1)
       );
 
+      const hasBoxQty = lineBoxQty > 1;
+
       const lineBoxes = Math.ceil(
         Number(line.qty || 0) / lineBoxQty
       );
 
-      doc.text(
-        String(lineBoxes),
-        columns.boxes,
-        y,
-        {
-          align: "right",
-        }
-      );
+      if (hasBoxQty) {
+        doc.text(
+          String(lineBoxes),
+          columns.boxes,
+          y,
+          {
+            align: "right",
+          }
+        );
+      }
 
       doc.text(
         String(line.qty),

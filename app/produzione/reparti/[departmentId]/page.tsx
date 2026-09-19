@@ -15,7 +15,7 @@ type Department = {
 
 type Boat = {
   id: string;
-  progressive_no: number;
+  progressive_no: number | null;
   order_number: string;
   model_boat: string;
   hull: string;
@@ -149,7 +149,10 @@ export default function ProductionDepartmentPage({
 
       const cleanBoats: Boat[] = (boatRes.data || []).map((row: any) => ({
         id: String(row.id),
-        progressive_no: Number(row.progressive_no || 0),
+        progressive_no:
+          row.progressive_no === null || row.progressive_no === undefined
+            ? null
+            : Number(row.progressive_no),
         order_number: String(row.order_number || ""),
         model_boat: String(row.model_boat || ""),
         hull: String(row.hull || ""),
@@ -307,7 +310,10 @@ export default function ProductionDepartmentPage({
     setBoats(
       (boatRes.data || []).map((row: any) => ({
         id: String(row.id),
-        progressive_no: Number(row.progressive_no || 0),
+        progressive_no:
+          row.progressive_no === null || row.progressive_no === undefined
+            ? null
+            : Number(row.progressive_no),
         order_number: String(row.order_number || ""),
         model_boat: String(row.model_boat || ""),
         hull: String(row.hull || ""),
@@ -346,6 +352,32 @@ export default function ProductionDepartmentPage({
         (row): row is { key: string; step: Step; boat: Boat } => Boolean(row.boat)
       );
   }, [isTubolariDept, boats, steps, boatMap]);
+
+  // Numero progressivo: non e' piu' assegnato in automatico, si inserisce
+  // a mano qui (o dalla pagina principale) solo quando serve per stampare
+  // il programma di reparto in PDF.
+  function editProgressiveDraft(boatId: string, value: string) {
+    const parsed = value.trim() === "" ? null : Number(value);
+    setBoats((current) =>
+      current.map((boat) =>
+        boat.id === boatId ? { ...boat, progressive_no: parsed } : boat
+      )
+    );
+  }
+
+  async function saveProgressive(boatId: string, value: string) {
+    const trimmed = value.trim();
+    const parsed = trimmed === "" ? null : Number(trimmed);
+
+    if (parsed !== null && (!Number.isFinite(parsed) || parsed <= 0)) {
+      return;
+    }
+
+    await supabase
+      .from("production_boats")
+      .update({ progressive_no: parsed })
+      .eq("id", boatId);
+  }
 
   async function saveTubeOnly(boatId: string) {
     setSavingId(boatId);
@@ -446,7 +478,8 @@ export default function ProductionDepartmentPage({
     setErrorMessage("");
 
     const sortedRows = [...rows].sort(
-      (a, b) => a.boat.progressive_no - b.boat.progressive_no
+      (a, b) =>
+        (a.boat.progressive_no ?? Infinity) - (b.boat.progressive_no ?? Infinity)
     );
 
     const fromText = pdfFromProg.trim();
@@ -471,8 +504,14 @@ export default function ProductionDepartmentPage({
     }
 
     const pdfRows = sortedRows.filter((row) => {
-      if (fromNumber !== null && row.boat.progressive_no < fromNumber) return false;
-      if (toNumber !== null && row.boat.progressive_no > toNumber) return false;
+      const prog = row.boat.progressive_no;
+      if (fromNumber !== null || toNumber !== null) {
+        // Con un intervallo impostato, i battelli senza progressivo
+        // assegnato non possono rientrarci: li si esclude.
+        if (prog === null) return false;
+        if (fromNumber !== null && prog < fromNumber) return false;
+        if (toNumber !== null && prog > toNumber) return false;
+      }
       return true;
     });
 
@@ -558,7 +597,7 @@ export default function ProductionDepartmentPage({
 
       const values = isTubolariDept
         ? [
-            String(boat.progressive_no),
+            boat.progressive_no !== null ? String(boat.progressive_no) : "-",
             boat.order_number,
             boat.model_boat,
             boat.hull,
@@ -569,7 +608,7 @@ export default function ProductionDepartmentPage({
             noteText,
           ]
         : [
-            String(boat.progressive_no),
+            boat.progressive_no !== null ? String(boat.progressive_no) : "-",
             boat.order_number,
             boat.model_boat,
             boat.hull,
@@ -779,7 +818,17 @@ export default function ProductionDepartmentPage({
                       className="pdep-row"
                       onDoubleClick={() => router.push(`/produzione/${boat.id}`)}
                     >
-                      <td><strong>{boat.progressive_no}</strong></td>
+                      <td className="pdep-prog-cell" onDoubleClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="number"
+                          min="1"
+                          className="pdep-prog-input"
+                          placeholder="—"
+                          value={boat.progressive_no ?? ""}
+                          onChange={(e) => editProgressiveDraft(boat.id, e.target.value)}
+                          onBlur={(e) => saveProgressive(boat.id, e.target.value)}
+                        />
+                      </td>
                       <td>
                         <button
                           type="button"
@@ -1158,6 +1207,28 @@ function Styles() {
         cursor: pointer;
         font-size: 9px;
         font-weight: 950;
+      }
+
+      .pdep-prog-cell {
+        padding: 6px !important;
+      }
+
+      .pdep-prog-input {
+        width: 52px;
+        min-height: 28px;
+        padding: 0 6px;
+        background: #081524;
+        color: #fff;
+        border: 1px solid rgba(148,163,184,.22);
+        border-radius: 6px;
+        font-size: 10.5px;
+        font-weight: 800;
+        text-align: center;
+      }
+
+      .pdep-prog-input:focus {
+        outline: none;
+        border-color: rgba(96,165,250,.55);
       }
 
       .pdep-status-select,

@@ -6,7 +6,7 @@ import { supabase } from "../../../lib/supabaseClient";
 
 type Boat = {
   id: string;
-  progressive_no: number;
+  progressive_no: number | null;
   order_number: string;
   model_boat: string;
   hull: string;
@@ -17,6 +17,7 @@ type Boat = {
   status: string;
   created_at: string;
   completed_at: string | null;
+  requested_delivery_date: string | null;
 };
 
 type Department = {
@@ -86,6 +87,13 @@ const statusLabel: Record<string, string> = {
   completed: "Completato",
 };
 
+function formatItDate(value: string) {
+  if (!value) return "";
+  const [year, month, day] = value.split("-");
+  if (!year || !month || !day) return value;
+  return `${day}/${month}/${year}`;
+}
+
 function days(start: string, end: string | null) {
   const a = new Date(start).getTime();
   const b = end ? new Date(end).getTime() : Date.now();
@@ -141,6 +149,8 @@ export default function ProductionBoatDetailPage({
   const [formAccessories, setFormAccessories] = useState("");
   const [formNote, setFormNote] = useState("");
   const [formTubeColor, setFormTubeColor] = useState("");
+  const [formProgressive, setFormProgressive] = useState("");
+  const [formRequestedDeliveryDate, setFormRequestedDeliveryDate] = useState("");
 
   // Colore tubolare: si può impostare anche qui, sulla scheda del
   // battello, non solo alla creazione o dal reparto Tubolari - utile
@@ -516,7 +526,7 @@ export default function ProductionBoatDetailPage({
     const [boatRes, depRes, stepRes, optionsRes, tubRes] = await Promise.all([
       supabase
         .from("production_boats")
-        .select("id,progressive_no,order_number,model_boat,hull,stringers,deck,accessories,note,status,created_at,completed_at")
+        .select("id,progressive_no,order_number,model_boat,hull,stringers,deck,accessories,note,status,created_at,completed_at,requested_delivery_date")
         .eq("id", boatId)
         .maybeSingle(),
       supabase
@@ -554,7 +564,10 @@ export default function ProductionBoatDetailPage({
 
     const cleanBoat: Boat = {
       id: String(boatRes.data.id),
-      progressive_no: Number(boatRes.data.progressive_no || 0),
+      progressive_no:
+        boatRes.data.progressive_no === null || boatRes.data.progressive_no === undefined
+          ? null
+          : Number(boatRes.data.progressive_no),
       order_number: String(boatRes.data.order_number || ""),
       model_boat: String(boatRes.data.model_boat || ""),
       hull: String(boatRes.data.hull || ""),
@@ -565,6 +578,9 @@ export default function ProductionBoatDetailPage({
       status: String(boatRes.data.status || ""),
       created_at: String(boatRes.data.created_at || ""),
       completed_at: boatRes.data.completed_at ? String(boatRes.data.completed_at) : null,
+      requested_delivery_date: boatRes.data.requested_delivery_date
+        ? String(boatRes.data.requested_delivery_date)
+        : null,
     };
 
     setBoat(cleanBoat);
@@ -575,6 +591,8 @@ export default function ProductionBoatDetailPage({
     setFormDeck(cleanBoat.deck);
     setFormAccessories(cleanBoat.accessories);
     setFormNote(cleanBoat.note || "");
+    setFormProgressive(cleanBoat.progressive_no === null ? "" : String(cleanBoat.progressive_no));
+    setFormRequestedDeliveryDate(cleanBoat.requested_delivery_date || "");
 
     const cleanTubeColor =
       !tubRes.error && tubRes.data ? String((tubRes.data as any).tube_color || "") : "";
@@ -776,6 +794,17 @@ export default function ProductionBoatDetailPage({
       return;
     }
 
+    const progressiveTrimmed = formProgressive.trim();
+    const progressiveValue = progressiveTrimmed === "" ? null : Number(progressiveTrimmed);
+
+    if (
+      progressiveValue !== null &&
+      (!Number.isFinite(progressiveValue) || progressiveValue <= 0)
+    ) {
+      setSaveError("Il numero progressivo non è valido.");
+      return;
+    }
+
     setSaving(true);
 
     const { error } = await supabase
@@ -788,6 +817,8 @@ export default function ProductionBoatDetailPage({
         deck: formDeck.trim(),
         accessories: formAccessories.trim(),
         note: formNote.trim() || null,
+        progressive_no: progressiveValue,
+        requested_delivery_date: formRequestedDeliveryDate || null,
       })
       .eq("id", boatId);
 
@@ -840,7 +871,9 @@ export default function ProductionBoatDetailPage({
     <div className="pbd-page">
       <section className="pbd-hero">
         <div>
-          <div className="pbd-eyebrow">SCHEDA PRODUZIONE #{boat.progressive_no}</div>
+          <div className="pbd-eyebrow">
+            SCHEDA PRODUZIONE{boat.progressive_no ? ` · PROG. ${boat.progressive_no}` : ""}
+          </div>
           <h1>{boat.order_number} · {boat.model_boat}</h1>
           <p>
             {boat.status === "completed"
@@ -883,6 +916,24 @@ export default function ProductionBoatDetailPage({
               <input
                 value={formOrderNumber}
                 onChange={(e) => setFormOrderNumber(e.target.value)}
+              />
+            </EditField>
+
+            <EditField label="Numero progressivo (per la stampa PDF)">
+              <input
+                type="number"
+                min="1"
+                placeholder="—"
+                value={formProgressive}
+                onChange={(e) => setFormProgressive(e.target.value)}
+              />
+            </EditField>
+
+            <EditField label="Data di consegna richiesta">
+              <input
+                type="date"
+                value={formRequestedDeliveryDate}
+                onChange={(e) => setFormRequestedDeliveryDate(e.target.value)}
               />
             </EditField>
 
@@ -964,6 +1015,14 @@ export default function ProductionBoatDetailPage({
             <Info label="Coperta" value={boat.deck || "—"} />
             <Info label="Accessori" value={boat.accessories || "—"} />
             <Info label="Colore tubolare" value={tubeColorCurrent || "—"} />
+            <Info
+              label="Consegna richiesta"
+              value={
+                boat.requested_delivery_date
+                  ? formatItDate(boat.requested_delivery_date)
+                  : "—"
+              }
+            />
           </section>
 
           <section className="pbd-card">

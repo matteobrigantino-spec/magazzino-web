@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { selectProductionRows } from "../../lib/productionPdf";
 import { supabase } from "../../lib/supabaseClient";
 
 type Department = {
@@ -15,7 +14,7 @@ type Department = {
 
 type Boat = {
   id: string;
-  progressive_no: number;
+  progressive_no: number | null;
   order_number: string;
   model_boat: string;
   hull: string;
@@ -26,6 +25,7 @@ type Boat = {
   status: string;
   created_at: string;
   completed_at: string | null;
+  requested_delivery_date: string | null;
 };
 
 type Step = {
@@ -97,20 +97,11 @@ export default function ProductionPage() {
   const [message, setMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
 
-  const [pdfFrom, setPdfFrom] = useState("1");
-  const [pdfTo, setPdfTo] = useState("");
   const [pdfLogo, setPdfLogo] = useState("");
   const [pdfLogoLoading, setPdfLogoLoading] = useState(true);
-  const [pdfBusy, setPdfBusy] = useState(false);
-  const [pdfError, setPdfError] = useState("");
-  const [pdfOperator, setPdfOperator] = useState("");
-  const [pdfOrderDate, setPdfOrderDate] = useState(() => todayInputValue());
-  const [pdfUpdatedDate, setPdfUpdatedDate] = useState(() => todayInputValue());
 
   const [upholsteryPdfBusy, setUpholsteryPdfBusy] = useState(false);
   const [upholsteryPdfError, setUpholsteryPdfError] = useState("");
-
-  const [printMenuOpen, setPrintMenuOpen] = useState(false);
 
   useEffect(() => {
     async function loadPdfLogo() {
@@ -128,45 +119,7 @@ export default function ProductionPage() {
     }
 
     loadPdfLogo();
-
-    try {
-      const savedName = localStorage.getItem("magazzino_display_name");
-      const username = localStorage.getItem("magazzino_user");
-      setPdfOperator(savedName || username || "Matteo");
-    } catch {
-      setPdfOperator("Matteo");
-    }
   }, []);
-
-  async function downloadProductionPdf() {
-    setPdfError("");
-    setPdfBusy(true);
-    try {
-      const selected = selectProductionRows(activeBoats, pdfFrom, pdfTo);
-      if (!pdfLogo) throw new Error("Carica il logo aziendale prima di scaricare il PDF.");
-      const { buildProductionPdf } = await import("../../lib/productionPdf");
-      const rows = selected.map((boat, index) => {
-        const step = currentStepMap.get(boat.id);
-        const department = step ? depMap.get(step.department_id) : null;
-        return {
-          row: Number(pdfFrom) + index, progressive: boat.progressive_no,
-          order: boat.order_number, model: boat.model_boat, hull: boat.hull,
-          stringers: boat.stringers, deck: boat.deck, accessories: boat.accessories,
-          department: department?.name || "-", status: statusLabel[step?.status || "queued"] || step?.status || "-",
-          departmentDays: step ? daysFrom(step.entered_at) : 0,
-          totalDays: daysFrom(boat.created_at), note: boat.note || "",
-        };
-      });
-      const doc = buildProductionPdf(rows, pdfLogo, {
-        operator: pdfOperator.trim() || "Matteo",
-        orderDate: formatItDate(pdfOrderDate),
-        updatedDate: formatItDate(pdfUpdatedDate),
-      });
-      await doc.save(`produzione_righe_${Number(pdfFrom)}-${Number(pdfTo)}.pdf`, { returnPromise: true });
-    } catch (error) {
-      setPdfError(error instanceof Error ? error.message : "Impossibile creare il PDF. Riprova.");
-    } finally { setPdfBusy(false); }
-  }
 
   /*
     STATO TAPPEZZERIE BATTELLI
@@ -280,7 +233,6 @@ export default function ProductionPage() {
     }
   }
 
-  const [progressive, setProgressive] = useState("");
   const [orderNumber, setOrderNumber] = useState("");
   const [modelBoat, setModelBoat] = useState("");
   const [hull, setHull] = useState("");
@@ -289,6 +241,7 @@ export default function ProductionPage() {
   const [accessories, setAccessories] = useState("Standard");
   const [note, setNote] = useState("");
   const [tubeColor, setTubeColor] = useState("");
+  const [requestedDeliveryDate, setRequestedDeliveryDate] = useState("");
 
   const [upholsterySuppliers, setUpholsterySuppliers] = useState<
     UpholsterySupplier[]
@@ -419,19 +372,19 @@ export default function ProductionPage() {
     setLoading(true);
     setErrorMessage("");
 
-    const [depRes, boatRes, stepRes, nextRes, optionsRes] = await Promise.all([
+    const [depRes, boatRes, stepRes, optionsRes] = await Promise.all([
       supabase
         .from("production_departments")
         .select("id,name,sort_order,active")
         .order("sort_order", { ascending: true }),
       supabase
         .from("production_boats")
-        .select("id,progressive_no,order_number,model_boat,hull,stringers,deck,accessories,note,status,created_at,completed_at")
-        .order("progressive_no", { ascending: true }),
+        .select("id,progressive_no,order_number,model_boat,hull,stringers,deck,accessories,note,status,created_at,completed_at,requested_delivery_date")
+        .order("requested_delivery_date", { ascending: true, nullsFirst: false })
+        .order("created_at", { ascending: true }),
       supabase
         .from("production_department_steps")
         .select("id,boat_id,department_id,status,entered_at,started_at,completed_at,current_note"),
-      supabase.rpc("next_production_progressive"),
       supabase
         .from("production_options")
         .select("id,option_type,name,active,sort_order")
@@ -441,7 +394,7 @@ export default function ProductionPage() {
     ]);
 
     const firstError =
-      depRes.error || boatRes.error || stepRes.error || nextRes.error || optionsRes.error;
+      depRes.error || boatRes.error || stepRes.error || optionsRes.error;
 
     if (firstError) {
       setErrorMessage("Errore caricamento produzione: " + firstError.message);
@@ -461,7 +414,10 @@ export default function ProductionPage() {
     setBoats(
       (boatRes.data || []).map((row: any) => ({
         id: String(row.id),
-        progressive_no: Number(row.progressive_no || 0),
+        progressive_no:
+          row.progressive_no === null || row.progressive_no === undefined
+            ? null
+            : Number(row.progressive_no),
         order_number: String(row.order_number || ""),
         model_boat: String(row.model_boat || ""),
         hull: String(row.hull || ""),
@@ -472,6 +428,9 @@ export default function ProductionPage() {
         status: String(row.status || ""),
         created_at: String(row.created_at || ""),
         completed_at: row.completed_at ? String(row.completed_at) : null,
+        requested_delivery_date: row.requested_delivery_date
+          ? String(row.requested_delivery_date)
+          : null,
       }))
     );
 
@@ -497,10 +456,6 @@ export default function ProductionPage() {
         sort_order: Number(row.sort_order || 0),
       }))
     );
-
-    if (!progressive) {
-      setProgressive(String(Number(nextRes.data || 1)));
-    }
 
     setLoading(false);
   }
@@ -575,6 +530,32 @@ export default function ProductionPage() {
     return Math.max(0, Math.floor((Date.now() - start) / 86400000));
   }
 
+  // Numero progressivo: non e' piu' assegnato in automatico, si inserisce
+  // a mano (qui o dentro il reparto) solo quando serve per stampare il
+  // programma di reparto in PDF.
+  function editProgressiveDraft(boatId: string, value: string) {
+    const parsed = value.trim() === "" ? null : Number(value);
+    setBoats((current) =>
+      current.map((boat) =>
+        boat.id === boatId ? { ...boat, progressive_no: parsed } : boat
+      )
+    );
+  }
+
+  async function saveProgressive(boatId: string, value: string) {
+    const trimmed = value.trim();
+    const parsed = trimmed === "" ? null : Number(trimmed);
+
+    if (parsed !== null && (!Number.isFinite(parsed) || parsed <= 0)) {
+      return;
+    }
+
+    await supabase
+      .from("production_boats")
+      .update({ progressive_no: parsed })
+      .eq("id", boatId);
+  }
+
   async function createBoat() {
     setMessage("");
     setErrorMessage("");
@@ -597,7 +578,7 @@ export default function ProductionPage() {
       "Matteo";
 
     const { data: newBoatId, error } = await supabase.rpc("create_production_boat", {
-      p_progressive_no: Number(progressive || 0),
+      p_progressive_no: null,
       p_order_number: orderNumber.trim(),
       p_model_boat: modelBoat.trim(),
       p_hull: hull.trim(),
@@ -606,6 +587,7 @@ export default function ProductionPage() {
       p_accessories: accessories.trim(),
       p_note: note.trim() || null,
       p_created_by: operator,
+      p_requested_delivery_date: requestedDeliveryDate || null,
     });
 
     if (error) {
@@ -722,9 +704,9 @@ export default function ProductionPage() {
     setNote("");
     setTubeColor("");
     setTappezzeriaRows([]);
+    setRequestedDeliveryDate("");
     setShowNew(false);
     setSaving(false);
-    setProgressive("");
     await loadData();
   }
 
@@ -795,12 +777,11 @@ export default function ProductionPage() {
           )}
 
           <div className="prod-form-grid">
-            <Field label="Ordine progressivo">
+            <Field label="Data di consegna richiesta">
               <input
-                type="number"
-                min="1"
-                value={progressive}
-                onChange={(e) => setProgressive(e.target.value)}
+                type="date"
+                value={requestedDeliveryDate}
+                onChange={(e) => setRequestedDeliveryDate(e.target.value)}
               />
             </Field>
 
@@ -1150,157 +1131,52 @@ export default function ProductionPage() {
           <div className="prod-main-top">
             <div>
               <h2>Battelli in produzione</h2>
-              <p>{activeBoats.length} battelli attivi, ordinati per numero progressivo.</p>
+              <p>{activeBoats.length} battelli attivi, ordinati per consegna cliente.</p>
             </div>
 
-            <div className="prod-print-menu-wrap">
+            <div className="prod-print-action">
               <button
                 type="button"
-                className="prod-btn secondary"
-                onClick={() => setPrintMenuOpen((current) => !current)}
+                className="prod-btn primary"
+                onClick={downloadUpholsteryStatusPdf}
+                disabled={upholsteryPdfBusy || pdfLogoLoading || !pdfLogo}
               >
-                Stampe {printMenuOpen ? "▴" : "▾"}
+                {upholsteryPdfBusy ? "Creazione PDF..." : "Stampa stato tappezzerie"}
               </button>
-
-              {printMenuOpen && (
-                <>
-                  <div
-                    className="prod-print-menu-backdrop"
-                    onClick={() => setPrintMenuOpen(false)}
-                  />
-
-                  <div className="prod-print-menu">
-                    <div className="prod-print-menu-row">
-                      <label>Programma reparti — intervallo righe</label>
-                      <p id="pdf-range-help">
-                        Usa i numeri della colonna “Riga” della tabella qui sotto, non quelli
-                        di “Prog.”. Gli estremi sono inclusi.
-                      </p>
-                      <div className="prod-print-menu-inline">
-                        <input
-                          type="number"
-                          min="1"
-                          max={activeBoats.length}
-                          step="1"
-                          value={pdfFrom}
-                          aria-describedby="pdf-range-help"
-                          disabled={pdfBusy}
-                          placeholder="Da"
-                          onChange={(e) => setPdfFrom(e.target.value)}
-                        />
-                        <input
-                          type="number"
-                          min="1"
-                          max={activeBoats.length}
-                          step="1"
-                          value={pdfTo}
-                          aria-describedby="pdf-range-help"
-                          placeholder="A"
-                          disabled={pdfBusy}
-                          onChange={(e) => setPdfTo(e.target.value)}
-                        />
-                        <button
-                          type="button"
-                          className="prod-btn secondary small"
-                          disabled={pdfBusy || !activeBoats.length}
-                          onClick={() => {
-                            setPdfFrom("1");
-                            setPdfTo(String(activeBoats.length));
-                          }}
-                        >
-                          Tutte
-                        </button>
-                      </div>
-                      <div className="prod-print-menu-inline">
-                        <label className="prod-print-menu-date">
-                          Data ordine
-                          <input
-                            type="date"
-                            value={pdfOrderDate}
-                            disabled={pdfBusy}
-                            onChange={(e) => setPdfOrderDate(e.target.value)}
-                          />
-                        </label>
-                        <label className="prod-print-menu-date">
-                          Data agg.
-                          <input
-                            type="date"
-                            value={pdfUpdatedDate}
-                            disabled={pdfBusy}
-                            onChange={(e) => setPdfUpdatedDate(e.target.value)}
-                          />
-                        </label>
-                      </div>
-                      <div className="prod-pdf-operator">
-                        Operatore: <strong>{pdfOperator || "Matteo"}</strong>
-                      </div>
-                      <button
-                        type="button"
-                        className="prod-btn primary"
-                        onClick={downloadProductionPdf}
-                        disabled={pdfBusy || pdfLogoLoading || !pdfLogo || !activeBoats.length}
-                      >
-                        {pdfBusy ? "Creazione PDF..." : "Scarica PDF"}
-                      </button>
-                      <p className="prod-pdf-checkbox-hint">
-                        Nel PDF, Carena, Ragno/Longheroni, Coperta e Accessori hanno una
-                        casella vuota da spuntare a mano.
-                      </p>
-                      {pdfError && (
-                        <div role="alert" className="prod-message error">
-                          {pdfError}
-                        </div>
-                      )}
-                    </div>
-
-                    <hr />
-
-                    <div className="prod-print-menu-row">
-                      <label>Stato tappezzerie battelli</label>
-                      <p>
-                        Elenco di tutti i battelli con una richiesta di tappezzeria: ASSEGNATA,
-                        IN ORDINE o DA ORDINARE.
-                      </p>
-                      <button
-                        type="button"
-                        className="prod-btn primary"
-                        onClick={downloadUpholsteryStatusPdf}
-                        disabled={upholsteryPdfBusy || pdfLogoLoading || !pdfLogo}
-                      >
-                        {upholsteryPdfBusy ? "Creazione PDF..." : "Scarica PDF"}
-                      </button>
-                      {upholsteryPdfError && (
-                        <div role="alert" className="prod-message error">
-                          {upholsteryPdfError}
-                        </div>
-                      )}
-                    </div>
-
-                    {!pdfLogoLoading && !pdfLogo && (
-                      <p role="status" className="prod-pdf-logo-missing">
-                        Nessun logo configurato —{" "}
-                        <Link href="/produzione/configurazioni">
-                          caricalo una volta in Configurazioni
-                        </Link>
-                        .
-                      </p>
-                    )}
-                  </div>
-                </>
+              {upholsteryPdfError && (
+                <div role="alert" className="prod-message error">
+                  {upholsteryPdfError}
+                </div>
+              )}
+              {!pdfLogoLoading && !pdfLogo && (
+                <p role="status" className="prod-pdf-logo-missing">
+                  Nessun logo configurato —{" "}
+                  <Link href="/produzione/configurazioni">
+                    caricalo una volta in Configurazioni
+                  </Link>
+                  .
+                </p>
               )}
             </div>
           </div>
+
+          <p className="prod-print-hint">
+            Il programma di reparto (con Carena, Ragno/Longheroni, Coperta e Accessori da
+            spuntare a mano) si stampa da dentro ogni reparto — Verniciatura resina, Tubolari
+            — scegliendo lì l&apos;intervallo di numeri progressivi da inserire a mano prima
+            di stampare.
+          </p>
 
           <div className="prod-table-wrap">
             <table className="prod-table">
               <thead>
                 <tr>
-                  <th>Riga</th>
                   <th>Prog.</th>
                   <th>N° ordine</th>
                   <th>Modello</th>
                   <th>Reparto attuale</th>
                   <th>Stato</th>
+                  <th>Consegna richiesta</th>
                   <th>Giorni reparto</th>
                   <th>Giorni totali</th>
                   <th>Note</th>
@@ -1314,7 +1190,7 @@ export default function ProductionPage() {
                     </td>
                   </tr>
                 ) : (
-                  activeBoats.map((boat, rowIndex) => {
+                  activeBoats.map((boat) => {
                     const step = currentStepMap.get(boat.id);
                     const dep = step ? depMap.get(step.department_id) : null;
 
@@ -1324,13 +1200,27 @@ export default function ProductionPage() {
                         onClick={() => router.push(`/produzione/${boat.id}`)}
                         className="prod-click-row"
                       >
-                        <td>{rowIndex + 1}</td>
-                        <td><strong>{boat.progressive_no}</strong></td>
+                        <td className="prod-prog-cell" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="number"
+                            min="1"
+                            className="prod-prog-input"
+                            placeholder="—"
+                            value={boat.progressive_no ?? ""}
+                            onChange={(e) => editProgressiveDraft(boat.id, e.target.value)}
+                            onBlur={(e) => saveProgressive(boat.id, e.target.value)}
+                          />
+                        </td>
                         <td><span className="prod-order">{boat.order_number}</span></td>
                         <td>{boat.model_boat}</td>
                         <td>{dep?.name || "—"}</td>
                         <td>
                           <StatusBadge status={step?.status || "queued"} />
+                        </td>
+                        <td className="prod-note-cell">
+                          {boat.requested_delivery_date
+                            ? formatItDate(boat.requested_delivery_date)
+                            : "—"}
                         </td>
                         <td>{step ? daysFrom(step.entered_at) : 0} gg</td>
                         <td>{daysFrom(boat.created_at)} gg</td>
@@ -1394,11 +1284,9 @@ function StatusBadge({ status }: { status: string }) {
 function Styles() {
   return (
     <style jsx global>{`
-      .prod-pdf-operator { font-size: 12px; color: #b7c7d9; }
-      .prod-pdf-operator strong { color: white; }
-      .prod-pdf-logo-missing { margin: 10px 0 0; font-size: 11px; color: #fbbf24; }
+      .prod-pdf-logo-missing { margin: 8px 0 0; font-size: 11px; color: #fbbf24; }
       .prod-pdf-logo-missing a { color: #93c5fd; font-weight: 800; }
-      .prod-pdf-checkbox-hint { font-size: 11px; color: #8398b1; margin: 6px 0 0; }
+      .prod-print-hint { margin: -4px 0 12px; font-size: 11px; color: #8398b1; line-height: 1.55; max-width: 720px; }
 
       /* --- DASHBOARD: barra laterale (riepilogo + reparti) + tabella --- */
       .prod-dashboard {
@@ -1528,101 +1416,35 @@ function Styles() {
         font-size: 11px;
       }
 
-      .prod-print-menu-wrap {
-        position: relative;
-      }
-
-      .prod-btn.small {
-        min-height: 33px;
-        padding: 0 10px;
-        font-size: 10px;
-      }
-
-      .prod-print-menu-backdrop {
-        position: fixed;
-        inset: 0;
-        z-index: 20;
-      }
-
-      .prod-print-menu {
-        position: absolute;
-        top: calc(100% + 8px);
-        right: 0;
-        z-index: 21;
-        width: 320px;
-        max-width: 90vw;
-        padding: 15px;
-        border: 1px solid rgba(148,163,184,.20);
-        border-radius: 13px;
-        background: #0d1f33;
-        box-shadow: 0 16px 38px rgba(0,0,0,.45);
-      }
-
-      .prod-print-menu hr {
-        margin: 14px 0;
-        border: none;
-        border-top: 1px solid rgba(148,163,184,.15);
-      }
-
-      .prod-print-menu-row > label {
-        display: block;
-        font-size: 12.5px;
-        font-weight: 850;
-        margin-bottom: 5px;
-      }
-
-      .prod-print-menu-row > p {
-        margin: 0 0 10px;
-        font-size: 10.5px;
-        color: #91a4bc;
-        line-height: 1.5;
-      }
-
-      .prod-print-menu-inline {
-        display: flex;
-        gap: 8px;
-        margin-bottom: 10px;
-        align-items: center;
-      }
-
-      .prod-print-menu-inline input[type="number"] {
-        width: 0;
-        flex: 1;
-        min-height: 34px;
-        padding: 0 9px;
-        background: #081524;
-        color: #fff;
-        border: 1px solid rgba(148,163,184,.20);
-        border-radius: 8px;
-        font-size: 12px;
-      }
-
-      .prod-print-menu-date {
-        flex: 1;
+      .prod-print-action {
         display: flex;
         flex-direction: column;
+        align-items: flex-end;
         gap: 4px;
-        font-size: 9px;
-        font-weight: 800;
-        text-transform: uppercase;
-        letter-spacing: .4px;
-        color: #8195ae;
       }
 
-      .prod-print-menu-date input {
-        min-height: 34px;
-        padding: 0 8px;
+      .prod-prog-cell {
+        padding: 6px 8px !important;
+      }
+
+      .prod-prog-input {
+        width: 56px;
+        min-height: 30px;
+        padding: 0 7px;
         background: #081524;
         color: #fff;
-        border: 1px solid rgba(148,163,184,.20);
-        border-radius: 8px;
+        border: 1px solid rgba(148,163,184,.22);
+        border-radius: 7px;
         font-size: 11.5px;
+        font-weight: 800;
+        text-align: center;
       }
 
-      .prod-print-menu .prod-btn.primary {
-        width: 100%;
-        margin-top: 2px;
+      .prod-prog-input:focus {
+        outline: none;
+        border-color: rgba(96,165,250,.55);
       }
+
       .prod-page {
         width: 100%;
         max-width: 1500px;
@@ -1998,10 +1820,13 @@ function Styles() {
           position: static;
         }
 
-        .prod-print-menu {
-          left: 0;
-          right: 0;
-          width: auto;
+        .prod-main-top {
+          flex-direction: column;
+          align-items: stretch;
+        }
+
+        .prod-print-action {
+          align-items: flex-start;
         }
       }
     `}</style>

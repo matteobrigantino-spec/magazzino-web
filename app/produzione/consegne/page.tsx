@@ -8,7 +8,7 @@ import { fetchCompanyLogo, drawCompanyLogoTopRight } from "../../../lib/pdfLogo"
 
 type Boat = {
   id: string;
-  progressive_no: number;
+  progressive_no: number | null;
   order_number: string;
   model_boat: string;
 };
@@ -113,7 +113,10 @@ export default function ProductionDeliveriesPage() {
 
     const cleanBoats: Boat[] = (boatRes.data || []).map((row: any) => ({
       id: String(row.id),
-      progressive_no: Number(row.progressive_no || 0),
+      progressive_no:
+        row.progressive_no === null || row.progressive_no === undefined
+          ? null
+          : Number(row.progressive_no),
       order_number: String(row.order_number || ""),
       model_boat: String(row.model_boat || ""),
     }));
@@ -330,7 +333,7 @@ export default function ProductionDeliveriesPage() {
     for (const row of rows) {
       const boat = row.boat!;
       const values = [
-        String(boat.progressive_no),
+        boat.progressive_no !== null ? String(boat.progressive_no) : "-",
         boat.order_number,
         boat.model_boat,
         row.item.note || "",

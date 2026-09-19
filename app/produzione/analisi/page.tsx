@@ -12,7 +12,7 @@ type Department = {
 
 type Boat = {
   id: string;
-  progressive_no: number;
+  progressive_no: number | null;
   order_number: string;
   model_boat: string;
   created_at: string;
@@ -98,7 +98,10 @@ export default function ProductionAnalyticsPage() {
     setBoats(
       (boatRes.data || []).map((row: any) => ({
         id: String(row.id),
-        progressive_no: Number(row.progressive_no || 0),
+        progressive_no:
+          row.progressive_no === null || row.progressive_no === undefined
+            ? null
+            : Number(row.progressive_no),
         order_number: String(row.order_number || ""),
         model_boat: String(row.model_boat || ""),
         created_at: String(row.created_at || ""),
@@ -305,7 +308,7 @@ export default function ProductionAnalyticsPage() {
               ) : (
                 completedBoats.map((boat) => (
                   <tr key={boat.id}>
-                    <td>{boat.progressive_no}</td>
+                    <td>{boat.progressive_no ?? "—"}</td>
                     <td><Link href={`/produzione/${boat.id}`}>{boat.order_number}</Link></td>
                     <td>{boat.model_boat}</td>
                     <td>{new Intl.DateTimeFormat("it-IT").format(new Date(boat.created_at))}</td>

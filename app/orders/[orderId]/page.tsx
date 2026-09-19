@@ -37,6 +37,7 @@ type OrderItem = {
   qty: number;
   received_qty: number;
   unit_price: number;
+  requested_delivery_date: string | null;
 };
 
 type LineView = {
@@ -51,6 +52,7 @@ type LineView = {
   unit_price: number;
   stock: number;
   on_order: number;
+  requested_delivery_date: string | null;
 };
 
 type Permissions = {
@@ -253,7 +255,7 @@ export default function OrderDetailPage() {
       } = await supabase
         .from("order_items")
         .select(
-          "id,order_id,item_id,qty,received_qty,unit_price"
+          "id,order_id,item_id,qty,received_qty,unit_price,requested_delivery_date"
         )
         .eq("order_id", orderId);
 
@@ -287,6 +289,10 @@ export default function OrderDetailPage() {
               Number(
                 row.unit_price || 0
               ),
+            requested_delivery_date:
+              row.requested_delivery_date
+                ? String(row.requested_delivery_date)
+                : null,
           })
         );
     } else {
@@ -296,7 +302,7 @@ export default function OrderDetailPage() {
       } = await supabase
         .from("order_items")
         .select(
-          "id,order_id,item_id,qty,received_qty"
+          "id,order_id,item_id,qty,received_qty,requested_delivery_date"
         )
         .eq("order_id", orderId);
 
@@ -327,6 +333,10 @@ export default function OrderDetailPage() {
                 row.received_qty || 0
               ),
             unit_price: 0,
+            requested_delivery_date:
+              row.requested_delivery_date
+                ? String(row.requested_delivery_date)
+                : null,
           })
         );
     }
@@ -415,6 +425,9 @@ export default function OrderDetailPage() {
 
           on_order:
             Number(item?.on_order || 0),
+
+          requested_delivery_date:
+            line.requested_delivery_date,
         };
       });
 
@@ -1240,6 +1253,20 @@ export default function OrderDetailPage() {
 
                     <TableCell>
                       {line.description}
+                      {line.requested_delivery_date && (
+                        <div
+                          style={{
+                            marginTop: 3,
+                            fontSize: 11,
+                            opacity: 0.55,
+                          }}
+                        >
+                          Consegna richiesta:{" "}
+                          {formatDate(
+                            line.requested_delivery_date
+                          )}
+                        </div>
+                      )}
                     </TableCell>
 
                     <TableCell align="right">

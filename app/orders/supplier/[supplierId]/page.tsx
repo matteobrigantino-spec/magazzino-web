@@ -51,6 +51,7 @@ type OrderLine = {
   item: Item;
   qty: number;
   variants: LineVariant[];
+  requestedDelivery: string;
 };
 
 type AtomicOrderResult = {
@@ -77,7 +78,6 @@ export default function SupplierOrderPage() {
 
   const [showAddItems, setShowAddItems] = useState(false);
   const [search, setSearch] = useState("");
-  const [requestedDeliveryDate, setRequestedDeliveryDate] = useState("");
 
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState<
@@ -330,6 +330,7 @@ export default function SupplierOrderPage() {
           item,
           qty: suggestedQty,
           variants: [],
+          requestedDelivery: "",
         };
       })
       .filter((line) => line.qty > 0);
@@ -462,9 +463,23 @@ export default function SupplierOrderPage() {
             Number(item.box_qty || 1)
           ),
           variants: [],
+          requestedDelivery: "",
         },
       ];
     });
+  }
+
+  function changeRequestedDelivery(
+    itemId: string,
+    value: string
+  ) {
+    setLines((current) =>
+      current.map((line) =>
+        line.item.id === itemId
+          ? { ...line, requestedDelivery: value }
+          : line
+      )
+    );
   }
 
   /*
@@ -480,8 +495,7 @@ export default function SupplierOrderPage() {
   async function createOrderPdf(
     orderId: string,
     orderLines: OrderLine[],
-    orderNumber: number | null,
-    requestedDelivery: string
+    orderNumber: number | null
   ) {
     if (!supplier) {
       throw new Error("Fornitore non disponibile");
@@ -539,6 +553,7 @@ export default function SupplierOrderPage() {
     );
 
     doc.setFontSize(9);
+    doc.setTextColor(120, 120, 120);
 
     doc.text(
       `Data: ${formatDateForPdf(new Date())}`,
@@ -546,37 +561,28 @@ export default function SupplierOrderPage() {
       y
     );
 
+    doc.setTextColor(0, 0, 0);
+
     y += 5;
 
-    if (requestedDelivery) {
-      doc.setFont("helvetica", "bold");
-
-      doc.text(
-        `Consegna richiesta: ${formatDateForPdf(
-          parseDateInputValue(requestedDelivery)
-        )}`,
-        marginLeft,
-        y
-      );
-
-      doc.setFont("helvetica", "normal");
-
-      y += 5;
-    }
-
     if (!orderNumber) {
+      doc.setTextColor(120, 120, 120);
+
       doc.text(
         `ID ordine: ${orderId}`,
         marginLeft,
         y
       );
 
+      doc.setTextColor(0, 0, 0);
+
       y += 5;
     }
 
     y += 3;
 
-    doc.setDrawColor(180);
+    doc.setDrawColor(225);
+    doc.setLineWidth(0.3);
 
     doc.line(
       marginLeft,
@@ -585,18 +591,25 @@ export default function SupplierOrderPage() {
       y
     );
 
+    doc.setLineWidth(0.2);
+
     y += 7;
 
     /*
       INTESTAZIONE TABELLA
+
+      La consegna richiesta e' per singolo articolo (kit
+      diversi possono arrivare in mesi diversi), quindi non
+      c'e' piu' un'unica data in cima al PDF: ogni riga ha
+      la sua colonna CONSEGNA, valorizzata solo se impostata.
     */
     const columns = {
       code: marginLeft,
       description: 43,
-      boxes: 126,
-      qty: 142,
-      price: 160,
-      total: 190,
+      consegna: 108,
+      qty: 152,
+      price: 172,
+      total: 196,
     };
 
     function drawTableHeader() {
@@ -605,7 +618,8 @@ export default function SupplierOrderPage() {
         "bold"
       );
 
-      doc.setFontSize(8);
+      doc.setFontSize(7.5);
+      doc.setTextColor(110, 110, 110);
 
       doc.text(
         "CODICE",
@@ -620,16 +634,13 @@ export default function SupplierOrderPage() {
       );
 
       doc.text(
-        "BOX",
-        columns.boxes,
-        y,
-        {
-          align: "right",
-        }
+        "CONSEGNA",
+        columns.consegna,
+        y
       );
 
       doc.text(
-        "QTA PZ",
+        "QTA",
         columns.qty,
         y,
         {
@@ -655,7 +666,12 @@ export default function SupplierOrderPage() {
         }
       );
 
+      doc.setTextColor(0, 0, 0);
+
       y += 3;
+
+      doc.setDrawColor(225);
+      doc.setLineWidth(0.25);
 
       doc.line(
         marginLeft,
@@ -663,6 +679,8 @@ export default function SupplierOrderPage() {
         pageWidth - marginRight,
         y
       );
+
+      doc.setLineWidth(0.2);
 
       y += 5;
 
@@ -829,7 +847,7 @@ export default function SupplierOrderPage() {
       const descriptionLines =
         doc.splitTextToSize(
           line.item.description || "-",
-          78
+          58
         );
 
       const variantLayouts = line.variants.map((variant) =>
@@ -845,9 +863,20 @@ export default function SupplierOrderPage() {
         0
       );
 
+      const lineBoxQty = Math.max(
+        1,
+        Number(line.item.box_qty || 1)
+      );
+
+      const hasBoxQty = lineBoxQty > 1;
+
+      const lineBoxes = Math.ceil(
+        Number(line.qty || 0) / lineBoxQty
+      );
+
       const rowHeight =
         Math.max(
-          6,
+          hasBoxQty ? 9 : 6,
           descriptionLines.length * 4 +
             (variantsHeight > 0
               ? variantsTopGap + variantsHeight
@@ -889,17 +918,31 @@ export default function SupplierOrderPage() {
         "normal"
       );
 
+      doc.setTextColor(130, 130, 130);
+
       doc.text(
         line.item.supplier_code || "-",
         columns.code,
         y
       );
 
+      doc.setTextColor(0, 0, 0);
+
       doc.text(
         descriptionLines,
         columns.description,
         y
       );
+
+      if (line.requestedDelivery) {
+        doc.text(
+          formatDateForPdf(
+            parseDateInputValue(line.requestedDelivery)
+          ),
+          columns.consegna,
+          y
+        );
+      }
 
       if (variantLayouts.length > 0) {
         let cardY =
@@ -925,28 +968,6 @@ export default function SupplierOrderPage() {
         doc.setFontSize(8);
       }
 
-      const lineBoxQty = Math.max(
-        1,
-        Number(line.item.box_qty || 1)
-      );
-
-      const hasBoxQty = lineBoxQty > 1;
-
-      const lineBoxes = Math.ceil(
-        Number(line.qty || 0) / lineBoxQty
-      );
-
-      if (hasBoxQty) {
-        doc.text(
-          String(lineBoxes),
-          columns.boxes,
-          y,
-          {
-            align: "right",
-          }
-        );
-      }
-
       doc.text(
         String(line.qty),
         columns.qty,
@@ -955,6 +976,23 @@ export default function SupplierOrderPage() {
           align: "right",
         }
       );
+
+      if (hasBoxQty) {
+        doc.setFontSize(6.5);
+        doc.setTextColor(150, 150, 150);
+
+        doc.text(
+          `${lineBoxes} box`,
+          columns.qty,
+          y + 3.4,
+          {
+            align: "right",
+          }
+        );
+
+        doc.setTextColor(0, 0, 0);
+        doc.setFontSize(8);
+      }
 
       doc.text(
         formatPdfEuro(line.item.price),
@@ -974,9 +1012,10 @@ export default function SupplierOrderPage() {
         }
       );
 
-      y += rowHeight + 2;
+      y += rowHeight + 3;
 
-      doc.setDrawColor(225);
+      doc.setDrawColor(240);
+      doc.setLineWidth(0.15);
 
       doc.line(
         marginLeft,
@@ -984,6 +1023,8 @@ export default function SupplierOrderPage() {
         pageWidth - marginRight,
         y
       );
+
+      doc.setLineWidth(0.2);
 
       y += 3;
     });
@@ -996,17 +1037,38 @@ export default function SupplierOrderPage() {
       y = 20;
     }
 
-    y += 5;
+    y += 4;
 
-    doc.setFont(
-      "helvetica",
-      "bold"
+    doc.setDrawColor(200);
+    doc.setLineWidth(0.3);
+
+    doc.line(
+      120,
+      y,
+      pageWidth - marginRight,
+      y
     );
 
-    doc.setFontSize(11);
+    doc.setLineWidth(0.2);
+
+    y += 7;
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(120, 120, 120);
 
     doc.text(
-      `TOTALE ORDINE: ${formatPdfEuro(totalOrder)}`,
+      "TOTALE ORDINE",
+      120,
+      y
+    );
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(13);
+    doc.setTextColor(0, 0, 0);
+
+    doc.text(
+      formatPdfEuro(totalOrder),
       pageWidth - marginRight,
       y,
       {
@@ -1159,18 +1221,22 @@ export default function SupplierOrderPage() {
     }
 
     /*
-      COLORE/DETTAGLI PER RIGA (solo Tappezzerie)
+      COLORE/DETTAGLI E CONSEGNA PER RIGA
 
       L'ordine è già sicuro (righe e quantità create sopra). Questo
-      salva solo la suddivisione per colore, come informazione in
-      più: se fallisce non tocchiamo l'ordine già creato, avvisiamo
-      soltanto.
+      salva solo informazioni in più per riga (colore/dettagli
+      tappezzeria, data di consegna richiesta): se fallisce non
+      tocchiamo l'ordine già creato, avvisiamo soltanto.
     */
     const linesWithVariants = lines.filter(
       (line) => line.variants.length > 0
     );
 
-    if (linesWithVariants.length > 0) {
+    const linesWithDelivery = lines.filter(
+      (line) => line.requestedDelivery
+    );
+
+    if (linesWithVariants.length > 0 || linesWithDelivery.length > 0) {
       try {
         const { data: orderItemsData, error: orderItemsError } =
           await supabase
@@ -1209,9 +1275,26 @@ export default function SupplierOrderPage() {
 
           if (variantsError) throw variantsError;
         }
+
+        for (const line of linesWithDelivery) {
+          const orderItemId = orderItemIdByItemId.get(
+            line.item.id
+          );
+
+          if (!orderItemId) continue;
+
+          const { error: deliveryError } = await supabase
+            .from("order_items")
+            .update({
+              requested_delivery_date: line.requestedDelivery,
+            })
+            .eq("id", orderItemId);
+
+          if (deliveryError) throw deliveryError;
+        }
       } catch (variantsSaveError: any) {
         console.error(
-          "Errore salvataggio colore/dettagli riga:",
+          "Errore salvataggio colore/dettagli/consegna riga:",
           variantsSaveError
         );
       }
@@ -1243,8 +1326,7 @@ export default function SupplierOrderPage() {
         await createOrderPdf(
           orderId,
           lines,
-          orderNumber,
-          requestedDeliveryDate
+          orderNumber
         );
 
       const pdfBlob =
@@ -1305,7 +1387,15 @@ export default function SupplierOrderPage() {
 
       /*
         SALVIAMO URL E PATH NELL'ORDINE
+
+        requested_delivery_date sull'ordine resta come riepilogo
+        (la consegna più vicina tra le righe), usato nella lista
+        ordini: la data vera, per articolo, è su order_items.
       */
+      const earliestDelivery = linesWithDelivery
+        .map((line) => line.requestedDelivery)
+        .sort()[0] || null;
+
       const {
         error: pdfUpdateError,
       } = await supabase
@@ -1318,7 +1408,7 @@ export default function SupplierOrderPage() {
             pdfUrl,
 
           requested_delivery_date:
-            requestedDeliveryDate || null,
+            earliestDelivery,
         })
         .eq(
           "id",
@@ -1671,6 +1761,10 @@ export default function SupplierOrderPage() {
                   Quantità pz
                 </TableHead>
 
+                <TableHead>
+                  Consegna richiesta
+                </TableHead>
+
                 <TableHead align="right">
                   Totale
                 </TableHead>
@@ -1693,8 +1787,8 @@ export default function SupplierOrderPage() {
                   <td
                     colSpan={
                       supplier?.upholstery_enabled
-                        ? 13
-                        : 12
+                        ? 14
+                        : 13
                     }
                     style={{
                       padding: 40,
@@ -1842,6 +1936,36 @@ export default function SupplierOrderPage() {
                       <strong>
                         {line.qty}
                       </strong>
+                    </TableCell>
+
+                    <TableCell>
+                      <input
+                        type="date"
+                        value={
+                          line.requestedDelivery
+                        }
+                        disabled={saving}
+                        onChange={(e) =>
+                          changeRequestedDelivery(
+                            line.item.id,
+                            e.target.value
+                          )
+                        }
+                        style={{
+                          minHeight: 34,
+                          padding: "0 8px",
+                          border:
+                            "1px solid var(--border-color)",
+                          borderRadius: 7,
+                          background:
+                            "var(--input-bg)",
+                          color:
+                            "var(--foreground)",
+                          outline: "none",
+                          fontSize: 12,
+                          width: 128,
+                        }}
+                      />
                     </TableCell>
 
                     <TableCell align="right">
@@ -2374,49 +2498,17 @@ export default function SupplierOrderPage() {
             in un&apos;unica operazione sicura.
           </div>
 
-          <label
+          <div
             style={{
-              marginTop: 14,
-              display: "flex",
-              flexDirection: "column",
-              gap: 4,
+              marginTop: 10,
               fontSize: 12,
-              maxWidth: 220,
+              opacity: 0.55,
             }}
           >
-            <span
-              style={{
-                fontWeight: 800,
-                opacity: 0.7,
-              }}
-            >
-              Data consegna richiesta (facoltativa)
-            </span>
-
-            <input
-              type="date"
-              value={requestedDeliveryDate}
-              onChange={(e) =>
-                setRequestedDeliveryDate(
-                  e.target.value
-                )
-              }
-              disabled={saving}
-              style={{
-                minHeight: 38,
-                padding: "0 10px",
-                border:
-                  "1px solid var(--border-color)",
-                borderRadius: 8,
-                background:
-                  "var(--input-bg)",
-                color:
-                  "var(--foreground)",
-                outline: "none",
-                fontSize: 13,
-              }}
-            />
-          </label>
+            La data di consegna richiesta si imposta
+            per ogni articolo nella tabella qui sopra
+            (facoltativa).
+          </div>
         </div>
 
         <button

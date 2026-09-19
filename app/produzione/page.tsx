@@ -47,6 +47,35 @@ type ProductionOption = {
   sort_order: number;
 };
 
+type UpholsterySupplier = {
+  id: string;
+  name: string;
+};
+
+type UpholsteryItemLookup = {
+  id: string;
+  supplierId: string;
+  description: string;
+};
+
+type UpholsteryOptionRow = {
+  id: string;
+  supplierId: string;
+  option_type: "color" | "details_logos" | "stitching" | "quilting";
+  name: string;
+};
+
+type BoatUpholsteryDraftRow = {
+  key: string;
+  supplierId: string;
+  itemId: string;
+  color: string;
+  detailsLogos: string;
+  stitching: string;
+  quilting: string;
+  note: string;
+};
+
 const statusLabel: Record<string, string> = {
   queued: "DA INIZIARE",
   working: "IN LAVORAZIONE",
@@ -77,6 +106,9 @@ export default function ProductionPage() {
   const [pdfOperator, setPdfOperator] = useState("");
   const [pdfOrderDate, setPdfOrderDate] = useState(() => todayInputValue());
   const [pdfUpdatedDate, setPdfUpdatedDate] = useState(() => todayInputValue());
+
+  const [upholsteryPdfBusy, setUpholsteryPdfBusy] = useState(false);
+  const [upholsteryPdfError, setUpholsteryPdfError] = useState("");
 
   useEffect(() => {
     async function loadPdfLogo() {
@@ -134,6 +166,118 @@ export default function ProductionPage() {
     } finally { setPdfBusy(false); }
   }
 
+  /*
+    STATO TAPPEZZERIE BATTELLI
+
+    Una riga per ogni "richiesta" di tappezzeria di ogni battello
+    (un battello puo' averne piu' di una). Lo stato (ASSEGNATA /
+    IN ORDINE / DA ORDINARE) viene calcolato qui, allo stesso modo
+    della scheda del singolo battello, guardando kit_id e le righe
+    ordine collegate - non e' mai salvato in una colonna a parte.
+  */
+  async function downloadUpholsteryStatusPdf() {
+    setUpholsteryPdfError("");
+    setUpholsteryPdfBusy(true);
+
+    try {
+      if (!pdfLogo) {
+        throw new Error("Carica il logo aziendale prima di scaricare il PDF.");
+      }
+
+      const { data, error } = await supabase
+        .from("production_boat_upholstery")
+        .select(
+          "id,item_id,color,details_logos,stitching,quilting,kit_id,created_at,production_boats(order_number,model_boat),upholstery_kits(matricola),order_items(qty,received_qty,requested_delivery_date)"
+        )
+        .order("created_at", { ascending: true });
+
+      if (error) throw error;
+
+      const requirementRows = (data || []) as any[];
+
+      if (requirementRows.length === 0) {
+        throw new Error("Non ci sono ancora richieste di tappezzeria collegate a nessun battello.");
+      }
+
+      const itemIds = Array.from(
+        new Set(requirementRows.map((row) => String(row.item_id)))
+      );
+
+      let itemDescriptionById: Record<string, string> = {};
+
+      if (itemIds.length > 0) {
+        const { data: itemRows } = await supabase
+          .from("items")
+          .select("id,description")
+          .in("id", itemIds);
+
+        (itemRows || []).forEach((item: any) => {
+          itemDescriptionById[String(item.id)] = String(item.description || "");
+        });
+      }
+
+      const collator = new Intl.Collator("it", { numeric: true, sensitivity: "base" });
+
+      const { buildUpholsteryStatusPdf } = await import("../../lib/productionPdf");
+
+      const rows = requirementRows
+        .map((row) => {
+          const openLines = (row.order_items || []).filter(
+            (line: any) => Number(line.qty || 0) > Number(line.received_qty || 0)
+          );
+
+          const deliveryDates = openLines
+            .map((line: any) => line.requested_delivery_date)
+            .filter((value: any) => Boolean(value))
+            .sort();
+
+          const kitMatricola = row.upholstery_kits
+            ? Number(row.upholstery_kits.matricola)
+            : null;
+
+          const status: "assegnata" | "ordine" | "da_ordinare" = row.kit_id
+            ? "assegnata"
+            : openLines.length > 0
+              ? "ordine"
+              : "da_ordinare";
+
+          const statusInfo =
+            status === "assegnata"
+              ? kitMatricola
+                ? `Kit N. ${kitMatricola}`
+                : "Kit assegnato"
+              : status === "ordine"
+                ? deliveryDates[0]
+                  ? `Consegna richiesta: ${formatItDate(String(deliveryDates[0]))}`
+                  : "In ordine dal fornitore"
+                : "-";
+
+          return {
+            boatOrderNumber: String(row.production_boats?.order_number || "-"),
+            boatModel: String(row.production_boats?.model_boat || "-"),
+            itemDescription: itemDescriptionById[String(row.item_id)] || "-",
+            color: String(row.color || ""),
+            detailsLogos: String(row.details_logos || ""),
+            stitching: String(row.stitching || ""),
+            quilting: String(row.quilting || ""),
+            status,
+            statusInfo,
+          };
+        })
+        .sort((a, b) => collator.compare(a.boatOrderNumber, b.boatOrderNumber));
+
+      const doc = buildUpholsteryStatusPdf(rows, pdfLogo, formatItDate(todayInputValue()));
+
+      await doc.save("stato_tappezzerie_battelli.pdf", { returnPromise: true });
+    } catch (error) {
+      setUpholsteryPdfError(
+        error instanceof Error ? error.message : "Impossibile creare il PDF. Riprova."
+      );
+    } finally {
+      setUpholsteryPdfBusy(false);
+    }
+  }
+
   const [progressive, setProgressive] = useState("");
   const [orderNumber, setOrderNumber] = useState("");
   const [modelBoat, setModelBoat] = useState("");
@@ -144,9 +288,130 @@ export default function ProductionPage() {
   const [note, setNote] = useState("");
   const [tubeColor, setTubeColor] = useState("");
 
+  const [upholsterySuppliers, setUpholsterySuppliers] = useState<
+    UpholsterySupplier[]
+  >([]);
+  const [upholsteryItemLookup, setUpholsteryItemLookup] = useState<
+    UpholsteryItemLookup[]
+  >([]);
+  const [upholsteryOptionRows, setUpholsteryOptionRows] = useState<
+    UpholsteryOptionRow[]
+  >([]);
+  const [tappezzeriaRows, setTappezzeriaRows] = useState<
+    BoatUpholsteryDraftRow[]
+  >([]);
+
   useEffect(() => {
     loadData();
+    loadUpholsteryCatalog();
   }, []);
+
+  async function loadUpholsteryCatalog() {
+    const { data: supplierRows, error: supplierError } = await supabase
+      .from("suppliers")
+      .select("id,name")
+      .eq("upholstery_enabled", true)
+      .order("name", { ascending: true });
+
+    if (supplierError || !supplierRows || supplierRows.length === 0) {
+      setUpholsterySuppliers([]);
+      setUpholsteryItemLookup([]);
+      setUpholsteryOptionRows([]);
+      return;
+    }
+
+    const suppliers: UpholsterySupplier[] = supplierRows.map((row: any) => ({
+      id: String(row.id),
+      name: String(row.name || ""),
+    }));
+
+    setUpholsterySuppliers(suppliers);
+
+    const supplierIds = suppliers.map((supplier) => supplier.id);
+
+    const [itemsRes, optionsRes] = await Promise.all([
+      supabase
+        .from("items")
+        .select("id,supplier_id,description")
+        .in("supplier_id", supplierIds)
+        .order("description", { ascending: true }),
+      supabase
+        .from("upholstery_options")
+        .select("id,supplier_id,option_type,name")
+        .in("supplier_id", supplierIds)
+        .eq("active", true)
+        .order("sort_order", { ascending: true })
+        .order("name", { ascending: true }),
+    ]);
+
+    setUpholsteryItemLookup(
+      (itemsRes.data || []).map((row: any) => ({
+        id: String(row.id),
+        supplierId: String(row.supplier_id),
+        description: String(row.description || ""),
+      }))
+    );
+
+    setUpholsteryOptionRows(
+      (optionsRes.data || []).map((row: any) => ({
+        id: String(row.id),
+        supplierId: String(row.supplier_id),
+        option_type: String(
+          row.option_type
+        ) as UpholsteryOptionRow["option_type"],
+        name: String(row.name || ""),
+      }))
+    );
+  }
+
+  function upholsteryItemsFor(supplierId: string) {
+    return upholsteryItemLookup.filter(
+      (item) => item.supplierId === supplierId
+    );
+  }
+
+  function upholsteryOptionsFor(
+    supplierId: string,
+    type: UpholsteryOptionRow["option_type"]
+  ) {
+    return upholsteryOptionRows.filter(
+      (option) =>
+        option.supplierId === supplierId && option.option_type === type
+    );
+  }
+
+  function addTappezzeriaRow() {
+    setTappezzeriaRows((current) => [
+      ...current,
+      {
+        key: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        supplierId: upholsterySuppliers[0]?.id || "",
+        itemId: "",
+        color: "",
+        detailsLogos: "",
+        stitching: "",
+        quilting: "",
+        note: "",
+      },
+    ]);
+  }
+
+  function removeTappezzeriaRow(key: string) {
+    setTappezzeriaRows((current) =>
+      current.filter((row) => row.key !== key)
+    );
+  }
+
+  function updateTappezzeriaRow(
+    key: string,
+    patch: Partial<BoatUpholsteryDraftRow>
+  ) {
+    setTappezzeriaRows((current) =>
+      current.map((row) =>
+        row.key === key ? { ...row, ...patch } : row
+      )
+    );
+  }
 
   async function loadData() {
     setLoading(true);
@@ -358,7 +623,94 @@ export default function ProductionPage() {
         );
     }
 
-    setMessage(`Ordine ${orderNumber.trim()} inserito in produzione.`);
+    /*
+      TAPPEZZERIA (facoltativa)
+
+      Il battello e' gia' sicuro (creato sopra). Ogni riga tappezzeria
+      compilata diventa una "richiesta" collegata al battello: se in
+      giacenza c'e' gia' un kit che corrisponde ESATTAMENTE (stesso
+      articolo, colore, dettagli, cucitura, trapuntatura) lo assegniamo
+      subito. Altrimenti resta "da ordinare": si puo' cercare in
+      giacenza a mano dalla scheda del battello, anche con un match
+      non esatto.
+    */
+    let assignedCount = 0;
+
+    const validTappezzeriaRows = tappezzeriaRows.filter(
+      (row) =>
+        row.supplierId &&
+        row.itemId &&
+        row.color &&
+        row.detailsLogos &&
+        row.stitching &&
+        row.quilting
+    );
+
+    if (validTappezzeriaRows.length > 0 && newBoatId) {
+      for (const row of validTappezzeriaRows) {
+        try {
+          const { data: inserted, error: insertError } = await supabase
+            .from("production_boat_upholstery")
+            .insert({
+              boat_id: newBoatId,
+              supplier_id: row.supplierId,
+              item_id: row.itemId,
+              color: row.color,
+              details_logos: row.detailsLogos,
+              stitching: row.stitching,
+              quilting: row.quilting,
+              note: row.note.trim() || null,
+            })
+            .select("id")
+            .single();
+
+          if (insertError || !inserted) continue;
+
+          const { data: stockMatch } = await supabase
+            .from("upholstery_kits")
+            .select("id")
+            .eq("supplier_id", row.supplierId)
+            .eq("item_id", row.itemId)
+            .eq("status", "stock")
+            .eq("color", row.color)
+            .eq("details_logos", row.detailsLogos)
+            .eq("stitching", row.stitching)
+            .eq("quilting", row.quilting)
+            .limit(1)
+            .maybeSingle();
+
+          if (stockMatch?.id) {
+            const { error: assignError } = await supabase.rpc(
+              "assign_upholstery_kit_to_boat",
+              {
+                p_kit_id: stockMatch.id,
+                p_boat_upholstery_id: inserted.id,
+              }
+            );
+
+            if (!assignError) {
+              assignedCount += 1;
+            }
+          }
+        } catch (tappezzeriaError) {
+          console.error(
+            "Errore collegamento tappezzeria battello:",
+            tappezzeriaError
+          );
+        }
+      }
+    }
+
+    const tappezzeriaSuffix =
+      validTappezzeriaRows.length > 0
+        ? assignedCount > 0
+          ? ` Tappezzeria: ${assignedCount} di ${validTappezzeriaRows.length} assegnata subito dalla giacenza.`
+          : " Tappezzeria da ordinare (nessun kit compatibile in giacenza)."
+        : "";
+
+    setMessage(
+      `Ordine ${orderNumber.trim()} inserito in produzione.${tappezzeriaSuffix}`
+    );
     setOrderNumber("");
     setModelBoat("");
     setHull("");
@@ -367,6 +719,7 @@ export default function ProductionPage() {
     setAccessories("Standard");
     setNote("");
     setTubeColor("");
+    setTappezzeriaRows([]);
     setShowNew(false);
     setSaving(false);
     setProgressive("");
@@ -550,6 +903,178 @@ export default function ProductionPage() {
             </Field>
           </div>
 
+          <div className="prod-section-head" style={{ marginTop: 22 }}>
+            <div>
+              <div className="prod-eyebrow">TAPPEZZERIA (FACOLTATIVA)</div>
+              <h2 style={{ fontSize: 17 }}>
+                Cosa serve a questo battello
+              </h2>
+            </div>
+
+            <button
+              type="button"
+              className="prod-btn secondary"
+              onClick={addTappezzeriaRow}
+              disabled={upholsterySuppliers.length === 0}
+            >
+              + Aggiungi tappezzeria
+            </button>
+          </div>
+
+          {upholsterySuppliers.length === 0 && (
+            <div className="prod-config-warning">
+              Nessun fornitore con tappezzeria attiva (si attiva dalla
+              scheda del fornitore).
+            </div>
+          )}
+
+          {tappezzeriaRows.map((row) => (
+            <div key={row.key} className="prod-form-grid" style={{ marginTop: 10 }}>
+              <Field label="Fornitore">
+                <select
+                  value={row.supplierId}
+                  onChange={(e) =>
+                    updateTappezzeriaRow(row.key, {
+                      supplierId: e.target.value,
+                      itemId: "",
+                      color: "",
+                      detailsLogos: "",
+                      stitching: "",
+                      quilting: "",
+                    })
+                  }
+                >
+                  {upholsterySuppliers.map((supplier) => (
+                    <option key={supplier.id} value={supplier.id}>
+                      {supplier.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field label="Articolo">
+                <select
+                  value={row.itemId}
+                  onChange={(e) =>
+                    updateTappezzeriaRow(row.key, {
+                      itemId: e.target.value,
+                    })
+                  }
+                >
+                  <option value="">Seleziona articolo...</option>
+                  {upholsteryItemsFor(row.supplierId).map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.description}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field label="Colore">
+                <select
+                  value={row.color}
+                  onChange={(e) =>
+                    updateTappezzeriaRow(row.key, {
+                      color: e.target.value,
+                    })
+                  }
+                >
+                  <option value="">Seleziona...</option>
+                  {upholsteryOptionsFor(row.supplierId, "color").map(
+                    (option) => (
+                      <option key={option.id} value={option.name}>
+                        {option.name}
+                      </option>
+                    )
+                  )}
+                </select>
+              </Field>
+
+              <Field label="Dettagli e loghi">
+                <select
+                  value={row.detailsLogos}
+                  onChange={(e) =>
+                    updateTappezzeriaRow(row.key, {
+                      detailsLogos: e.target.value,
+                    })
+                  }
+                >
+                  <option value="">Seleziona...</option>
+                  {upholsteryOptionsFor(
+                    row.supplierId,
+                    "details_logos"
+                  ).map((option) => (
+                    <option key={option.id} value={option.name}>
+                      {option.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field label="Cucitura">
+                <select
+                  value={row.stitching}
+                  onChange={(e) =>
+                    updateTappezzeriaRow(row.key, {
+                      stitching: e.target.value,
+                    })
+                  }
+                >
+                  <option value="">Seleziona...</option>
+                  {upholsteryOptionsFor(row.supplierId, "stitching").map(
+                    (option) => (
+                      <option key={option.id} value={option.name}>
+                        {option.name}
+                      </option>
+                    )
+                  )}
+                </select>
+              </Field>
+
+              <Field label="Trapuntatura">
+                <select
+                  value={row.quilting}
+                  onChange={(e) =>
+                    updateTappezzeriaRow(row.key, {
+                      quilting: e.target.value,
+                    })
+                  }
+                >
+                  <option value="">Seleziona...</option>
+                  {upholsteryOptionsFor(row.supplierId, "quilting").map(
+                    (option) => (
+                      <option key={option.id} value={option.name}>
+                        {option.name}
+                      </option>
+                    )
+                  )}
+                </select>
+              </Field>
+
+              <Field label="Nota">
+                <input
+                  value={row.note}
+                  onChange={(e) =>
+                    updateTappezzeriaRow(row.key, {
+                      note: e.target.value,
+                    })
+                  }
+                  placeholder="Facoltativa"
+                />
+              </Field>
+
+              <Field label=" ">
+                <button
+                  type="button"
+                  className="prod-btn secondary"
+                  onClick={() => removeTappezzeriaRow(row.key)}
+                >
+                  Rimuovi
+                </button>
+              </Field>
+            </div>
+          ))}
+
           <div className="prod-form-actions">
             <button
               type="button"
@@ -661,6 +1186,34 @@ export default function ProductionPage() {
             </p>
           )}
           {pdfError && <div role="alert" className="prod-message error">{pdfError}</div>}
+        </div>
+
+        <div className="prod-pdf-panel">
+          <strong>Stato tappezzerie battelli</strong>
+          <p>
+            Elenco di tutti i battelli con una richiesta di tappezzeria e se
+            sono ASSEGNATA (kit già in casa), IN ORDINE o DA ORDINARE.
+          </p>
+          <div className="prod-pdf-controls">
+            <button
+              type="button"
+              className="prod-btn primary"
+              onClick={downloadUpholsteryStatusPdf}
+              disabled={upholsteryPdfBusy || pdfLogoLoading || !pdfLogo}
+            >
+              {upholsteryPdfBusy ? "Creazione PDF..." : "Stampa stato tappezzerie"}
+            </button>
+          </div>
+          {!pdfLogoLoading && !pdfLogo && (
+            <p role="status" className="prod-pdf-logo-missing">
+              Nessun logo configurato — <Link href="/produzione/configurazioni">caricalo una volta in Configurazioni</Link> e resterà attivo su ogni dispositivo.
+            </p>
+          )}
+          {upholsteryPdfError && (
+            <div role="alert" className="prod-message error">
+              {upholsteryPdfError}
+            </div>
+          )}
         </div>
 
         <div className="prod-table-wrap">

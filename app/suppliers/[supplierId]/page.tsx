@@ -57,6 +57,15 @@ type KitDraft = {
   stitching: string;
   quilting: string;
   note: string;
+  boatUpholsteryId: string;
+};
+
+type OpenBoatRequest = {
+  id: string;
+  itemId: string;
+  boatOrderNumber: string;
+  boatModel: string;
+  color: string;
 };
 
 const EMPTY_UPHOLSTERY_GROUPS: UpholsteryOptionGroups = {
@@ -75,6 +84,7 @@ const EMPTY_KIT_DRAFT: KitDraft = {
   stitching: "",
   quilting: "",
   note: "",
+  boatUpholsteryId: "",
 };
 
 export default function SupplierDetail({
@@ -120,6 +130,10 @@ export default function SupplierDetail({
   const [kitSaving, setKitSaving] = useState(false);
   const [kitMessage, setKitMessage] = useState("");
   const [kitError, setKitError] = useState("");
+
+  const [openBoatRequests, setOpenBoatRequests] = useState<
+    OpenBoatRequest[]
+  >([]);
 
   const [companyLogo, setCompanyLogo] = useState("");
 
@@ -379,6 +393,47 @@ export default function SupplierDetail({
     loadUpholsteryOptions();
   }, [supplierId, upholsteryEnabled]);
 
+  /*
+    RICHIESTE APERTE DEI BATTELLI (tappezzeria ancora senza
+    kit assegnato): usate nel "+ Registra kit" per collegare
+    subito il kit appena creato a un battello in attesa,
+    invece di lasciarlo semplicemente in giacenza.
+  */
+  useEffect(() => {
+    if (!upholsteryEnabled) {
+      setOpenBoatRequests([]);
+      return;
+    }
+
+    async function loadOpenBoatRequests() {
+      const { data, error } = await supabase
+        .from("production_boat_upholstery")
+        .select("id,item_id,color,production_boats(order_number,model_boat)")
+        .eq("supplier_id", supplierId)
+        .is("kit_id", null);
+
+      if (error) return;
+
+      setOpenBoatRequests(
+        (data || []).map((row: any) => ({
+          id: String(row.id),
+          itemId: String(row.item_id),
+          boatOrderNumber: String(row.production_boats?.order_number || "?"),
+          boatModel: String(row.production_boats?.model_boat || ""),
+          color: String(row.color || ""),
+        }))
+      );
+    }
+
+    loadOpenBoatRequests();
+  }, [supplierId, upholsteryEnabled]);
+
+  function boatRequestsFor(itemId: string) {
+    return openBoatRequests.filter(
+      (request) => request.itemId === itemId
+    );
+  }
+
   async function openKitEditor(item: Item) {
     setOpenKitItemId(item.id);
     setKitMessage("");
@@ -392,6 +447,7 @@ export default function SupplierDetail({
       stitching: upholsteryOptions.stitching[0]?.name || "",
       quilting: upholsteryOptions.quilting[0]?.name || "",
       note: "",
+      boatUpholsteryId: "",
     });
 
     const { data, error } = await supabase.rpc(
@@ -510,11 +566,64 @@ export default function SupplierDetail({
       )
     );
 
+    let assignedBoatLabel = "";
+
+    if (kitDraft.boatUpholsteryId) {
+      const { data: createdKit } = await supabase
+        .from("upholstery_kits")
+        .select("id")
+        .eq("supplier_id", supplierId)
+        .eq("matricola", matricolaNumber)
+        .maybeSingle();
+
+      if (createdKit?.id) {
+        const { error: assignError } = await supabase.rpc(
+          "assign_upholstery_kit_to_boat",
+          {
+            p_kit_id: createdKit.id,
+            p_boat_upholstery_id: kitDraft.boatUpholsteryId,
+          }
+        );
+
+        if (!assignError) {
+          setItems((current) =>
+            current.map((row) =>
+              row.id === item.id
+                ? { ...row, stock: row.stock - 1 }
+                : row
+            )
+          );
+
+          const matchedRequest = openBoatRequests.find(
+            (request) => request.id === kitDraft.boatUpholsteryId
+          );
+
+          assignedBoatLabel = matchedRequest
+            ? ` Assegnato subito al battello N. ${matchedRequest.boatOrderNumber}.`
+            : " Assegnato subito al battello selezionato.";
+
+          setOpenBoatRequests((current) =>
+            current.filter(
+              (request) => request.id !== kitDraft.boatUpholsteryId
+            )
+          );
+        } else {
+          assignedBoatLabel =
+            " Il kit è stato creato ma l'assegnazione al battello non è riuscita: puoi assegnarlo manualmente dalla scheda del battello.";
+        }
+      }
+    }
+
     setKitMessage(
-      `Kit #${matricolaNumber} inserito in giacenza. Giacenza articolo aumentata di 1.`
+      `Kit #${matricolaNumber} inserito in giacenza. Giacenza articolo aumentata di 1.${assignedBoatLabel}`
     );
 
-    setKitDraft((current) => ({ ...current, unitPrice: "", note: "" }));
+    setKitDraft((current) => ({
+      ...current,
+      unitPrice: "",
+      note: "",
+      boatUpholsteryId: "",
+    }));
 
     const { data: nextMatricola } = await supabase.rpc(
       "next_upholstery_matricola",
@@ -2087,6 +2196,35 @@ export default function SupplierDetail({
                                 style={kitInputStyle}
                               />
                             </KitField>
+
+                            {boatRequestsFor(item.id).length > 0 && (
+                              <KitField label="Assegna a battello">
+                                <select
+                                  value={kitDraft.boatUpholsteryId}
+                                  onChange={(e) =>
+                                    setKitDraft((current) => ({
+                                      ...current,
+                                      boatUpholsteryId: e.target.value,
+                                    }))
+                                  }
+                                  style={kitInputStyle}
+                                >
+                                  <option value="">
+                                    Nessuno (va in giacenza)
+                                  </option>
+                                  {boatRequestsFor(item.id).map(
+                                    (request) => (
+                                      <option
+                                        key={request.id}
+                                        value={request.id}
+                                      >
+                                        {`Battello N. ${request.boatOrderNumber} — ${request.boatModel} — ${request.color}`}
+                                      </option>
+                                    )
+                                  )}
+                                </select>
+                              </KitField>
+                            )}
 
                             <button
                               type="button"

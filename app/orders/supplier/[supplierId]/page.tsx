@@ -52,6 +52,15 @@ type OrderLine = {
   qty: number;
   variants: LineVariant[];
   requestedDelivery: string;
+  boatUpholsteryId: string;
+};
+
+type OpenBoatRequest = {
+  id: string;
+  itemId: string;
+  boatOrderNumber: string;
+  boatModel: string;
+  color: string;
 };
 
 type AtomicOrderResult = {
@@ -153,6 +162,59 @@ export default function SupplierOrderPage() {
 
     loadUpholsteryOptions();
   }, [supplierId, supplier?.upholstery_enabled]);
+
+  const [openBoatRequests, setOpenBoatRequests] = useState<
+    OpenBoatRequest[]
+  >([]);
+
+  useEffect(() => {
+    if (!supplier?.upholstery_enabled) {
+      setOpenBoatRequests([]);
+      return;
+    }
+
+    async function loadOpenBoatRequests() {
+      const { data, error } = await supabase
+        .from("production_boat_upholstery")
+        .select(
+          "id,item_id,color,production_boats(order_number,model_boat)"
+        )
+        .eq("supplier_id", supplierId)
+        .is("kit_id", null);
+
+      if (error) return;
+
+      setOpenBoatRequests(
+        (data || []).map((row: any) => ({
+          id: String(row.id),
+          itemId: String(row.item_id),
+          boatOrderNumber: String(
+            row.production_boats?.order_number || "?"
+          ),
+          boatModel: String(row.production_boats?.model_boat || ""),
+          color: String(row.color || ""),
+        }))
+      );
+    }
+
+    loadOpenBoatRequests();
+  }, [supplierId, supplier?.upholstery_enabled]);
+
+  function boatRequestsFor(itemId: string) {
+    return openBoatRequests.filter(
+      (request) => request.itemId === itemId
+    );
+  }
+
+  function changeBoatUpholstery(itemId: string, value: string) {
+    setLines((current) =>
+      current.map((line) =>
+        line.item.id === itemId
+          ? { ...line, boatUpholsteryId: value }
+          : line
+      )
+    );
+  }
 
   function openVariantEditor(itemId: string) {
     setOpenVariantItemId(itemId);
@@ -331,6 +393,7 @@ export default function SupplierOrderPage() {
           qty: suggestedQty,
           variants: [],
           requestedDelivery: "",
+          boatUpholsteryId: "",
         };
       })
       .filter((line) => line.qty > 0);
@@ -464,6 +527,7 @@ export default function SupplierOrderPage() {
           ),
           variants: [],
           requestedDelivery: "",
+          boatUpholsteryId: "",
         },
       ];
     });
@@ -1236,7 +1300,15 @@ export default function SupplierOrderPage() {
       (line) => line.requestedDelivery
     );
 
-    if (linesWithVariants.length > 0 || linesWithDelivery.length > 0) {
+    const linesWithBoatUpholstery = lines.filter(
+      (line) => line.boatUpholsteryId
+    );
+
+    if (
+      linesWithVariants.length > 0 ||
+      linesWithDelivery.length > 0 ||
+      linesWithBoatUpholstery.length > 0
+    ) {
       try {
         const { data: orderItemsData, error: orderItemsError } =
           await supabase
@@ -1292,9 +1364,26 @@ export default function SupplierOrderPage() {
 
           if (deliveryError) throw deliveryError;
         }
+
+        for (const line of linesWithBoatUpholstery) {
+          const orderItemId = orderItemIdByItemId.get(
+            line.item.id
+          );
+
+          if (!orderItemId) continue;
+
+          const { error: boatUpholsteryError } = await supabase
+            .from("order_items")
+            .update({
+              boat_upholstery_id: line.boatUpholsteryId,
+            })
+            .eq("id", orderItemId);
+
+          if (boatUpholsteryError) throw boatUpholsteryError;
+        }
       } catch (variantsSaveError: any) {
         console.error(
-          "Errore salvataggio colore/dettagli/consegna riga:",
+          "Errore salvataggio colore/dettagli/consegna/battello riga:",
           variantsSaveError
         );
       }
@@ -1778,6 +1867,12 @@ export default function SupplierOrderPage() {
                     Colore / dettagli
                   </TableHead>
                 )}
+
+                {supplier?.upholstery_enabled && (
+                  <TableHead>
+                    Per battello
+                  </TableHead>
+                )}
               </tr>
             </thead>
 
@@ -1787,7 +1882,7 @@ export default function SupplierOrderPage() {
                   <td
                     colSpan={
                       supplier?.upholstery_enabled
-                        ? 14
+                        ? 15
                         : 13
                     }
                     style={{
@@ -2040,6 +2135,49 @@ export default function SupplierOrderPage() {
                             ? `${line.variants.length} colore/i`
                             : "+ Colore"}
                         </button>
+                      </TableCell>
+                    )}
+
+                    {supplier?.upholstery_enabled && (
+                      <TableCell>
+                        <select
+                          value={line.boatUpholsteryId}
+                          disabled={saving}
+                          onChange={(e) =>
+                            changeBoatUpholstery(
+                              line.item.id,
+                              e.target.value
+                            )
+                          }
+                          style={{
+                            minHeight: 34,
+                            padding: "0 8px",
+                            border:
+                              "1px solid var(--border-color)",
+                            borderRadius: 7,
+                            background:
+                              "var(--input-bg)",
+                            color:
+                              "var(--foreground)",
+                            outline: "none",
+                            fontSize: 12,
+                            maxWidth: 180,
+                          }}
+                        >
+                          <option value="">
+                            Nessuno (va in giacenza)
+                          </option>
+                          {boatRequestsFor(line.item.id).map(
+                            (request) => (
+                              <option
+                                key={request.id}
+                                value={request.id}
+                              >
+                                {`Battello N. ${request.boatOrderNumber} — ${request.boatModel} — ${request.color}`}
+                              </option>
+                            )
+                          )}
+                        </select>
                       </TableCell>
                     )}
                   </tr>

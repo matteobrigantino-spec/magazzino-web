@@ -54,6 +54,30 @@ type ProductionOption = {
   sort_order: number;
 };
 
+type BoatUpholsteryRequirement = {
+  id: string;
+  supplierId: string;
+  itemId: string;
+  color: string;
+  detailsLogos: string;
+  stitching: string;
+  quilting: string;
+  note: string | null;
+  kitId: string | null;
+  kitMatricola: number | null;
+  openOrderQty: number;
+  requestedDelivery: string | null;
+};
+
+type UpholsteryStockCandidate = {
+  id: string;
+  matricola: number;
+  color: string;
+  detailsLogos: string;
+  stitching: string;
+  quilting: string;
+};
+
 const statusLabel: Record<string, string> = {
   queued: "Da iniziare",
   working: "In lavorazione",
@@ -74,6 +98,14 @@ function dayLabel(value: number) {
     minimumFractionDigits: value < 10 ? 1 : 0,
     maximumFractionDigits: 1,
   }).format(value);
+}
+
+function formatDate(value: string | null) {
+  if (!value) return "-";
+
+  const safeValue = value.includes("T") ? value : `${value}T00:00:00`;
+
+  return new Intl.DateTimeFormat("it-IT").format(new Date(safeValue));
 }
 
 export default function ProductionBoatDetailPage({
@@ -115,6 +147,355 @@ export default function ProductionBoatDetailPage({
   // per i battelli inseriti prima di arrivare a quel reparto.
   const [tubeColorCurrent, setTubeColorCurrent] = useState("");
 
+  // Tappezzeria collegata a questo battello: una o più richieste, ognuna
+  // ASSEGNATA (kit fisico), IN ORDINE (una riga d'ordine la aspetta) o
+  // DA ORDINARE.
+  const [upholsteryRequirements, setUpholsteryRequirements] = useState<
+    BoatUpholsteryRequirement[]
+  >([]);
+  const [itemDescriptionById, setItemDescriptionById] = useState<
+    Record<string, string>
+  >({});
+  const [supplierNameById, setSupplierNameById] = useState<
+    Record<string, string>
+  >({});
+
+  const [upholsterySuppliers, setUpholsterySuppliers] = useState<
+    { id: string; name: string }[]
+  >([]);
+  const [upholsteryItemLookup, setUpholsteryItemLookup] = useState<
+    { id: string; supplierId: string; description: string }[]
+  >([]);
+  const [upholsteryOptionRows, setUpholsteryOptionRows] = useState<
+    { id: string; supplierId: string; option_type: string; name: string }[]
+  >([]);
+
+  const [showAddUpholstery, setShowAddUpholstery] = useState(false);
+  const [newReqSupplierId, setNewReqSupplierId] = useState("");
+  const [newReqItemId, setNewReqItemId] = useState("");
+  const [newReqColor, setNewReqColor] = useState("");
+  const [newReqDetails, setNewReqDetails] = useState("");
+  const [newReqStitching, setNewReqStitching] = useState("");
+  const [newReqQuilting, setNewReqQuilting] = useState("");
+  const [newReqNote, setNewReqNote] = useState("");
+  const [reqSaving, setReqSaving] = useState(false);
+  const [reqError, setReqError] = useState("");
+
+  const [searchingReqId, setSearchingReqId] = useState("");
+  const [stockCandidates, setStockCandidates] = useState<
+    UpholsteryStockCandidate[]
+  >([]);
+  const [assigningKitId, setAssigningKitId] = useState("");
+
+  async function loadUpholsteryRequirements() {
+    const { data, error } = await supabase
+      .from("production_boat_upholstery")
+      .select(
+        "id,supplier_id,item_id,color,details_logos,stitching,quilting,note,kit_id,created_at,upholstery_kits(matricola,status),order_items(id,qty,received_qty,requested_delivery_date)"
+      )
+      .eq("boat_id", boatId)
+      .order("created_at", { ascending: true });
+
+    if (error || !data) {
+      setUpholsteryRequirements([]);
+      return;
+    }
+
+    const rows: BoatUpholsteryRequirement[] = (data as any[]).map((row) => {
+      const openLines = (row.order_items || []).filter(
+        (line: any) =>
+          Number(line.qty || 0) > Number(line.received_qty || 0)
+      );
+
+      const deliveryDates = openLines
+        .map((line: any) => line.requested_delivery_date)
+        .filter((value: any) => Boolean(value))
+        .sort();
+
+      return {
+        id: String(row.id),
+        supplierId: String(row.supplier_id),
+        itemId: String(row.item_id),
+        color: String(row.color || ""),
+        detailsLogos: String(row.details_logos || ""),
+        stitching: String(row.stitching || ""),
+        quilting: String(row.quilting || ""),
+        note: row.note ? String(row.note) : null,
+        kitId: row.kit_id ? String(row.kit_id) : null,
+        kitMatricola: row.upholstery_kits
+          ? Number(row.upholstery_kits.matricola)
+          : null,
+        openOrderQty: openLines.reduce(
+          (sum: number, line: any) =>
+            sum +
+            (Number(line.qty || 0) - Number(line.received_qty || 0)),
+          0
+        ),
+        requestedDelivery: deliveryDates[0] || null,
+      };
+    });
+
+    setUpholsteryRequirements(rows);
+
+    const itemIds = Array.from(new Set(rows.map((row) => row.itemId)));
+    const supplierIds = Array.from(
+      new Set(rows.map((row) => row.supplierId))
+    );
+
+    if (itemIds.length > 0) {
+      const { data: itemRows } = await supabase
+        .from("items")
+        .select("id,description")
+        .in("id", itemIds);
+
+      const map: Record<string, string> = {};
+      (itemRows || []).forEach((item: any) => {
+        map[String(item.id)] = String(item.description || "");
+      });
+      setItemDescriptionById(map);
+    }
+
+    if (supplierIds.length > 0) {
+      const { data: supplierRows } = await supabase
+        .from("suppliers")
+        .select("id,name")
+        .in("id", supplierIds);
+
+      const map: Record<string, string> = {};
+      (supplierRows || []).forEach((row: any) => {
+        map[String(row.id)] = String(row.name || "");
+      });
+      setSupplierNameById(map);
+    }
+  }
+
+  async function loadUpholsteryCatalog() {
+    const { data: supplierRows } = await supabase
+      .from("suppliers")
+      .select("id,name")
+      .eq("upholstery_enabled", true)
+      .order("name", { ascending: true });
+
+    const suppliers = (supplierRows || []).map((row: any) => ({
+      id: String(row.id),
+      name: String(row.name || ""),
+    }));
+
+    setUpholsterySuppliers(suppliers);
+
+    const supplierIds = suppliers.map((supplier) => supplier.id);
+
+    if (supplierIds.length === 0) {
+      setUpholsteryItemLookup([]);
+      setUpholsteryOptionRows([]);
+      return;
+    }
+
+    const [itemsRes, optionsRes] = await Promise.all([
+      supabase
+        .from("items")
+        .select("id,supplier_id,description")
+        .in("supplier_id", supplierIds)
+        .order("description", { ascending: true }),
+      supabase
+        .from("upholstery_options")
+        .select("id,supplier_id,option_type,name")
+        .in("supplier_id", supplierIds)
+        .eq("active", true)
+        .order("sort_order", { ascending: true })
+        .order("name", { ascending: true }),
+    ]);
+
+    setUpholsteryItemLookup(
+      (itemsRes.data || []).map((row: any) => ({
+        id: String(row.id),
+        supplierId: String(row.supplier_id),
+        description: String(row.description || ""),
+      }))
+    );
+
+    setUpholsteryOptionRows(
+      (optionsRes.data || []).map((row: any) => ({
+        id: String(row.id),
+        supplierId: String(row.supplier_id),
+        option_type: String(row.option_type),
+        name: String(row.name || ""),
+      }))
+    );
+  }
+
+  function upholsteryItemsFor(supplierId: string) {
+    return upholsteryItemLookup.filter(
+      (item) => item.supplierId === supplierId
+    );
+  }
+
+  function upholsteryOptionsFor(supplierId: string, type: string) {
+    return upholsteryOptionRows.filter(
+      (option) =>
+        option.supplierId === supplierId && option.option_type === type
+    );
+  }
+
+  function openAddUpholstery() {
+    setReqError("");
+    setNewReqSupplierId(upholsterySuppliers[0]?.id || "");
+    setNewReqItemId("");
+    setNewReqColor("");
+    setNewReqDetails("");
+    setNewReqStitching("");
+    setNewReqQuilting("");
+    setNewReqNote("");
+    setShowAddUpholstery(true);
+  }
+
+  async function addUpholsteryRequirement() {
+    setReqError("");
+
+    if (
+      !newReqSupplierId ||
+      !newReqItemId ||
+      !newReqColor ||
+      !newReqDetails ||
+      !newReqStitching ||
+      !newReqQuilting
+    ) {
+      setReqError(
+        "Compila fornitore, articolo, colore, dettagli, cucitura e trapuntatura."
+      );
+      return;
+    }
+
+    setReqSaving(true);
+
+    const { data: inserted, error } = await supabase
+      .from("production_boat_upholstery")
+      .insert({
+        boat_id: boatId,
+        supplier_id: newReqSupplierId,
+        item_id: newReqItemId,
+        color: newReqColor,
+        details_logos: newReqDetails,
+        stitching: newReqStitching,
+        quilting: newReqQuilting,
+        note: newReqNote.trim() || null,
+      })
+      .select("id")
+      .single();
+
+    if (error || !inserted) {
+      setReqError("Errore salvataggio: " + (error?.message || ""));
+      setReqSaving(false);
+      return;
+    }
+
+    const { data: stockMatch } = await supabase
+      .from("upholstery_kits")
+      .select("id")
+      .eq("supplier_id", newReqSupplierId)
+      .eq("item_id", newReqItemId)
+      .eq("status", "stock")
+      .eq("color", newReqColor)
+      .eq("details_logos", newReqDetails)
+      .eq("stitching", newReqStitching)
+      .eq("quilting", newReqQuilting)
+      .limit(1)
+      .maybeSingle();
+
+    if (stockMatch?.id) {
+      await supabase.rpc("assign_upholstery_kit_to_boat", {
+        p_kit_id: stockMatch.id,
+        p_boat_upholstery_id: inserted.id,
+      });
+    }
+
+    setShowAddUpholstery(false);
+    setReqSaving(false);
+    await loadUpholsteryRequirements();
+  }
+
+  async function deleteUpholsteryRequirement(requirementId: string) {
+    const confirmed = confirm(
+      "Eliminare questa richiesta tappezzeria?"
+    );
+
+    if (!confirmed) return;
+
+    const { error } = await supabase
+      .from("production_boat_upholstery")
+      .delete()
+      .eq("id", requirementId);
+
+    if (!error) {
+      await loadUpholsteryRequirements();
+    }
+  }
+
+  async function searchStockFor(requirement: BoatUpholsteryRequirement) {
+    setSearchingReqId(requirement.id);
+    setStockCandidates([]);
+
+    const { data } = await supabase
+      .from("upholstery_kits")
+      .select("id,matricola,color,details_logos,stitching,quilting")
+      .eq("supplier_id", requirement.supplierId)
+      .eq("item_id", requirement.itemId)
+      .eq("status", "stock")
+      .order("matricola", { ascending: true });
+
+    setStockCandidates(
+      (data || []).map((row: any) => ({
+        id: String(row.id),
+        matricola: Number(row.matricola),
+        color: String(row.color || ""),
+        detailsLogos: String(row.details_logos || ""),
+        stitching: String(row.stitching || ""),
+        quilting: String(row.quilting || ""),
+      }))
+    );
+  }
+
+  function closeStockSearch() {
+    setSearchingReqId("");
+    setStockCandidates([]);
+  }
+
+  async function assignCandidate(requirementId: string, kitId: string) {
+    setAssigningKitId(kitId);
+
+    const { error } = await supabase.rpc(
+      "assign_upholstery_kit_to_boat",
+      {
+        p_kit_id: kitId,
+        p_boat_upholstery_id: requirementId,
+      }
+    );
+
+    setAssigningKitId("");
+
+    if (!error) {
+      closeStockSearch();
+      await loadUpholsteryRequirements();
+    }
+  }
+
+  async function unassignRequirement(kitId: string) {
+    const confirmed = confirm(
+      "Annullare l'assegnazione? Il kit torna in giacenza."
+    );
+
+    if (!confirmed) return;
+
+    const { error } = await supabase.rpc(
+      "unassign_upholstery_kit_from_boat",
+      { p_kit_id: kitId }
+    );
+
+    if (!error) {
+      await loadUpholsteryRequirements();
+    }
+  }
+
   // Barra di avanzamento a step: un tap sul reparto attuale apre questo
   // pannellino per cambiarne lo stato, senza uscire dalla scheda.
   const [stepEditing, setStepEditing] = useState(false);
@@ -125,6 +506,8 @@ export default function ProductionBoatDetailPage({
 
   useEffect(() => {
     loadData();
+    loadUpholsteryRequirements();
+    loadUpholsteryCatalog();
   }, [boatId]);
 
   async function loadData() {
@@ -593,6 +976,304 @@ export default function ProductionBoatDetailPage({
       <section className="pbd-card">
         <div className="pbd-head">
           <div>
+            <div className="pbd-eyebrow">TAPPEZZERIA</div>
+            <h2>Stato tappezzeria</h2>
+          </div>
+
+          <button
+            type="button"
+            className="pbd-edit-btn"
+            onClick={openAddUpholstery}
+            disabled={upholsterySuppliers.length === 0}
+          >
+            + Aggiungi tappezzeria
+          </button>
+        </div>
+
+        {upholsteryRequirements.length === 0 && !showAddUpholstery && (
+          <div className="pbd-note">
+            Nessuna tappezzeria collegata a questo battello.
+          </div>
+        )}
+
+        {upholsteryRequirements.map((requirement) => {
+          const statusLabelText = requirement.kitId
+            ? "ASSEGNATA"
+            : requirement.openOrderQty > 0
+            ? "IN ORDINE"
+            : "DA ORDINARE";
+
+          const statusClass = requirement.kitId
+            ? "assigned"
+            : requirement.openOrderQty > 0
+            ? "ordered"
+            : "toorder";
+
+          return (
+            <div key={requirement.id} className="pbd-upholstery-row">
+              <div className="pbd-upholstery-main">
+                <div>
+                  <strong>
+                    {itemDescriptionById[requirement.itemId] ||
+                      "Articolo"}
+                  </strong>
+                  <span className="pbd-upholstery-supplier">
+                    {supplierNameById[requirement.supplierId] || ""}
+                  </span>
+                </div>
+
+                <div className="pbd-upholstery-details">
+                  {requirement.color} · {requirement.detailsLogos} ·{" "}
+                  {requirement.stitching} · {requirement.quilting}
+                </div>
+
+                {requirement.note && (
+                  <div className="pbd-upholstery-note">
+                    {requirement.note}
+                  </div>
+                )}
+              </div>
+
+              <div className="pbd-upholstery-status">
+                <span className={`pbd-uph-badge ${statusClass}`}>
+                  {statusLabelText}
+                </span>
+
+                {requirement.kitId && (
+                  <>
+                    <span className="pbd-upholstery-info">
+                      Matricola #{requirement.kitMatricola}
+                    </span>
+                    <button
+                      type="button"
+                      className="pbd-btn-link"
+                      onClick={() =>
+                        unassignRequirement(requirement.kitId as string)
+                      }
+                    >
+                      Annulla assegnazione
+                    </button>
+                  </>
+                )}
+
+                {!requirement.kitId && requirement.openOrderQty > 0 && (
+                  <span className="pbd-upholstery-info">
+                    {requirement.requestedDelivery
+                      ? `Consegna richiesta: ${formatDate(
+                          requirement.requestedDelivery
+                        )}`
+                      : "Nessuna data di consegna indicata"}
+                  </span>
+                )}
+
+                {!requirement.kitId && requirement.openOrderQty === 0 && (
+                  <div className="pbd-upholstery-actions">
+                    <button
+                      type="button"
+                      className="pbd-btn-link"
+                      onClick={() => searchStockFor(requirement)}
+                    >
+                      Cerca in giacenza
+                    </button>
+                    <button
+                      type="button"
+                      className="pbd-btn-link danger"
+                      onClick={() =>
+                        deleteUpholsteryRequirement(requirement.id)
+                      }
+                    >
+                      Elimina
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {searchingReqId === requirement.id && (
+                <div className="pbd-upholstery-search">
+                  {stockCandidates.length === 0 ? (
+                    <div className="pbd-upholstery-note">
+                      Nessun kit di questo articolo in giacenza.
+                    </div>
+                  ) : (
+                    stockCandidates.map((candidate) => (
+                      <div
+                        key={candidate.id}
+                        className="pbd-upholstery-candidate"
+                      >
+                        <span>
+                          #{candidate.matricola} — {candidate.color} ·{" "}
+                          {candidate.detailsLogos} · {candidate.stitching}{" "}
+                          · {candidate.quilting}
+                        </span>
+                        <button
+                          type="button"
+                          className="pbd-btn-link"
+                          disabled={assigningKitId === candidate.id}
+                          onClick={() =>
+                            assignCandidate(requirement.id, candidate.id)
+                          }
+                        >
+                          {assigningKitId === candidate.id
+                            ? "Assegno..."
+                            : "Assegna"}
+                        </button>
+                      </div>
+                    ))
+                  )}
+
+                  <button
+                    type="button"
+                    className="pbd-btn-link"
+                    onClick={closeStockSearch}
+                  >
+                    Chiudi
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {showAddUpholstery && (
+          <div className="pbd-upholstery-add">
+            {reqError && (
+              <div className="pbd-form-error">{reqError}</div>
+            )}
+
+            <div className="pbd-form-grid">
+              <EditField label="Fornitore">
+                <select
+                  value={newReqSupplierId}
+                  onChange={(e) => {
+                    setNewReqSupplierId(e.target.value);
+                    setNewReqItemId("");
+                    setNewReqColor("");
+                    setNewReqDetails("");
+                    setNewReqStitching("");
+                    setNewReqQuilting("");
+                  }}
+                >
+                  {upholsterySuppliers.map((supplier) => (
+                    <option key={supplier.id} value={supplier.id}>
+                      {supplier.name}
+                    </option>
+                  ))}
+                </select>
+              </EditField>
+
+              <EditField label="Articolo">
+                <select
+                  value={newReqItemId}
+                  onChange={(e) => setNewReqItemId(e.target.value)}
+                >
+                  <option value="">Seleziona articolo...</option>
+                  {upholsteryItemsFor(newReqSupplierId).map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.description}
+                    </option>
+                  ))}
+                </select>
+              </EditField>
+
+              <EditField label="Colore">
+                <select
+                  value={newReqColor}
+                  onChange={(e) => setNewReqColor(e.target.value)}
+                >
+                  <option value="">Seleziona...</option>
+                  {upholsteryOptionsFor(newReqSupplierId, "color").map(
+                    (option) => (
+                      <option key={option.id} value={option.name}>
+                        {option.name}
+                      </option>
+                    )
+                  )}
+                </select>
+              </EditField>
+
+              <EditField label="Dettagli e loghi">
+                <select
+                  value={newReqDetails}
+                  onChange={(e) => setNewReqDetails(e.target.value)}
+                >
+                  <option value="">Seleziona...</option>
+                  {upholsteryOptionsFor(
+                    newReqSupplierId,
+                    "details_logos"
+                  ).map((option) => (
+                    <option key={option.id} value={option.name}>
+                      {option.name}
+                    </option>
+                  ))}
+                </select>
+              </EditField>
+
+              <EditField label="Cucitura">
+                <select
+                  value={newReqStitching}
+                  onChange={(e) => setNewReqStitching(e.target.value)}
+                >
+                  <option value="">Seleziona...</option>
+                  {upholsteryOptionsFor(newReqSupplierId, "stitching").map(
+                    (option) => (
+                      <option key={option.id} value={option.name}>
+                        {option.name}
+                      </option>
+                    )
+                  )}
+                </select>
+              </EditField>
+
+              <EditField label="Trapuntatura">
+                <select
+                  value={newReqQuilting}
+                  onChange={(e) => setNewReqQuilting(e.target.value)}
+                >
+                  <option value="">Seleziona...</option>
+                  {upholsteryOptionsFor(newReqSupplierId, "quilting").map(
+                    (option) => (
+                      <option key={option.id} value={option.name}>
+                        {option.name}
+                      </option>
+                    )
+                  )}
+                </select>
+              </EditField>
+
+              <EditField label="Nota" wide>
+                <input
+                  value={newReqNote}
+                  onChange={(e) => setNewReqNote(e.target.value)}
+                  placeholder="Facoltativa"
+                />
+              </EditField>
+            </div>
+
+            <div className="pbd-form-actions">
+              <button
+                type="button"
+                className="pbd-back"
+                onClick={() => setShowAddUpholstery(false)}
+                disabled={reqSaving}
+              >
+                Annulla
+              </button>
+              <button
+                type="button"
+                className="pbd-save-btn"
+                onClick={addUpholsteryRequirement}
+                disabled={reqSaving}
+              >
+                {reqSaving ? "Salvataggio..." : "Salva tappezzeria"}
+              </button>
+            </div>
+          </div>
+        )}
+      </section>
+
+      <section className="pbd-card">
+        <div className="pbd-head">
+          <div>
             <div className="pbd-eyebrow">PERCORSO PRODUTTIVO</div>
             <h2>Avanzamento lavoro</h2>
             <p className="pbd-stepper-hint">
@@ -749,6 +1430,24 @@ function Styles() {
   return (
     <style jsx global>{`
       .pbd-page { width:100%; max-width:1250px; margin:0 auto; color:#f8fafc; }
+      .pbd-upholstery-row { padding:14px 0; border-top:1px solid rgba(148,163,184,.14); display:flex; flex-wrap:wrap; gap:14px; align-items:flex-start; justify-content:space-between; }
+      .pbd-upholstery-row:first-of-type { border-top:0; }
+      .pbd-upholstery-main strong { font-size:13px; }
+      .pbd-upholstery-supplier { margin-left:8px; font-size:10px; color:#7d90a8; font-weight:800; }
+      .pbd-upholstery-details { margin-top:3px; font-size:11px; color:#a9b8cc; }
+      .pbd-upholstery-note { margin-top:3px; font-size:11px; color:#7d90a8; font-style:italic; }
+      .pbd-upholstery-status { display:flex; flex-direction:column; align-items:flex-end; gap:5px; min-width:160px; }
+      .pbd-uph-badge { padding:4px 10px; border-radius:20px; font-size:9px; font-weight:950; letter-spacing:.6px; }
+      .pbd-uph-badge.assigned { background:rgba(34,197,94,.16); color:#4ade80; border:1px solid rgba(34,197,94,.3); }
+      .pbd-uph-badge.ordered { background:rgba(59,130,246,.16); color:#60a5fa; border:1px solid rgba(59,130,246,.3); }
+      .pbd-uph-badge.toorder { background:rgba(239,68,68,.14); color:#f87171; border:1px solid rgba(239,68,68,.3); }
+      .pbd-upholstery-info { font-size:10px; color:#91a4bc; text-align:right; }
+      .pbd-upholstery-actions { display:flex; gap:10px; }
+      .pbd-btn-link { background:none; border:0; padding:0; color:#60a5fa; font-size:10px; font-weight:850; cursor:pointer; }
+      .pbd-btn-link.danger { color:#f87171; }
+      .pbd-upholstery-search { width:100%; margin-top:6px; padding:10px; border-radius:10px; background:rgba(59,130,246,.08); border:1px solid rgba(59,130,246,.18); display:flex; flex-direction:column; gap:8px; }
+      .pbd-upholstery-candidate { display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:11px; }
+      .pbd-upholstery-add { margin-top:16px; padding-top:16px; border-top:1px dashed rgba(148,163,184,.24); }
       .pbd-loading { min-height:55vh; display:grid; place-items:center; color:#dbeafe; font-weight:850; }
       .pbd-hero { padding:21px 22px; display:flex; align-items:center; justify-content:space-between; gap:18px; border:1px solid rgba(59,130,246,.24); border-radius:16px; background:linear-gradient(135deg,#0d1d31,#071321); }
       .pbd-eyebrow { color:#60a5fa; font-size:9px; font-weight:950; letter-spacing:1.45px; }

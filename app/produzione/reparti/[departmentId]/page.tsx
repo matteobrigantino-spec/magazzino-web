@@ -85,6 +85,12 @@ export default function ProductionDepartmentPage({
   const [message, setMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
 
+  // Stampa PDF solo di un intervallo di battelli, scelto con il vero
+  // numero progressivo (quello nella colonna "Prog."), non con la
+  // posizione in tabella. Vuoti = stampa tutti i battelli del reparto.
+  const [pdfFromProg, setPdfFromProg] = useState("");
+  const [pdfToProg, setPdfToProg] = useState("");
+
   // Scheda Tubolari: colore + i due passaggi da spuntare. Caricata e
   // mostrata SOLO quando questo reparto e' "Tubolari" - gli altri reparti
   // non fanno nemmeno la query, quindi non la vedono mai.
@@ -437,10 +443,45 @@ export default function ProductionDepartmentPage({
   async function generatePdf() {
     if (!department) return;
 
-    const pdfRows = [...rows].sort((a, b) => a.boat.progressive_no - b.boat.progressive_no);
+    setErrorMessage("");
+
+    const sortedRows = [...rows].sort(
+      (a, b) => a.boat.progressive_no - b.boat.progressive_no
+    );
+
+    const fromText = pdfFromProg.trim();
+    const toText = pdfToProg.trim();
+
+    let fromNumber = fromText ? Number(fromText) : null;
+    let toNumber = toText ? Number(toText) : null;
+
+    if (fromText && (!Number.isFinite(fromNumber) || Number(fromNumber) <= 0)) {
+      setErrorMessage("Il progressivo \"Da\" non è valido.");
+      return;
+    }
+
+    if (toText && (!Number.isFinite(toNumber) || Number(toNumber) <= 0)) {
+      setErrorMessage("Il progressivo \"A\" non è valido.");
+      return;
+    }
+
+    if (fromNumber !== null && toNumber !== null && fromNumber > toNumber) {
+      setErrorMessage("Il progressivo \"Da\" deve essere minore o uguale a \"A\".");
+      return;
+    }
+
+    const pdfRows = sortedRows.filter((row) => {
+      if (fromNumber !== null && row.boat.progressive_no < fromNumber) return false;
+      if (toNumber !== null && row.boat.progressive_no > toNumber) return false;
+      return true;
+    });
 
     if (pdfRows.length === 0) {
-      setErrorMessage("Non ci sono battelli da inserire nel programma del reparto.");
+      setErrorMessage(
+        fromText || toText
+          ? "Nessun battello del reparto rientra nell'intervallo di progressivi indicato."
+          : "Non ci sono battelli da inserire nel programma del reparto."
+      );
       return;
     }
 
@@ -568,7 +609,14 @@ export default function ProductionDepartmentPage({
       .replace(/[^a-zA-Z0-9]+/g, "_")
       .replace(/^_+|_+$/g, "");
 
-    doc.save(`Produzione_${safeName}_${today.replace(/\//g, "-")}.pdf`);
+    const rangeSuffix =
+      fromNumber !== null || toNumber !== null
+        ? `_prog_${fromNumber ?? "inizio"}-${toNumber ?? "fine"}`
+        : "";
+
+    doc.save(
+      `Produzione_${safeName}${rangeSuffix}_${today.replace(/\//g, "-")}.pdf`
+    );
   }
 
   if (loading) {
@@ -611,9 +659,6 @@ export default function ProductionDepartmentPage({
           <button type="button" className="pdep-btn secondary" onClick={loadData}>
             Aggiorna
           </button>
-          <button type="button" className="pdep-btn primary" onClick={generatePdf}>
-            Genera PDF reparto
-          </button>
         </div>
       </section>
 
@@ -622,6 +667,51 @@ export default function ProductionDepartmentPage({
           {errorMessage || message}
         </div>
       )}
+
+      <section className="pdep-pdf-panel">
+        <strong>Stampa PDF reparto</strong>
+        <p>
+          Lascia vuoto per stampare tutti i battelli, oppure scegli un
+          intervallo di numeri progressivi (quelli della colonna “Prog.”).
+        </p>
+        <div className="pdep-pdf-controls">
+          <label>
+            Da progressivo
+            <input
+              type="number"
+              min="1"
+              step="1"
+              placeholder="Es. 1900"
+              value={pdfFromProg}
+              onChange={(e) => setPdfFromProg(e.target.value)}
+            />
+          </label>
+          <label>
+            A progressivo
+            <input
+              type="number"
+              min="1"
+              step="1"
+              placeholder="Es. 1920"
+              value={pdfToProg}
+              onChange={(e) => setPdfToProg(e.target.value)}
+            />
+          </label>
+          <button
+            type="button"
+            className="pdep-btn secondary"
+            onClick={() => {
+              setPdfFromProg("");
+              setPdfToProg("");
+            }}
+          >
+            Tutti i battelli
+          </button>
+          <button type="button" className="pdep-btn primary" onClick={generatePdf}>
+            Genera PDF reparto
+          </button>
+        </div>
+      </section>
 
       <section className="pdep-summary">
         <div>
@@ -906,6 +996,60 @@ function Styles() {
         border: 1px solid rgba(148,163,184,.22);
         background: rgba(255,255,255,.035);
         color: #e2e8f0;
+      }
+
+      .pdep-pdf-panel {
+        margin-top: 11px;
+        padding: 15px 16px;
+        border: 1px solid rgba(96,165,250,.18);
+        border-radius: 13px;
+        background: #0a1727;
+      }
+
+      .pdep-pdf-panel > strong {
+        display: block;
+        font-size: 13px;
+        font-weight: 900;
+      }
+
+      .pdep-pdf-panel > p {
+        margin: 5px 0 0;
+        max-width: 640px;
+        color: #90a3ba;
+        font-size: 10px;
+        line-height: 1.5;
+      }
+
+      .pdep-pdf-controls {
+        margin-top: 11px;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-end;
+        gap: 9px;
+      }
+
+      .pdep-pdf-controls label {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        color: #8095af;
+        font-size: 8px;
+        font-weight: 900;
+        text-transform: uppercase;
+        letter-spacing: .4px;
+      }
+
+      .pdep-pdf-controls input {
+        min-height: 36px;
+        width: 120px;
+        box-sizing: border-box;
+        padding: 0 9px;
+        border: 1px solid rgba(148,163,184,.20);
+        border-radius: 8px;
+        outline: none;
+        background: #081524;
+        color: #fff;
+        font-size: 11px;
       }
 
       .pdep-message,

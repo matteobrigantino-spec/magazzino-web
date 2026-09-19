@@ -15,6 +15,7 @@ type Order = {
   supplier_id: string;
   status: string;
   order_date: string | null;
+  requested_delivery_date: string | null;
   created_at: string | null;
   pdf_url: string | null;
   pdf_path: string | null;
@@ -114,7 +115,7 @@ export default function OrdersPage() {
     const { data: ordersData, error: ordersError } = await supabase
       .from("orders")
       .select(
-        "id,order_number,supplier_id,status,order_date,created_at,pdf_url,pdf_path"
+        "id,order_number,supplier_id,status,order_date,requested_delivery_date,created_at,pdf_url,pdf_path"
       )
       .order("created_at", { ascending: false });
 
@@ -662,6 +663,12 @@ function OrderCard({
           }}
         >
           Ordine del {formatDate(order.order_date)}
+          {order.requested_delivery_date && (
+            <>
+              {" "}
+              · Consegna richiesta: {formatDate(order.requested_delivery_date)}
+            </>
+          )}
         </div>
 
         <div

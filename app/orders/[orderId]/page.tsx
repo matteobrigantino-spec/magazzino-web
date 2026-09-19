@@ -10,6 +10,7 @@ type OrderRow = {
   supplier_id: string;
   status: string;
   order_date: string | null;
+  requested_delivery_date: string | null;
   created_at: string | null;
   pdf_url: string | null;
   pdf_path: string | null;
@@ -176,7 +177,7 @@ export default function OrderDetailPage() {
       await supabase
         .from("orders")
         .select(
-          "id,order_number,supplier_id,status,order_date,created_at,pdf_url,pdf_path"
+          "id,order_number,supplier_id,status,order_date,requested_delivery_date,created_at,pdf_url,pdf_path"
         )
         .eq("id", orderId)
         .single();
@@ -945,6 +946,13 @@ export default function OrderDetailPage() {
             Ordine del{" "}
             {formatDate(
               order.order_date
+            )}
+            {order.requested_delivery_date && (
+              <>
+                {" "}
+                · Consegna richiesta:{" "}
+                {formatDate(order.requested_delivery_date)}
+              </>
             )}
           </div>
         </div>

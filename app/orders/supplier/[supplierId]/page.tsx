@@ -77,6 +77,7 @@ export default function SupplierOrderPage() {
 
   const [showAddItems, setShowAddItems] = useState(false);
   const [search, setSearch] = useState("");
+  const [requestedDeliveryDate, setRequestedDeliveryDate] = useState("");
 
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState<
@@ -479,7 +480,8 @@ export default function SupplierOrderPage() {
   async function createOrderPdf(
     orderId: string,
     orderLines: OrderLine[],
-    orderNumber: number | null
+    orderNumber: number | null,
+    requestedDelivery: string
   ) {
     if (!supplier) {
       throw new Error("Fornitore non disponibile");
@@ -545,6 +547,22 @@ export default function SupplierOrderPage() {
     );
 
     y += 5;
+
+    if (requestedDelivery) {
+      doc.setFont("helvetica", "bold");
+
+      doc.text(
+        `Consegna richiesta: ${formatDateForPdf(
+          parseDateInputValue(requestedDelivery)
+        )}`,
+        marginLeft,
+        y
+      );
+
+      doc.setFont("helvetica", "normal");
+
+      y += 5;
+    }
 
     if (!orderNumber) {
       doc.text(
@@ -1225,7 +1243,8 @@ export default function SupplierOrderPage() {
         await createOrderPdf(
           orderId,
           lines,
-          orderNumber
+          orderNumber,
+          requestedDeliveryDate
         );
 
       const pdfBlob =
@@ -1297,6 +1316,9 @@ export default function SupplierOrderPage() {
 
           pdf_url:
             pdfUrl,
+
+          requested_delivery_date:
+            requestedDeliveryDate || null,
         })
         .eq(
           "id",
@@ -2351,6 +2373,50 @@ export default function SupplierOrderPage() {
             “in ordine” verranno registrati insieme
             in un&apos;unica operazione sicura.
           </div>
+
+          <label
+            style={{
+              marginTop: 14,
+              display: "flex",
+              flexDirection: "column",
+              gap: 4,
+              fontSize: 12,
+              maxWidth: 220,
+            }}
+          >
+            <span
+              style={{
+                fontWeight: 800,
+                opacity: 0.7,
+              }}
+            >
+              Data consegna richiesta (facoltativa)
+            </span>
+
+            <input
+              type="date"
+              value={requestedDeliveryDate}
+              onChange={(e) =>
+                setRequestedDeliveryDate(
+                  e.target.value
+                )
+              }
+              disabled={saving}
+              style={{
+                minHeight: 38,
+                padding: "0 10px",
+                border:
+                  "1px solid var(--border-color)",
+                borderRadius: 8,
+                background:
+                  "var(--input-bg)",
+                color:
+                  "var(--foreground)",
+                outline: "none",
+                fontSize: 13,
+              }}
+            />
+          </label>
         </div>
 
         <button
@@ -2568,6 +2634,20 @@ function formatDateForPdf(
       year: "numeric",
     }
   ).format(date);
+}
+
+/*
+  Converte il valore "AAAA-MM-GG" di un <input type="date"> in un
+  oggetto Date sui componenti locali, per evitare che il fuso
+  orario faccia scivolare la data di un giorno indietro (come
+  succede con "new Date('AAAA-MM-GG')", che viene letta come UTC).
+*/
+function parseDateInputValue(value: string) {
+  const [year, month, day] = value
+    .split("-")
+    .map((part) => Number(part));
+
+  return new Date(year, (month || 1) - 1, day || 1);
 }
 
 /* ---------------- STILI ---------------- */

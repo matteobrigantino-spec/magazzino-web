@@ -1396,6 +1396,14 @@ function Styles() {
         text-align: center;
       }
 
+      .prod-main {
+        min-width: 0;
+        padding: 17px;
+        border: 1px solid rgba(148,163,184,.15);
+        border-radius: 14px;
+        background: #0b1828;
+      }
+
       .prod-main-top {
         display: flex;
         align-items: flex-start;

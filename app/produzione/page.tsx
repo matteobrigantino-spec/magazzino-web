@@ -110,6 +110,8 @@ export default function ProductionPage() {
   const [upholsteryPdfBusy, setUpholsteryPdfBusy] = useState(false);
   const [upholsteryPdfError, setUpholsteryPdfError] = useState("");
 
+  const [printMenuOpen, setPrintMenuOpen] = useState(false);
+
   useEffect(() => {
     async function loadPdfLogo() {
       const { data, error } = await supabase
@@ -776,13 +778,6 @@ export default function ProductionPage() {
         </div>
       )}
 
-      <section className="prod-kpis">
-        <Kpi label="In produzione" value={activeBoats.length} />
-        <Kpi label="In attesa" value={waitingCount} tone="waiting" />
-        <Kpi label="Bloccati" value={blockedCount} tone="blocked" />
-        <Kpi label="Completati questo mese" value={completedThisMonth} tone="done" />
-      </section>
-
       {showNew && (
         <section className="prod-new-card">
           <div className="prod-section-head">
@@ -1100,193 +1095,257 @@ export default function ProductionPage() {
         </section>
       )}
 
-      <section className="prod-section">
-        <div className="prod-section-head">
-          <div>
-            <div className="prod-eyebrow">REPARTI</div>
-            <h2>Programmi di reparto</h2>
-            <p>
-              Ogni reparto vede solo i battelli che deve lavorare. Quando termina,
-              il battello passa automaticamente al reparto successivo.
-            </p>
-          </div>
-        </div>
-
-        <div className="prod-departments">
-          {departments.filter((dep) => dep.active).map((dep) => (
-            <button
-              type="button"
-              key={dep.id}
-              className="prod-department-card"
-              onClick={() => router.push(`/produzione/reparti/${dep.id}`)}
-            >
-              <div className="prod-department-icon">P</div>
-              <div className="prod-department-copy">
-                <span>REPARTO {dep.sort_order}</span>
-                <strong>{dep.name}</strong>
-                <small>{departmentCounts.get(dep.id) || 0} battelli da gestire</small>
+      <section className="prod-dashboard">
+        <div className="prod-rail">
+          <div className="prod-rail-card">
+            <h3>Riepilogo</h3>
+            <div className="prod-stat-list">
+              <div>
+                <span>In produzione</span>
+                <strong>{activeBoats.length}</strong>
               </div>
-              <div className="prod-arrow">→</div>
-            </button>
-          ))}
-
-          {departments.filter((dep) => dep.active).length === 0 && (
-            <div className="prod-empty">
-              Nessun reparto attivo. Apri “Gestisci reparti”.
+              <div>
+                <span>In attesa</span>
+                <strong className="waiting">{waitingCount}</strong>
+              </div>
+              <div>
+                <span>Bloccati</span>
+                <strong className="blocked">{blockedCount}</strong>
+              </div>
+              <div>
+                <span>Completati (mese)</span>
+                <strong className="done">{completedThisMonth}</strong>
+              </div>
             </div>
-          )}
-        </div>
-      </section>
-
-      <section className="prod-section">
-        <div className="prod-section-head horizontal">
-          <div>
-            <div className="prod-eyebrow">AVANZAMENTO</div>
-            <h2>Battelli in produzione</h2>
           </div>
-          <span className="prod-count">{activeBoats.length}</span>
-        </div>
 
-        <div className="prod-pdf-panel">
-          <strong>Scarica le righe in PDF</strong>
-          <p id="pdf-range-help">Usa i numeri della colonna “Riga” della tabella qui sotto, non quelli di “Prog.”. Gli estremi sono inclusi.</p>
-          <div className="prod-pdf-controls">
-            <label>Da riga
-              <input type="number" min="1" max={activeBoats.length} step="1" value={pdfFrom}
-                aria-describedby="pdf-range-help" disabled={pdfBusy} onChange={(e) => setPdfFrom(e.target.value)} />
-            </label>
-            <label>A riga
-              <input type="number" min="1" max={activeBoats.length} step="1" value={pdfTo}
-                aria-describedby="pdf-range-help" placeholder={String(activeBoats.length)} disabled={pdfBusy} onChange={(e) => setPdfTo(e.target.value)} />
-            </label>
-            <button type="button" className="prod-btn secondary" disabled={pdfBusy || !activeBoats.length}
-              onClick={() => { setPdfFrom("1"); setPdfTo(String(activeBoats.length)); }}>Tutte le righe</button>
-            <label>Data ordine
-              <input type="date" value={pdfOrderDate} disabled={pdfBusy}
-                onChange={(e) => setPdfOrderDate(e.target.value)} />
-            </label>
-            <label>Data ultimo aggiornamento
-              <input type="date" value={pdfUpdatedDate} disabled={pdfBusy}
-                onChange={(e) => setPdfUpdatedDate(e.target.value)} />
-            </label>
-            <div className="prod-pdf-operator">
-              Operatore: <strong>{pdfOperator || "Matteo"}</strong>
-            </div>
-            <button type="button" className="prod-btn primary" onClick={downloadProductionPdf}
-              disabled={pdfBusy || pdfLogoLoading || !pdfLogo || !activeBoats.length}>
-              {pdfBusy ? "Creazione PDF..." : "Scarica PDF"}
-            </button>
-          </div>
-          <p className="prod-pdf-checkbox-hint">
-            Nel PDF, Carena, Ragno/Longheroni, Coperta e Accessori hanno una casella vuota da spuntare a mano quando il lavoro è fatto.
-          </p>
-          {!pdfLogoLoading && !pdfLogo && (
-            <p role="status" className="prod-pdf-logo-missing">
-              Nessun logo configurato — <Link href="/produzione/configurazioni">caricalo una volta in Configurazioni</Link> e resterà attivo su ogni dispositivo.
-            </p>
-          )}
-          {pdfError && <div role="alert" className="prod-message error">{pdfError}</div>}
-        </div>
+          <div className="prod-rail-card">
+            <h3>Reparti</h3>
+            <div className="prod-dept-list">
+              {departments.filter((dep) => dep.active).map((dep) => (
+                <button
+                  type="button"
+                  key={dep.id}
+                  className="prod-dept-item"
+                  onClick={() => router.push(`/produzione/reparti/${dep.id}`)}
+                >
+                  <div className="name">
+                    <small>Reparto {dep.sort_order}</small>
+                    {dep.name}
+                  </div>
+                  <span className="count">{departmentCounts.get(dep.id) || 0}</span>
+                </button>
+              ))}
 
-        <div className="prod-pdf-panel">
-          <strong>Stato tappezzerie battelli</strong>
-          <p>
-            Elenco di tutti i battelli con una richiesta di tappezzeria e se
-            sono ASSEGNATA (kit già in casa), IN ORDINE o DA ORDINARE.
-          </p>
-          <div className="prod-pdf-controls">
-            <button
-              type="button"
-              className="prod-btn primary"
-              onClick={downloadUpholsteryStatusPdf}
-              disabled={upholsteryPdfBusy || pdfLogoLoading || !pdfLogo}
-            >
-              {upholsteryPdfBusy ? "Creazione PDF..." : "Stampa stato tappezzerie"}
-            </button>
-          </div>
-          {!pdfLogoLoading && !pdfLogo && (
-            <p role="status" className="prod-pdf-logo-missing">
-              Nessun logo configurato — <Link href="/produzione/configurazioni">caricalo una volta in Configurazioni</Link> e resterà attivo su ogni dispositivo.
-            </p>
-          )}
-          {upholsteryPdfError && (
-            <div role="alert" className="prod-message error">
-              {upholsteryPdfError}
-            </div>
-          )}
-        </div>
-
-        <div className="prod-table-wrap">
-          <table className="prod-table">
-            <thead>
-              <tr>
-                <th>Riga</th>
-                <th>Prog.</th>
-                <th>N° ordine</th>
-                <th>Modello</th>
-                <th>Reparto attuale</th>
-                <th>Stato</th>
-                <th>Giorni reparto</th>
-                <th>Giorni totali</th>
-                <th>Note</th>
-              </tr>
-            </thead>
-            <tbody>
-              {activeBoats.length === 0 ? (
-                <tr>
-                  <td colSpan={9} className="prod-empty-cell">
-                    Nessun battello attualmente in produzione.
-                  </td>
-                </tr>
-              ) : (
-                activeBoats.map((boat, rowIndex) => {
-                  const step = currentStepMap.get(boat.id);
-                  const dep = step ? depMap.get(step.department_id) : null;
-
-                  return (
-                    <tr
-                      key={boat.id}
-                      onClick={() => router.push(`/produzione/${boat.id}`)}
-                      className="prod-click-row"
-                    >
-                      <td>{rowIndex + 1}</td>
-                      <td><strong>{boat.progressive_no}</strong></td>
-                      <td><span className="prod-order">{boat.order_number}</span></td>
-                      <td>{boat.model_boat}</td>
-                      <td>{dep?.name || "—"}</td>
-                      <td>
-                        <StatusBadge status={step?.status || "queued"} />
-                      </td>
-                      <td>{step ? daysFrom(step.entered_at) : 0} gg</td>
-                      <td>{daysFrom(boat.created_at)} gg</td>
-                      <td className="prod-note-cell">{step?.current_note || boat.note || "—"}</td>
-                    </tr>
-                  );
-                })
+              {departments.filter((dep) => dep.active).length === 0 && (
+                <div className="prod-empty">
+                  Nessun reparto attivo. Apri “Gestisci reparti”.
+                </div>
               )}
-            </tbody>
-          </table>
+            </div>
+          </div>
+        </div>
+
+        <div className="prod-main">
+          <div className="prod-main-top">
+            <div>
+              <h2>Battelli in produzione</h2>
+              <p>{activeBoats.length} battelli attivi, ordinati per numero progressivo.</p>
+            </div>
+
+            <div className="prod-print-menu-wrap">
+              <button
+                type="button"
+                className="prod-btn secondary"
+                onClick={() => setPrintMenuOpen((current) => !current)}
+              >
+                Stampe {printMenuOpen ? "▴" : "▾"}
+              </button>
+
+              {printMenuOpen && (
+                <>
+                  <div
+                    className="prod-print-menu-backdrop"
+                    onClick={() => setPrintMenuOpen(false)}
+                  />
+
+                  <div className="prod-print-menu">
+                    <div className="prod-print-menu-row">
+                      <label>Programma reparti — intervallo righe</label>
+                      <p id="pdf-range-help">
+                        Usa i numeri della colonna “Riga” della tabella qui sotto, non quelli
+                        di “Prog.”. Gli estremi sono inclusi.
+                      </p>
+                      <div className="prod-print-menu-inline">
+                        <input
+                          type="number"
+                          min="1"
+                          max={activeBoats.length}
+                          step="1"
+                          value={pdfFrom}
+                          aria-describedby="pdf-range-help"
+                          disabled={pdfBusy}
+                          placeholder="Da"
+                          onChange={(e) => setPdfFrom(e.target.value)}
+                        />
+                        <input
+                          type="number"
+                          min="1"
+                          max={activeBoats.length}
+                          step="1"
+                          value={pdfTo}
+                          aria-describedby="pdf-range-help"
+                          placeholder="A"
+                          disabled={pdfBusy}
+                          onChange={(e) => setPdfTo(e.target.value)}
+                        />
+                        <button
+                          type="button"
+                          className="prod-btn secondary small"
+                          disabled={pdfBusy || !activeBoats.length}
+                          onClick={() => {
+                            setPdfFrom("1");
+                            setPdfTo(String(activeBoats.length));
+                          }}
+                        >
+                          Tutte
+                        </button>
+                      </div>
+                      <div className="prod-print-menu-inline">
+                        <label className="prod-print-menu-date">
+                          Data ordine
+                          <input
+                            type="date"
+                            value={pdfOrderDate}
+                            disabled={pdfBusy}
+                            onChange={(e) => setPdfOrderDate(e.target.value)}
+                          />
+                        </label>
+                        <label className="prod-print-menu-date">
+                          Data agg.
+                          <input
+                            type="date"
+                            value={pdfUpdatedDate}
+                            disabled={pdfBusy}
+                            onChange={(e) => setPdfUpdatedDate(e.target.value)}
+                          />
+                        </label>
+                      </div>
+                      <div className="prod-pdf-operator">
+                        Operatore: <strong>{pdfOperator || "Matteo"}</strong>
+                      </div>
+                      <button
+                        type="button"
+                        className="prod-btn primary"
+                        onClick={downloadProductionPdf}
+                        disabled={pdfBusy || pdfLogoLoading || !pdfLogo || !activeBoats.length}
+                      >
+                        {pdfBusy ? "Creazione PDF..." : "Scarica PDF"}
+                      </button>
+                      <p className="prod-pdf-checkbox-hint">
+                        Nel PDF, Carena, Ragno/Longheroni, Coperta e Accessori hanno una
+                        casella vuota da spuntare a mano.
+                      </p>
+                      {pdfError && (
+                        <div role="alert" className="prod-message error">
+                          {pdfError}
+                        </div>
+                      )}
+                    </div>
+
+                    <hr />
+
+                    <div className="prod-print-menu-row">
+                      <label>Stato tappezzerie battelli</label>
+                      <p>
+                        Elenco di tutti i battelli con una richiesta di tappezzeria: ASSEGNATA,
+                        IN ORDINE o DA ORDINARE.
+                      </p>
+                      <button
+                        type="button"
+                        className="prod-btn primary"
+                        onClick={downloadUpholsteryStatusPdf}
+                        disabled={upholsteryPdfBusy || pdfLogoLoading || !pdfLogo}
+                      >
+                        {upholsteryPdfBusy ? "Creazione PDF..." : "Scarica PDF"}
+                      </button>
+                      {upholsteryPdfError && (
+                        <div role="alert" className="prod-message error">
+                          {upholsteryPdfError}
+                        </div>
+                      )}
+                    </div>
+
+                    {!pdfLogoLoading && !pdfLogo && (
+                      <p role="status" className="prod-pdf-logo-missing">
+                        Nessun logo configurato —{" "}
+                        <Link href="/produzione/configurazioni">
+                          caricalo una volta in Configurazioni
+                        </Link>
+                        .
+                      </p>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
+          <div className="prod-table-wrap">
+            <table className="prod-table">
+              <thead>
+                <tr>
+                  <th>Riga</th>
+                  <th>Prog.</th>
+                  <th>N° ordine</th>
+                  <th>Modello</th>
+                  <th>Reparto attuale</th>
+                  <th>Stato</th>
+                  <th>Giorni reparto</th>
+                  <th>Giorni totali</th>
+                  <th>Note</th>
+                </tr>
+              </thead>
+              <tbody>
+                {activeBoats.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} className="prod-empty-cell">
+                      Nessun battello attualmente in produzione.
+                    </td>
+                  </tr>
+                ) : (
+                  activeBoats.map((boat, rowIndex) => {
+                    const step = currentStepMap.get(boat.id);
+                    const dep = step ? depMap.get(step.department_id) : null;
+
+                    return (
+                      <tr
+                        key={boat.id}
+                        onClick={() => router.push(`/produzione/${boat.id}`)}
+                        className="prod-click-row"
+                      >
+                        <td>{rowIndex + 1}</td>
+                        <td><strong>{boat.progressive_no}</strong></td>
+                        <td><span className="prod-order">{boat.order_number}</span></td>
+                        <td>{boat.model_boat}</td>
+                        <td>{dep?.name || "—"}</td>
+                        <td>
+                          <StatusBadge status={step?.status || "queued"} />
+                        </td>
+                        <td>{step ? daysFrom(step.entered_at) : 0} gg</td>
+                        <td>{daysFrom(boat.created_at)} gg</td>
+                        <td className="prod-note-cell">{step?.current_note || boat.note || "—"}</td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       </section>
 
       <Styles />
-    </div>
-  );
-}
-
-function Kpi({
-  label,
-  value,
-  tone = "normal",
-}: {
-  label: string;
-  value: number;
-  tone?: string;
-}) {
-  return (
-    <div className={`prod-kpi ${tone}`}>
-      <span>{label}</span>
-      <strong>{value}</strong>
     </div>
   );
 }
@@ -1335,17 +1394,235 @@ function StatusBadge({ status }: { status: string }) {
 function Styles() {
   return (
     <style jsx global>{`
-      .prod-pdf-panel { margin: 12px 0; padding: 16px; border: 1px solid #31445c; border-radius: 12px; background: #0b192a; }
-      .prod-pdf-panel p { font-size: 12px; color: #b7c7d9; margin: 8px 0; }
-      .prod-pdf-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
-      .prod-pdf-controls label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
-      .prod-pdf-controls input[type="number"] { width: 100px; padding: 10px; background: #14283f; color: white; border: 1px solid #51637a; border-radius: 8px; }
-      .prod-pdf-controls input[type="date"] { padding: 9px 10px; background: #14283f; color: white; border: 1px solid #51637a; border-radius: 8px; font-size: 12px; }
       .prod-pdf-operator { font-size: 12px; color: #b7c7d9; }
       .prod-pdf-operator strong { color: white; }
-      .prod-pdf-logo-missing { color: #fbbf24; }
+      .prod-pdf-logo-missing { margin: 10px 0 0; font-size: 11px; color: #fbbf24; }
       .prod-pdf-logo-missing a { color: #93c5fd; font-weight: 800; }
-      .prod-pdf-checkbox-hint { font-size: 11px; color: #8398b1; margin: 4px 0 0; }
+      .prod-pdf-checkbox-hint { font-size: 11px; color: #8398b1; margin: 6px 0 0; }
+
+      /* --- DASHBOARD: barra laterale (riepilogo + reparti) + tabella --- */
+      .prod-dashboard {
+        margin-top: 14px;
+        display: grid;
+        grid-template-columns: 260px 1fr;
+        gap: 14px;
+        align-items: start;
+      }
+
+      .prod-rail {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        position: sticky;
+        top: 14px;
+      }
+
+      .prod-rail-card {
+        padding: 16px;
+        border: 1px solid rgba(148,163,184,.15);
+        border-radius: 14px;
+        background: #0b1828;
+      }
+
+      .prod-rail-card h3 {
+        margin: 0 0 12px;
+        font-size: 10px;
+        font-weight: 950;
+        letter-spacing: .9px;
+        text-transform: uppercase;
+        color: #8195ae;
+      }
+
+      .prod-stat-list {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .prod-stat-list > div {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .prod-stat-list span {
+        color: #91a4bc;
+        font-size: 11px;
+      }
+
+      .prod-stat-list strong {
+        font-size: 18px;
+        font-weight: 950;
+      }
+
+      .prod-stat-list strong.waiting { color: #fbbf24; }
+      .prod-stat-list strong.blocked { color: #fb7185; }
+      .prod-stat-list strong.done { color: #4ade80; }
+
+      .prod-dept-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .prod-dept-item {
+        width: 100%;
+        padding: 11px 12px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        border: 1px solid rgba(96,165,250,.15);
+        border-radius: 10px;
+        background: rgba(255,255,255,.015);
+        color: #fff;
+        cursor: pointer;
+        text-align: left;
+        font-size: 12.5px;
+        font-weight: 700;
+      }
+
+      .prod-dept-item:hover {
+        border-color: rgba(96,165,250,.40);
+      }
+
+      .prod-dept-item .name small {
+        display: block;
+        margin-bottom: 2px;
+        color: #60a5fa;
+        font-size: 8.5px;
+        font-weight: 950;
+        letter-spacing: .6px;
+        text-transform: uppercase;
+      }
+
+      .prod-dept-item .count {
+        min-width: 26px;
+        padding: 3px 9px;
+        border-radius: 999px;
+        background: rgba(59,130,246,.12);
+        color: #93c5fd;
+        font-size: 11px;
+        font-weight: 950;
+        text-align: center;
+      }
+
+      .prod-main-top {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+
+      .prod-main-top h2 {
+        margin: 0;
+        font-size: 18px;
+        font-weight: 950;
+      }
+
+      .prod-main-top p {
+        margin: 4px 0 0;
+        color: #91a4bc;
+        font-size: 11px;
+      }
+
+      .prod-print-menu-wrap {
+        position: relative;
+      }
+
+      .prod-btn.small {
+        min-height: 33px;
+        padding: 0 10px;
+        font-size: 10px;
+      }
+
+      .prod-print-menu-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 20;
+      }
+
+      .prod-print-menu {
+        position: absolute;
+        top: calc(100% + 8px);
+        right: 0;
+        z-index: 21;
+        width: 320px;
+        max-width: 90vw;
+        padding: 15px;
+        border: 1px solid rgba(148,163,184,.20);
+        border-radius: 13px;
+        background: #0d1f33;
+        box-shadow: 0 16px 38px rgba(0,0,0,.45);
+      }
+
+      .prod-print-menu hr {
+        margin: 14px 0;
+        border: none;
+        border-top: 1px solid rgba(148,163,184,.15);
+      }
+
+      .prod-print-menu-row > label {
+        display: block;
+        font-size: 12.5px;
+        font-weight: 850;
+        margin-bottom: 5px;
+      }
+
+      .prod-print-menu-row > p {
+        margin: 0 0 10px;
+        font-size: 10.5px;
+        color: #91a4bc;
+        line-height: 1.5;
+      }
+
+      .prod-print-menu-inline {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 10px;
+        align-items: center;
+      }
+
+      .prod-print-menu-inline input[type="number"] {
+        width: 0;
+        flex: 1;
+        min-height: 34px;
+        padding: 0 9px;
+        background: #081524;
+        color: #fff;
+        border: 1px solid rgba(148,163,184,.20);
+        border-radius: 8px;
+        font-size: 12px;
+      }
+
+      .prod-print-menu-date {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        font-size: 9px;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: .4px;
+        color: #8195ae;
+      }
+
+      .prod-print-menu-date input {
+        min-height: 34px;
+        padding: 0 8px;
+        background: #081524;
+        color: #fff;
+        border: 1px solid rgba(148,163,184,.20);
+        border-radius: 8px;
+        font-size: 11.5px;
+      }
+
+      .prod-print-menu .prod-btn.primary {
+        width: 100%;
+        margin-top: 2px;
+      }
       .prod-page {
         width: 100%;
         max-width: 1500px;
@@ -1456,43 +1733,6 @@ function Styles() {
         color: #fca5a5;
       }
 
-      .prod-kpis {
-        margin-top: 12px;
-        display: grid;
-        grid-template-columns: repeat(4,minmax(0,1fr));
-        gap: 10px;
-      }
-
-      .prod-kpi {
-        padding: 15px;
-        border: 1px solid rgba(148,163,184,.15);
-        border-radius: 12px;
-        background: #0b192a;
-      }
-
-      .prod-kpi span,
-      .prod-kpi strong {
-        display: block;
-      }
-
-      .prod-kpi span {
-        color: #8195ae;
-        font-size: 8px;
-        font-weight: 950;
-        letter-spacing: .8px;
-        text-transform: uppercase;
-      }
-
-      .prod-kpi strong {
-        margin-top: 5px;
-        font-size: 25px;
-        font-weight: 950;
-      }
-
-      .prod-kpi.waiting strong { color: #fbbf24; }
-      .prod-kpi.blocked strong { color: #fb7185; }
-      .prod-kpi.done strong { color: #4ade80; }
-
       .prod-new-card,
       .prod-section {
         margin-top: 12px;
@@ -1600,76 +1840,6 @@ function Styles() {
 
       .prod-form-actions {
         margin-top: 13px;
-      }
-
-      .prod-departments {
-        margin-top: 14px;
-        display: grid;
-        grid-template-columns: repeat(3,minmax(0,1fr));
-        gap: 10px;
-      }
-
-      .prod-department-card {
-        min-width: 0;
-        min-height: 92px;
-        padding: 14px;
-        display: grid;
-        grid-template-columns: auto 1fr auto;
-        align-items: center;
-        gap: 12px;
-        border: 1px solid rgba(96,165,250,.17);
-        border-radius: 12px;
-        background:
-          linear-gradient(135deg,rgba(59,130,246,.07),rgba(255,255,255,.015));
-        color: #fff;
-        cursor: pointer;
-        text-align: left;
-      }
-
-      .prod-department-card:hover {
-        border-color: rgba(96,165,250,.40);
-        transform: translateY(-1px);
-      }
-
-      .prod-department-icon {
-        width: 42px;
-        height: 42px;
-        display: grid;
-        place-items: center;
-        border-radius: 10px;
-        background: linear-gradient(135deg,#2563eb,#60a5fa);
-        color: white;
-        font-weight: 950;
-      }
-
-      .prod-department-copy span,
-      .prod-department-copy strong,
-      .prod-department-copy small {
-        display: block;
-      }
-
-      .prod-department-copy span {
-        color: #6682a5;
-        font-size: 7px;
-        font-weight: 950;
-        letter-spacing: .8px;
-      }
-
-      .prod-department-copy strong {
-        margin-top: 3px;
-        font-size: 13px;
-      }
-
-      .prod-department-copy small {
-        margin-top: 4px;
-        color: #8498b0;
-        font-size: 9px;
-      }
-
-      .prod-arrow {
-        color: #60a5fa;
-        font-size: 18px;
-        font-weight: 900;
       }
 
       .prod-table-wrap {
@@ -1792,13 +1962,12 @@ function Styles() {
       }
 
       @media (max-width: 1000px) {
-        .prod-kpis,
         .prod-form-grid {
           grid-template-columns: repeat(2,minmax(0,1fr));
         }
 
-        .prod-departments {
-          grid-template-columns: repeat(2,minmax(0,1fr));
+        .prod-dashboard {
+          grid-template-columns: 210px 1fr;
         }
       }
 
@@ -1813,14 +1982,26 @@ function Styles() {
           justify-content: flex-start;
         }
 
-        .prod-kpis,
-        .prod-form-grid,
-        .prod-departments {
+        .prod-form-grid {
           grid-template-columns: 1fr;
         }
 
         .prod-field.wide {
           grid-column: span 1;
+        }
+
+        .prod-dashboard {
+          grid-template-columns: 1fr;
+        }
+
+        .prod-rail {
+          position: static;
+        }
+
+        .prod-print-menu {
+          left: 0;
+          right: 0;
+          width: auto;
         }
       }
     `}</style>

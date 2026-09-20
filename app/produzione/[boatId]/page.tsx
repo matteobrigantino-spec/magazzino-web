@@ -417,6 +417,19 @@ export default function ProductionBoatDetailPage({
         p_kit_id: stockMatch.id,
         p_boat_upholstery_id: inserted.id,
       });
+    } else {
+      // Nessun kit identico già in giacenza: prova ad abbinare in
+      // automatico una riga d'ordine già aperta per lo stesso
+      // fornitore + articolo (in base alla consegna richiesta più
+      // vicina tra tutti i battelli in attesa).
+      try {
+        await supabase.rpc("sync_upholstery_order_links", {
+          p_supplier_id: newReqSupplierId,
+          p_item_id: newReqItemId,
+        });
+      } catch (syncError) {
+        console.error("Errore abbinamento automatico tappezzeria:", syncError);
+      }
     }
 
     setShowAddUpholstery(false);

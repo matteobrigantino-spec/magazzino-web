@@ -1389,6 +1389,33 @@ export default function SupplierOrderPage() {
       }
     }
 
+    // Per le righe tappezzeria NON assegnate a mano con "Per battello",
+    // prova ad abbinarle in automatico alla richiesta del battello con
+    // la consegna richiesta più vicina (stesso fornitore + articolo).
+    if (supplier?.upholstery_enabled) {
+      const autoLinkItemIds = Array.from(
+        new Set(
+          lines
+            .filter((line) => !line.boatUpholsteryId)
+            .map((line) => line.item.id)
+        )
+      );
+
+      for (const autoItemId of autoLinkItemIds) {
+        try {
+          await supabase.rpc("sync_upholstery_order_links", {
+            p_supplier_id: supplierId,
+            p_item_id: autoItemId,
+          });
+        } catch (syncError) {
+          console.error(
+            "Errore abbinamento automatico tappezzeria:",
+            syncError
+          );
+        }
+      }
+    }
+
     /*
       A QUESTO PUNTO L'ORDINE È GIÀ SICURO.
 

@@ -1235,9 +1235,6 @@ export default function Home() {
       {/* HERO */}
 
       <section className="home-hero">
-        <div className="home-hero-circle home-circle-one" />
-        <div className="home-hero-circle home-circle-two" />
-
         <div className="home-hero-main">
           <div className="home-hero-copy">
             <div className="home-brand-row">
@@ -2162,46 +2159,31 @@ export default function Home() {
         .home-hero {
           position: relative;
           overflow: hidden;
-          min-height: 245px;
-          margin-bottom: 18px;
-          border: 1px solid rgba(78, 112, 162, 0.38);
-          border-radius: 18px;
-          background:
-            linear-gradient(
-              125deg,
-              #0c1728 0%,
-              #0b1627 55%,
-              #08111d 100%
-            );
+          min-height: 222px;
+          margin-bottom: 20px;
+          border: 1px solid rgba(15,23,42,0.08);
+          border-radius: 20px;
+          background: #ffffff;
+          box-shadow:
+            0 1px 2px rgba(15,23,42,0.04),
+            0 26px 50px -32px rgba(15,23,42,0.22);
         }
 
-        .home-hero-circle {
+        .home-hero::before {
+          content: "";
           position: absolute;
-          border-radius: 999px;
-          pointer-events: none;
-        }
-
-        .home-circle-one {
-          width: 620px;
-          height: 620px;
-          top: -520px;
-          right: 250px;
-          background: rgba(37, 99, 235, 0.13);
-        }
-
-        .home-circle-two {
-          width: 400px;
-          height: 400px;
-          right: 80px;
-          bottom: -340px;
-          background: rgba(59, 130, 246, 0.08);
+          top: 0;
+          left: 0;
+          right: 0;
+          height: 3px;
+          background: linear-gradient(90deg, #13294b, #2563eb 60%, transparent);
         }
 
         .home-hero-main {
           position: relative;
           z-index: 2;
-          min-height: 245px;
-          padding: 27px 30px;
+          min-height: 222px;
+          padding: 32px 34px;
           display: grid;
           grid-template-columns: minmax(0, 1fr) 205px;
           gap: 35px;
@@ -2212,15 +2194,15 @@ export default function Home() {
           display: flex;
           align-items: center;
           gap: 9px;
-          color: #93c5fd;
+          color: #64748b;
           font-size: 10px;
           font-weight: 900;
           letter-spacing: 1.7px;
         }
 
         .home-hero h1 {
-          margin: 15px 0 0;
-          color: white;
+          margin: 16px 0 0;
+          color: #0f172a;
           font-size: 39px;
           line-height: 1;
           letter-spacing: -1.3px;
@@ -2228,29 +2210,29 @@ export default function Home() {
         }
 
         .home-hero h1 span {
-          color: #3b82f6;
+          color: #2563eb;
         }
 
         .home-hero-subtitle {
-          margin: 9px 0 0;
-          color: rgba(255,255,255,0.62);
+          margin: 10px 0 0;
+          color: #64748b;
           font-size: 13px;
         }
 
         .home-quote {
           max-width: 610px;
           margin-top: 24px;
-          padding: 13px 15px;
+          padding: 14px 18px;
           display: flex;
           align-items: center;
-          gap: 13px;
-          border: 1px solid rgba(96,165,250,0.30);
-          border-radius: 11px;
-          background: rgba(59,130,246,0.07);
+          gap: 14px;
+          border-left: 3px solid #2563eb;
+          border-radius: 4px 12px 12px 4px;
+          background: #f8fafc;
         }
 
         .home-quote-symbol {
-          color: #60a5fa;
+          color: #93a5c4;
           font-family: Georgia, serif;
           font-size: 39px;
           line-height: 0.75;
@@ -2258,7 +2240,7 @@ export default function Home() {
         }
 
         .home-quote-text {
-          color: white;
+          color: #0f172a;
           font-size: 13px;
           font-weight: 750;
           line-height: 1.45;
@@ -2266,20 +2248,20 @@ export default function Home() {
 
         .home-quote-label {
           margin-top: 4px;
-          color: rgba(147,197,253,0.62);
+          color: #94a3b8;
           font-size: 8px;
           font-weight: 900;
           letter-spacing: 1.5px;
         }
 
         .home-calendar {
-          padding: 17px;
+          padding: 18px;
           min-height: 188px;
           display: flex;
           flex-direction: column;
-          border: 1px solid rgba(96,165,250,0.34);
-          border-radius: 14px;
-          background: rgba(4,13,25,0.72);
+          border: 1px solid rgba(15,23,42,0.08);
+          border-radius: 16px;
+          background: #f8fafc;
           box-sizing: border-box;
         }
 
@@ -2287,7 +2269,7 @@ export default function Home() {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          color: white;
+          color: #0f172a;
           font-size: 14px;
         }
 
@@ -2298,22 +2280,24 @@ export default function Home() {
           align-items: center;
           justify-content: center;
           border-radius: 9px;
-          background: rgba(37,99,235,0.20);
-          border: 1px solid rgba(59,130,246,0.40);
+          background: rgba(37,99,235,0.08);
+          border: 1px solid rgba(37,99,235,0.22);
         }
 
         .home-calendar-day {
           margin-top: 13px;
-          color: white;
+          color: #0f172a;
+          font-family: var(--font-geist-mono), ui-monospace, monospace;
+          font-variant-numeric: tabular-nums;
           font-size: 52px;
           line-height: 0.95;
           letter-spacing: -2px;
-          font-weight: 950;
+          font-weight: 800;
         }
 
         .home-calendar-month {
           margin-top: 8px;
-          color: #dbeafe;
+          color: #475569;
           font-size: 12px;
           text-transform: capitalize;
           font-weight: 700;
@@ -2325,8 +2309,10 @@ export default function Home() {
           display: flex;
           align-items: center;
           gap: 8px;
-          border-top: 1px solid rgba(96,165,250,0.25);
-          color: white;
+          border-top: 1px solid rgba(15,23,42,0.08);
+          color: #0f172a;
+          font-family: var(--font-geist-mono), ui-monospace, monospace;
+          font-variant-numeric: tabular-nums;
           font-size: 15px;
         }
 
@@ -2348,19 +2334,25 @@ export default function Home() {
         }
 
         .home-kpi {
-          min-height: 146px;
-          padding: 16px;
-          border: 1px solid var(--border-color);
-          border-radius: 14px;
-          background:
-            linear-gradient(
-              145deg,
-              var(--card),
-              var(--input-bg)
-            );
-          color: var(--foreground);
+          min-height: 150px;
+          padding: 18px;
+          border: 1px solid rgba(15,23,42,0.06);
+          border-radius: 16px;
+          background: #ffffff;
+          box-shadow:
+            0 1px 2px rgba(15,23,42,0.03),
+            0 18px 32px -26px rgba(15,23,42,0.16);
+          color: #0f172a;
           text-align: left;
           cursor: pointer;
+          transition: transform .15s ease, box-shadow .15s ease;
+        }
+
+        .home-kpi:not(.no-click):hover {
+          transform: translateY(-2px);
+          box-shadow:
+            0 4px 10px rgba(15,23,42,0.05),
+            0 26px 44px -22px rgba(15,23,42,0.20);
         }
 
         .home-kpi.no-click {
@@ -2406,49 +2398,50 @@ export default function Home() {
           font-weight: 850;
           letter-spacing: 0.8px;
           text-transform: uppercase;
-          opacity: 0.54;
+          color: #64748b;
         }
 
         .home-kpi-value {
-          margin-top: 6px;
+          margin-top: 7px;
+          font-family: var(--font-geist-mono), ui-monospace, monospace;
+          font-variant-numeric: tabular-nums;
           font-size: 27px;
-          font-weight: 950;
+          font-weight: 700;
           letter-spacing: -0.5px;
         }
 
         .home-kpi-subtitle {
           margin-top: 4px;
           font-size: 10px;
-          opacity: 0.45;
+          color: #94a3b8;
         }
 
         .home-panel {
           overflow: hidden;
-          border: 1px solid var(--border-color);
-          border-radius: 14px;
-          background:
-            linear-gradient(
-              145deg,
-              var(--card),
-              var(--input-bg)
-            );
+          border: 1px solid rgba(15,23,42,0.06);
+          border-radius: 16px;
+          background: #ffffff;
+          box-shadow:
+            0 1px 2px rgba(15,23,42,0.03),
+            0 18px 32px -26px rgba(15,23,42,0.14);
         }
 
         .home-actions-panel {
-          margin-bottom: 18px;
+          margin-bottom: 20px;
         }
 
         .home-panel-title {
-          padding: 15px 17px;
+          padding: 17px 19px;
           display: flex;
           align-items: center;
           justify-content: space-between;
           gap: 12px;
-          border-bottom: 1px solid var(--border-color);
+          border-bottom: 1px solid rgba(15,23,42,0.06);
         }
 
         .home-panel-title strong {
           display: block;
+          color: #0f172a;
           font-size: 16px;
           font-weight: 900;
         }
@@ -2456,8 +2449,8 @@ export default function Home() {
         .home-panel-title span {
           display: block;
           margin-top: 3px;
+          color: #64748b;
           font-size: 10px;
-          opacity: 0.47;
         }
 
         .home-panel-title-right {
@@ -2482,54 +2475,60 @@ export default function Home() {
 
         .home-panel-secondary-action {
           padding: 7px 10px;
-          border: 1px solid var(--border-color);
+          border: 1px solid rgba(15,23,42,0.10);
           border-radius: 8px;
           background: transparent;
-          color: var(--foreground);
+          color: #475569;
           cursor: pointer;
           font-size: 10px;
           font-weight: 850;
-          opacity: 0.72;
         }
 
         .home-panel-secondary-action:hover {
-          opacity: 1;
-          background: var(--input-bg);
+          color: #0f172a;
+          background: #f8fafc;
         }
 
         .home-panel-action {
           padding: 7px 10px;
-          border: 1px solid rgba(59,130,246,0.30);
+          border: 1px solid rgba(37,99,235,0.30);
           border-radius: 8px;
-          background: rgba(59,130,246,0.08);
-          color: #60a5fa;
+          background: rgba(37,99,235,0.08);
+          color: #2563eb;
           cursor: pointer;
           font-size: 10px;
           font-weight: 850;
         }
 
         .home-actions-grid {
-          padding: 15px;
+          padding: 16px;
           display: grid;
           grid-template-columns: repeat(5, minmax(0, 1fr));
           gap: 11px;
         }
 
         .home-action {
-          min-height: 96px;
-          padding: 13px;
+          min-height: 100px;
+          padding: 14px;
           display: flex;
           flex-direction: column;
           align-items: center;
           justify-content: center;
           gap: 9px;
-          border: 1px solid rgba(59,130,246,0.24);
-          border-radius: 11px;
-          background: rgba(59,130,246,0.045);
-          color: var(--foreground);
+          border: 1px solid rgba(15,23,42,0.07);
+          border-radius: 13px;
+          background: #f8fafc;
+          color: #0f172a;
           cursor: pointer;
-          font-weight: 850;
+          font-weight: 800;
           font-size: 11px;
+          transition: border-color .15s ease, background .15s ease, transform .15s ease;
+        }
+
+        .home-action:hover {
+          border-color: rgba(37,99,235,0.32);
+          background: #eff6ff;
+          transform: translateY(-1px);
         }
 
         .home-action-icon {
@@ -2539,8 +2538,8 @@ export default function Home() {
           align-items: center;
           justify-content: center;
           border-radius: 10px;
-          background: rgba(59,130,246,0.12);
-          color: #60a5fa;
+          background: rgba(37,99,235,0.09);
+          color: #2563eb;
         }
 
         .home-lower-grid,
@@ -2556,7 +2555,7 @@ export default function Home() {
           display: flex;
           align-items: center;
           gap: 12px;
-          border-bottom: 1px solid var(--border-color);
+          border-bottom: 1px solid rgba(15,23,42,0.06);
         }
 
         .home-date-badge {
@@ -2632,7 +2631,7 @@ export default function Home() {
           align-items: center;
           gap: 12px;
           border: none;
-          border-bottom: 1px solid var(--border-color);
+          border-bottom: 1px solid rgba(15,23,42,0.06);
           background: transparent;
           color: var(--foreground);
           cursor: pointer;
@@ -2665,8 +2664,8 @@ export default function Home() {
           align-items: center;
           justify-content: center;
           border-radius: 8px;
-          background: rgba(59,130,246,0.08);
-          color: #60a5fa;
+          background: rgba(37,99,235,0.08);
+          color: #2563eb;
         }
 
         .home-success-empty {
@@ -2728,9 +2727,9 @@ export default function Home() {
           align-items: center;
           justify-content: center;
           border-radius: 12px;
-          border: 1px solid rgba(59,130,246,0.24);
-          background: rgba(59,130,246,0.08);
-          color: #60a5fa;
+          border: 1px solid rgba(37,99,235,0.22);
+          background: rgba(37,99,235,0.08);
+          color: #2563eb;
         }
 
         .home-shared-note-copy {
@@ -2759,9 +2758,9 @@ export default function Home() {
           margin-top: 12px;
           padding: 10px 11px;
           border-radius: 8px;
-          border: 1px solid rgba(59,130,246,0.18);
-          background: rgba(59,130,246,0.06);
-          color: rgba(255,255,255,0.62);
+          border: 1px solid rgba(37,99,235,0.16);
+          background: rgba(37,99,235,0.05);
+          color: #475569;
           font-size: 10px;
           line-height: 1.5;
         }
@@ -2772,7 +2771,7 @@ export default function Home() {
           justify-content: space-between;
           align-items: center;
           gap: 18px;
-          border-bottom: 1px solid var(--border-color);
+          border-bottom: 1px solid rgba(15,23,42,0.06);
         }
 
         .home-stock-row strong,
@@ -3243,7 +3242,7 @@ function CalendarIcon() {
         width: 15,
         height: 15,
         border:
-          "2px solid #60a5fa",
+          "2px solid #2563eb",
         borderRadius: 3,
         position: "relative",
         boxSizing:
@@ -3259,7 +3258,7 @@ function CalendarIcon() {
           top: 3,
           height: 2,
           background:
-            "#60a5fa",
+            "#2563eb",
         }}
       />
     </div>
@@ -3273,7 +3272,7 @@ function ClockIcon() {
         width: 16,
         height: 16,
         border:
-          "2px solid #60a5fa",
+          "2px solid #2563eb",
         borderRadius:
           "50%",
       }}

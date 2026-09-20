@@ -79,12 +79,15 @@ type UpholsteryStockCandidate = {
   quilting: string;
 };
 
-const statusLabel: Record<string, string> = {
-  queued: "Da iniziare",
+// Solo per lo storico: le voci passate possono ancora avere uno stato
+// intermedio (da quando esisteva), qui mostrato in modo leggibile senza
+// riproporre la scelta manuale nel resto della pagina.
+const historyLabel: Record<string, string> = {
+  queued: "Arrivato nel reparto",
   working: "In lavorazione",
   waiting: "In attesa",
   blocked: "Bloccato",
-  completed: "Completato",
+  completed: "Reparto completato",
 };
 
 function formatItDate(value: string) {
@@ -530,9 +533,9 @@ export default function ProductionBoatDetailPage({
   }
 
   // Barra di avanzamento a step: un tap sul reparto attuale apre questo
-  // pannellino per cambiarne lo stato, senza uscire dalla scheda.
+  // pannellino per aggiungere una nota o completare il reparto, senza
+  // uscire dalla scheda.
   const [stepEditing, setStepEditing] = useState(false);
-  const [stepStatusDraft, setStepStatusDraft] = useState("queued");
   const [stepNoteDraft, setStepNoteDraft] = useState("");
   const [stepSaving, setStepSaving] = useState(false);
   const [stepError, setStepError] = useState("");
@@ -731,7 +734,6 @@ export default function ProductionBoatDetailPage({
 
   function openStepEditor() {
     if (!currentStep) return;
-    setStepStatusDraft(currentStep.status);
     setStepNoteDraft(currentStep.current_note || "");
     setStepError("");
     setStepEditing(true);
@@ -742,23 +744,43 @@ export default function ProductionBoatDetailPage({
     setStepError("");
   }
 
-  async function saveCurrentStep() {
+  async function saveStepNote() {
     if (!currentStep) return;
     setStepError("");
+    setStepSaving(true);
 
-    if (stepStatusDraft === "blocked" && !stepNoteDraft.trim()) {
-      setStepError("Quando è BLOCCATO inserisci il motivo nelle note.");
+    const operator =
+      localStorage.getItem("magazzino_display_name") ||
+      localStorage.getItem("magazzino_user") ||
+      "Matteo";
+
+    const { error } = await supabase.rpc("update_production_step_status", {
+      p_step_id: currentStep.id,
+      p_status: currentStep.status,
+      p_note: stepNoteDraft.trim() || null,
+      p_changed_by: operator,
+    });
+
+    if (error) {
+      setStepError("Errore salvataggio nota: " + error.message);
+      setStepSaving(false);
       return;
     }
 
-    const confirmCompleted =
-      stepStatusDraft === "completed"
-        ? window.confirm(
-            "Confermi COMPLETATO?\n\nIl battello uscirà da questo reparto e passerà automaticamente al reparto successivo."
-          )
-        : true;
+    setStepSaving(false);
+    setStepEditing(false);
+    await loadData();
+  }
 
-    if (!confirmCompleted) return;
+  async function completeCurrentStep() {
+    if (!currentStep) return;
+    setStepError("");
+
+    const confirmed = window.confirm(
+      "Confermi il completamento di questo reparto?\n\nIl battello uscirà da questo reparto e passerà automaticamente al reparto successivo."
+    );
+
+    if (!confirmed) return;
 
     setStepSaving(true);
 
@@ -769,13 +791,13 @@ export default function ProductionBoatDetailPage({
 
     const { error } = await supabase.rpc("update_production_step_status", {
       p_step_id: currentStep.id,
-      p_status: stepStatusDraft,
+      p_status: "completed",
       p_note: stepNoteDraft.trim() || null,
       p_changed_by: operator,
     });
 
     if (error) {
-      setStepError("Errore aggiornamento stato: " + error.message);
+      setStepError("Errore completamento reparto: " + error.message);
       setStepSaving(false);
       return;
     }
@@ -1385,7 +1407,13 @@ export default function ProductionBoatDetailPage({
                     </button>
                     <div className="pbd-stepper-label">
                       <strong>{dep.name}</strong>
-                      <span>{step ? statusLabel[status] || status : "Non raggiunto"}</span>
+                      <span>
+                        {!step
+                          ? "Non raggiunto"
+                          : status === "completed"
+                            ? "Completato"
+                            : "In reparto"}
+                      </span>
                       {step?.current_note && <em>{step.current_note}</em>}
                     </div>
                   </div>
@@ -1402,25 +1430,12 @@ export default function ProductionBoatDetailPage({
           <div className="pbd-step-editor">
             {stepError && <div className="pbd-form-error">{stepError}</div>}
             <div className="pbd-step-editor-row">
-              <label className="pbd-field">
-                <span>Stato · {depMap.get(currentStep.department_id)?.name}</span>
-                <select
-                  value={stepStatusDraft}
-                  onChange={(e) => setStepStatusDraft(e.target.value)}
-                >
-                  <option value="queued">Da iniziare</option>
-                  <option value="working">In lavorazione</option>
-                  <option value="waiting">In attesa</option>
-                  <option value="blocked">Bloccato</option>
-                  <option value="completed">Completato</option>
-                </select>
-              </label>
               <label className="pbd-field wide">
-                <span>Nota / motivo attesa</span>
+                <span>Nota · {depMap.get(currentStep.department_id)?.name}</span>
                 <input
                   value={stepNoteDraft}
                   onChange={(e) => setStepNoteDraft(e.target.value)}
-                  placeholder="Nota giornaliera..."
+                  placeholder="Nota (facoltativa)..."
                 />
               </label>
             </div>
@@ -1428,8 +1443,11 @@ export default function ProductionBoatDetailPage({
               <button type="button" className="pbd-back" onClick={closeStepEditor} disabled={stepSaving}>
                 Annulla
               </button>
-              <button type="button" className="pbd-save-btn" onClick={saveCurrentStep} disabled={stepSaving}>
-                {stepSaving ? "Salvataggio..." : "Salva stato"}
+              <button type="button" className="pbd-save-btn secondary" onClick={saveStepNote} disabled={stepSaving}>
+                {stepSaving ? "Salvataggio..." : "Salva nota"}
+              </button>
+              <button type="button" className="pbd-save-btn" onClick={completeCurrentStep} disabled={stepSaving}>
+                {stepSaving ? "Salvataggio..." : "Completa reparto →"}
               </button>
             </div>
           </div>
@@ -1458,7 +1476,7 @@ export default function ProductionBoatDetailPage({
                   <div className={`pbd-history-dot ${entry.status}`} />
                   <div className="pbd-history-copy">
                     <div>
-                      <strong>{statusLabel[entry.status] || entry.status}</strong>
+                      <strong>{historyLabel[entry.status] || entry.status}</strong>
                       <span> · {dep?.name || "Reparto"}</span>
                     </div>
                     <small>
@@ -1541,6 +1559,7 @@ function Styles() {
       .pbd-current { border:1px solid rgba(59,130,246,.30); background:rgba(59,130,246,.10); color:#93c5fd; }
       .pbd-edit-btn { border:1px solid rgba(96,165,250,.32); background:rgba(59,130,246,.14); color:#bfdbfe; }
       .pbd-save-btn { border:1px solid #2563eb; background:#2563eb; color:#fff; }
+      .pbd-save-btn.secondary { border:1px solid rgba(148,163,184,.28); background:rgba(255,255,255,.035); color:#dce8f5; }
       .pbd-save-btn:disabled,.pbd-back:disabled { opacity:.55; cursor:wait; }
       .pbd-error { margin-bottom:10px; padding:11px 13px; border:1px solid rgba(239,68,68,.28); border-radius:9px; background:rgba(239,68,68,.08); color:#fca5a5; font-size:10px; font-weight:800; }
       .pbd-specs { margin-top:11px; display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; }

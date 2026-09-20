@@ -468,3 +468,211 @@ export function buildUpholsteryStatusPdf(
 
   return doc;
 }
+
+// ============================================================
+// PROGRAMMA DI REPARTO (Verniciatura resina, Tubolari, ecc.)
+//
+// Stessa tabella "da spuntare a mano" di sempre - Prog./N. ordine/
+// Modello/Carena + le 3 colonne del reparto (Ragno-Longheroni/
+// Coperta/Accessori, oppure Colore tubolare/Tubo/Montaggio per
+// Tubolari) + Note. Nessuna colonna "Stato": il reparto non traccia
+// piu' stati intermedi, solo se un battello e' ancora qui o e' gia'
+// passato al reparto successivo.
+//
+// Condivisa tra la pagina di reparto e i tasti rapidi della pagina
+// principale, cosi' il disegno del PDF vive in un solo posto.
+// ============================================================
+
+export type DeptPdfBoat = {
+  id: string;
+  progressive_no: number | null;
+  order_number: string;
+  model_boat: string;
+  hull: string;
+  stringers: string;
+  deck: string;
+  accessories: string;
+  note: string | null;
+};
+
+export type DeptPdfStep = {
+  current_note: string | null;
+} | null;
+
+export type DeptPdfRow = {
+  boat: DeptPdfBoat;
+  step: DeptPdfStep;
+};
+
+export type DeptPdfTubolare = {
+  tube_color: string;
+  tube_done: boolean;
+  tube_mount_done: boolean;
+};
+
+export function buildDepartmentProgramPdf(params: {
+  departmentName: string;
+  isTubolari: boolean;
+  rows: DeptPdfRow[];
+  tubolariMap: Record<string, DeptPdfTubolare>;
+  companyLogo: string;
+  operator: string;
+  fromProg: string;
+  toProg: string;
+}): { doc: jsPDF; filename: string } {
+  const {
+    departmentName,
+    isTubolari,
+    rows,
+    tubolariMap,
+    companyLogo,
+    operator,
+    fromProg,
+    toProg,
+  } = params;
+
+  const sortedRows = [...rows].sort(
+    (a, b) => (a.boat.progressive_no ?? Infinity) - (b.boat.progressive_no ?? Infinity)
+  );
+
+  const fromText = fromProg.trim();
+  const toText = toProg.trim();
+
+  const fromNumber = fromText ? Number(fromText) : null;
+  const toNumber = toText ? Number(toText) : null;
+
+  if (fromText && (!Number.isFinite(fromNumber) || Number(fromNumber) <= 0)) {
+    throw new Error('Il progressivo "Da" non è valido.');
+  }
+  if (toText && (!Number.isFinite(toNumber) || Number(toNumber) <= 0)) {
+    throw new Error('Il progressivo "A" non è valido.');
+  }
+  if (fromNumber !== null && toNumber !== null && fromNumber > toNumber) {
+    throw new Error('Il progressivo "Da" deve essere minore o uguale a "A".');
+  }
+
+  const pdfRows = sortedRows.filter((row) => {
+    const prog = row.boat.progressive_no;
+    if (fromNumber !== null || toNumber !== null) {
+      if (prog === null) return false;
+      if (fromNumber !== null && prog < fromNumber) return false;
+      if (toNumber !== null && prog > toNumber) return false;
+    }
+    return true;
+  });
+
+  if (pdfRows.length === 0) {
+    throw new Error(
+      fromText || toText
+        ? "Nessun battello rientra nell'intervallo di progressivi indicato."
+        : "Non ci sono battelli da inserire nel programma."
+    );
+  }
+
+  const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+  drawCompanyLogoTopRight(doc, companyLogo, { maxWidth: 34, maxHeight: 16 });
+
+  const today = new Intl.DateTimeFormat("it-IT").format(new Date());
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8);
+  doc.text("OPERATORE", 9, 10);
+  doc.text((operator || "-").toUpperCase(), 54, 10);
+  doc.text("DATA PROGRAMMA", 9, 15);
+  doc.text(today, 54, 15);
+  doc.text("REPARTO", 9, 20);
+  doc.text(departmentName.toUpperCase(), 54, 20);
+
+  const marginX = 9;
+  const widths = isTubolari
+    ? [16, 22, 40, 28, 32, 20, 30, 100]
+    : [17, 24, 42, 30, 42, 30, 44, 58];
+  const titles = isTubolari
+    ? ["Prog.", "N. ordine", "Modello battello", "Carena", "Colore tubolare", "Tubo", "Montaggio tubo", "Note"]
+    : ["Prog.", "N. ordine", "Modello battello", "Carena", "Ragno/Longheroni", "Coperta", "Accessori", "Note"];
+
+  let cx = marginX;
+  const columns = widths.map((w, index) => {
+    const col = { x: cx, title: titles[index], w };
+    cx += w;
+    return col;
+  });
+
+  const modelColIndex = 2;
+  const noteColIndex = columns.length - 1;
+
+  let y = 29;
+
+  doc.setFontSize(6.4);
+  doc.setFont("helvetica", "bold");
+
+  for (const col of columns) {
+    doc.rect(col.x, y - 4, col.w, 8);
+    doc.text(col.title, col.x + 1.2, y + 1);
+  }
+
+  y += 4;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(6.2);
+
+  for (const row of pdfRows) {
+    const boat = row.boat;
+    const tub = tubolariMap[boat.id];
+    const noteText = row.step?.current_note || boat.note || "";
+
+    const values = isTubolari
+      ? [
+          boat.progressive_no !== null ? String(boat.progressive_no) : "-",
+          boat.order_number,
+          boat.model_boat,
+          boat.hull,
+          tub?.tube_color || "-",
+          tub?.tube_done ? "Fatto" : "-",
+          tub?.tube_mount_done ? "Fatto" : "-",
+          noteText,
+        ]
+      : [
+          boat.progressive_no !== null ? String(boat.progressive_no) : "-",
+          boat.order_number,
+          boat.model_boat,
+          boat.hull,
+          boat.stringers,
+          boat.deck,
+          boat.accessories,
+          noteText,
+        ];
+
+    const noteLines = doc.splitTextToSize(String(values[noteColIndex] ?? ""), columns[noteColIndex].w - 2);
+    const modelLines = doc.splitTextToSize(String(values[modelColIndex] ?? ""), columns[modelColIndex].w - 2);
+    const rowH = Math.max(8, noteLines.length * 3 + 3, modelLines.length * 3 + 3);
+
+    if (y + rowH > 198) {
+      doc.addPage();
+      y = 12;
+    }
+
+    values.forEach((value, index) => {
+      const col = columns[index];
+      doc.rect(col.x, y, col.w, rowH);
+      const content =
+        index === noteColIndex
+          ? noteLines
+          : index === modelColIndex
+            ? modelLines
+            : doc.splitTextToSize(String(value ?? ""), col.w - 2);
+      doc.text(content, col.x + 1.2, y + 4);
+    });
+
+    y += rowH;
+  }
+
+  const safeName = departmentName.replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  const rangeSuffix =
+    fromNumber !== null || toNumber !== null
+      ? `_prog_${fromNumber ?? "inizio"}-${toNumber ?? "fine"}`
+      : "";
+
+  const filename = `Produzione_${safeName}${rangeSuffix}_${today.replace(/\//g, "-")}.pdf`;
+
+  return { doc, filename };
+}

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabaseClient";
+import { fetchCompanyLogo } from "../../lib/pdfLogo";
 
 type Department = {
   id: string;
@@ -76,13 +77,9 @@ type BoatUpholsteryDraftRow = {
   note: string;
 };
 
-const statusLabel: Record<string, string> = {
-  queued: "DA INIZIARE",
-  working: "IN LAVORAZIONE",
-  waiting: "IN ATTESA",
-  blocked: "BLOCCATO",
-  completed: "COMPLETATO",
-};
+function isTubolariName(name: string) {
+  return name.trim().toLowerCase() === "tubolari";
+}
 
 export default function ProductionPage() {
   const router = useRouter();
@@ -102,6 +99,14 @@ export default function ProductionPage() {
 
   const [upholsteryPdfBusy, setUpholsteryPdfBusy] = useState(false);
   const [upholsteryPdfError, setUpholsteryPdfError] = useState("");
+
+  // Pannello "stampa programma reparto": stessa logica gia' usata dentro
+  // Verniciatura/Tubolari, richiamabile pero' direttamente da qui.
+  const [printPanel, setPrintPanel] = useState<"verniciatura" | "tubolari" | null>(null);
+  const [printFromProg, setPrintFromProg] = useState("");
+  const [printToProg, setPrintToProg] = useState("");
+  const [printBusy, setPrintBusy] = useState(false);
+  const [printError, setPrintError] = useState("");
 
   useEffect(() => {
     async function loadPdfLogo() {
@@ -500,29 +505,121 @@ export default function ProductionPage() {
   }, [steps, depMap]);
 
   const activeBoats = boats.filter((boat) => boat.status === "active");
-  const blockedCount = activeBoats.filter(
-    (boat) => currentStepMap.get(boat.id)?.status === "blocked"
-  ).length;
-  const waitingCount = activeBoats.filter(
-    (boat) => currentStepMap.get(boat.id)?.status === "waiting"
-  ).length;
 
-  const currentMonth = new Date().toISOString().slice(0, 7);
-  const completedThisMonth = boats.filter(
-    (boat) =>
-      boat.status === "completed" &&
-      boat.completed_at?.slice(0, 7) === currentMonth
-  ).length;
+  const verniciaturaDept = useMemo(
+    () =>
+      departments.find((dep) =>
+        dep.name.trim().toLowerCase().includes("verniciatura")
+      ) || null,
+    [departments]
+  );
 
-  const departmentCounts = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const step of steps) {
-      if (step.status !== "completed") {
-        counts.set(step.department_id, (counts.get(step.department_id) || 0) + 1);
-      }
+  const tubolariDept = useMemo(
+    () => departments.find((dep) => isTubolariName(dep.name)) || null,
+    [departments]
+  );
+
+  function openPrintPanel(kind: "verniciatura" | "tubolari") {
+    setPrintError("");
+    setPrintFromProg("");
+    setPrintToProg("");
+    setPrintPanel((current) => (current === kind ? null : kind));
+  }
+
+  async function generateDeptPdf() {
+    if (!printPanel) return;
+
+    setPrintError("");
+
+    const dept = printPanel === "tubolari" ? tubolariDept : verniciaturaDept;
+
+    if (!dept) {
+      setPrintError(
+        `Reparto ${printPanel === "tubolari" ? "Tubolari" : "Verniciatura"} non trovato. Crealo da "Gestisci reparti".`
+      );
+      return;
     }
-    return counts;
-  }, [steps]);
+
+    setPrintBusy(true);
+
+    try {
+      const isTub = printPanel === "tubolari";
+      let tubMap: Record<
+        string,
+        { tube_color: string; tube_done: boolean; tube_mount_done: boolean }
+      > = {};
+
+      if (isTub) {
+        const { data } = await supabase
+          .from("production_tubolari")
+          .select("boat_id,tube_color,tube_done,tube_mount_done");
+
+        tubMap = Object.fromEntries(
+          (data || []).map((row: any) => [
+            String(row.boat_id),
+            {
+              tube_color: String(row.tube_color || ""),
+              tube_done: Boolean(row.tube_done),
+              tube_mount_done: Boolean(row.tube_mount_done),
+            },
+          ])
+        );
+      }
+
+      const rows = isTub
+        ? activeBoats.map((boat) => {
+            const step = steps.find(
+              (s) => s.boat_id === boat.id && s.department_id === dept.id
+            );
+            return {
+              boat,
+              step: step ? { current_note: step.current_note } : null,
+            };
+          })
+        : steps
+            .filter(
+              (s) => s.department_id === dept.id && s.status !== "completed"
+            )
+            .map((s) => {
+              const boat = boats.find((b) => b.id === s.boat_id);
+              return boat
+                ? { boat, step: { current_note: s.current_note } }
+                : null;
+            })
+            .filter(
+              (row): row is { boat: Boat; step: { current_note: string | null } } =>
+                Boolean(row)
+            );
+
+      const companyLogo = await fetchCompanyLogo();
+      const operator =
+        localStorage.getItem("magazzino_display_name") ||
+        localStorage.getItem("magazzino_user") ||
+        "Matteo";
+
+      const { buildDepartmentProgramPdf } = await import("../../lib/productionPdf");
+
+      const { doc, filename } = buildDepartmentProgramPdf({
+        departmentName: dept.name,
+        isTubolari: isTub,
+        rows,
+        tubolariMap: tubMap,
+        companyLogo,
+        operator,
+        fromProg: printFromProg,
+        toProg: printToProg,
+      });
+
+      await doc.save(filename, { returnPromise: true });
+      setPrintPanel(null);
+    } catch (error) {
+      setPrintError(
+        error instanceof Error ? error.message : "Impossibile creare il PDF. Riprova."
+      );
+    } finally {
+      setPrintBusy(false);
+    }
+  }
 
   function daysFrom(value: string) {
     const start = new Date(value).getTime();
@@ -1076,162 +1173,177 @@ export default function ProductionPage() {
         </section>
       )}
 
-      <section className="prod-dashboard">
-        <div className="prod-rail">
-          <div className="prod-rail-card">
-            <h3>Riepilogo</h3>
-            <div className="prod-stat-list">
-              <div>
-                <span>In produzione</span>
-                <strong>{activeBoats.length}</strong>
-              </div>
-              <div>
-                <span>In attesa</span>
-                <strong className="waiting">{waitingCount}</strong>
-              </div>
-              <div>
-                <span>Bloccati</span>
-                <strong className="blocked">{blockedCount}</strong>
-              </div>
-              <div>
-                <span>Completati (mese)</span>
-                <strong className="done">{completedThisMonth}</strong>
-              </div>
-            </div>
+      <section className="prod-main">
+        <div className="prod-main-top">
+          <div>
+            <h2>Battelli in produzione</h2>
+            <p>{activeBoats.length} battelli attivi, ordinati per consegna cliente.</p>
           </div>
 
-          <div className="prod-rail-card">
-            <h3>Reparti</h3>
-            <div className="prod-dept-list">
-              {departments.filter((dep) => dep.active).map((dep) => (
-                <button
-                  type="button"
-                  key={dep.id}
-                  className="prod-dept-item"
-                  onClick={() => router.push(`/produzione/reparti/${dep.id}`)}
-                >
-                  <div className="name">
-                    <small>Reparto {dep.sort_order}</small>
-                    {dep.name}
-                  </div>
-                  <span className="count">{departmentCounts.get(dep.id) || 0}</span>
-                </button>
-              ))}
-
-              {departments.filter((dep) => dep.active).length === 0 && (
-                <div className="prod-empty">
-                  Nessun reparto attivo. Apri “Gestisci reparti”.
-                </div>
-              )}
-            </div>
+          <div className="prod-print-actions">
+            <button
+              type="button"
+              className={`prod-btn secondary ${printPanel === "verniciatura" ? "active" : ""}`}
+              onClick={() => openPrintPanel("verniciatura")}
+            >
+              Stampa programma verniciatura
+            </button>
+            <button
+              type="button"
+              className={`prod-btn secondary ${printPanel === "tubolari" ? "active" : ""}`}
+              onClick={() => openPrintPanel("tubolari")}
+            >
+              Stampa programma tubolari
+            </button>
+            <button
+              type="button"
+              className="prod-btn primary"
+              onClick={downloadUpholsteryStatusPdf}
+              disabled={upholsteryPdfBusy || pdfLogoLoading || !pdfLogo}
+            >
+              {upholsteryPdfBusy ? "Creazione PDF..." : "Stato tappezzerie"}
+            </button>
           </div>
         </div>
 
-        <div className="prod-main">
-          <div className="prod-main-top">
-            <div>
-              <h2>Battelli in produzione</h2>
-              <p>{activeBoats.length} battelli attivi, ordinati per consegna cliente.</p>
-            </div>
+        {upholsteryPdfError && (
+          <div role="alert" className="prod-message error">
+            {upholsteryPdfError}
+          </div>
+        )}
+        {!pdfLogoLoading && !pdfLogo && (
+          <p role="status" className="prod-pdf-logo-missing">
+            Nessun logo configurato —{" "}
+            <Link href="/produzione/configurazioni">
+              caricalo una volta in Configurazioni
+            </Link>
+            .
+          </p>
+        )}
 
-            <div className="prod-print-action">
+        {printPanel && (
+          <div className="prod-print-panel">
+            <strong>
+              Programma {printPanel === "tubolari" ? "Tubolari" : "Verniciatura"}
+            </strong>
+            <p>
+              Lascia vuoto per stampare tutti i battelli, oppure scegli un
+              intervallo di numeri progressivi (colonna “Prog.”).
+            </p>
+            <div className="prod-print-panel-controls">
+              <label>
+                Da progressivo
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  placeholder="Es. 1900"
+                  value={printFromProg}
+                  onChange={(e) => setPrintFromProg(e.target.value)}
+                />
+              </label>
+              <label>
+                A progressivo
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  placeholder="Es. 1920"
+                  value={printToProg}
+                  onChange={(e) => setPrintToProg(e.target.value)}
+                />
+              </label>
+              <button
+                type="button"
+                className="prod-btn secondary"
+                onClick={() => setPrintPanel(null)}
+                disabled={printBusy}
+              >
+                Annulla
+              </button>
               <button
                 type="button"
                 className="prod-btn primary"
-                onClick={downloadUpholsteryStatusPdf}
-                disabled={upholsteryPdfBusy || pdfLogoLoading || !pdfLogo}
+                onClick={generateDeptPdf}
+                disabled={printBusy}
               >
-                {upholsteryPdfBusy ? "Creazione PDF..." : "Stampa stato tappezzerie"}
+                {printBusy ? "Creazione PDF..." : "Genera PDF"}
               </button>
-              {upholsteryPdfError && (
-                <div role="alert" className="prod-message error">
-                  {upholsteryPdfError}
-                </div>
-              )}
-              {!pdfLogoLoading && !pdfLogo && (
-                <p role="status" className="prod-pdf-logo-missing">
-                  Nessun logo configurato —{" "}
-                  <Link href="/produzione/configurazioni">
-                    caricalo una volta in Configurazioni
-                  </Link>
-                  .
-                </p>
-              )}
             </div>
+            {printError && (
+              <div role="alert" className="prod-message error">
+                {printError}
+              </div>
+            )}
           </div>
+        )}
 
-          <p className="prod-print-hint">
-            Il programma di reparto (con Carena, Ragno/Longheroni, Coperta e Accessori da
-            spuntare a mano) si stampa da dentro ogni reparto — Verniciatura resina, Tubolari
-            — scegliendo lì l&apos;intervallo di numeri progressivi da inserire a mano prima
-            di stampare.
-          </p>
-
-          <div className="prod-table-wrap">
-            <table className="prod-table">
-              <thead>
+        <div className="prod-table-wrap">
+          <table className="prod-table">
+            <thead>
+              <tr>
+                <th>Prog.</th>
+                <th>N° ordine</th>
+                <th>Modello</th>
+                <th>Reparto attuale</th>
+                <th>Consegna richiesta</th>
+                <th>Giorni reparto</th>
+                <th>Giorni totali</th>
+                <th>Note</th>
+              </tr>
+            </thead>
+            <tbody>
+              {activeBoats.length === 0 ? (
                 <tr>
-                  <th>Prog.</th>
-                  <th>N° ordine</th>
-                  <th>Modello</th>
-                  <th>Reparto attuale</th>
-                  <th>Stato</th>
-                  <th>Consegna richiesta</th>
-                  <th>Giorni reparto</th>
-                  <th>Giorni totali</th>
-                  <th>Note</th>
+                  <td colSpan={8} className="prod-empty-cell">
+                    Nessun battello attualmente in produzione.
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {activeBoats.length === 0 ? (
-                  <tr>
-                    <td colSpan={9} className="prod-empty-cell">
-                      Nessun battello attualmente in produzione.
-                    </td>
-                  </tr>
-                ) : (
-                  activeBoats.map((boat) => {
-                    const step = currentStepMap.get(boat.id);
-                    const dep = step ? depMap.get(step.department_id) : null;
+              ) : (
+                activeBoats.map((boat) => {
+                  const step = currentStepMap.get(boat.id);
+                  const dep = step ? depMap.get(step.department_id) : null;
 
-                    return (
-                      <tr
-                        key={boat.id}
-                        onClick={() => router.push(`/produzione/${boat.id}`)}
-                        className="prod-click-row"
-                      >
-                        <td className="prod-prog-cell" onClick={(e) => e.stopPropagation()}>
-                          <input
-                            type="number"
-                            min="1"
-                            className="prod-prog-input"
-                            placeholder="—"
-                            value={boat.progressive_no ?? ""}
-                            onChange={(e) => editProgressiveDraft(boat.id, e.target.value)}
-                            onBlur={(e) => saveProgressive(boat.id, e.target.value)}
-                          />
-                        </td>
-                        <td><span className="prod-order">{boat.order_number}</span></td>
-                        <td>{boat.model_boat}</td>
-                        <td>{dep?.name || "—"}</td>
-                        <td>
-                          <StatusBadge status={step?.status || "queued"} />
-                        </td>
-                        <td className="prod-note-cell">
-                          {boat.requested_delivery_date
-                            ? formatItDate(boat.requested_delivery_date)
-                            : "—"}
-                        </td>
-                        <td>{step ? daysFrom(step.entered_at) : 0} gg</td>
-                        <td>{daysFrom(boat.created_at)} gg</td>
-                        <td className="prod-note-cell">{step?.current_note || boat.note || "—"}</td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
+                  return (
+                    <tr
+                      key={boat.id}
+                      onClick={() => router.push(`/produzione/${boat.id}`)}
+                      className="prod-click-row"
+                    >
+                      <td className="prod-prog-cell" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="number"
+                          min="1"
+                          className="prod-prog-input"
+                          placeholder="—"
+                          value={boat.progressive_no ?? ""}
+                          onChange={(e) => editProgressiveDraft(boat.id, e.target.value)}
+                          onBlur={(e) => saveProgressive(boat.id, e.target.value)}
+                        />
+                      </td>
+                      <td><span className="prod-order">{boat.order_number}</span></td>
+                      <td>{boat.model_boat}</td>
+                      <td>
+                        {dep ? (
+                          <span className="prod-dept-pill">{dep.name}</span>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                      <td className="prod-note-cell">
+                        {boat.requested_delivery_date
+                          ? formatItDate(boat.requested_delivery_date)
+                          : "—"}
+                      </td>
+                      <td>{step ? daysFrom(step.entered_at) : 0} gg</td>
+                      <td>{daysFrom(boat.created_at)} gg</td>
+                      <td className="prod-note-cell">{step?.current_note || boat.note || "—"}</td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
         </div>
       </section>
 
@@ -1272,150 +1384,37 @@ function formatItDate(value: string) {
   return `${day}/${month}/${year}`;
 }
 
-function StatusBadge({ status }: { status: string }) {
-  return (
-    <span className={`prod-status ${status}`}>
-      <em className={`prod-status-dot ${status}`} />
-      {statusLabel[status] || status.toUpperCase()}
-    </span>
-  );
-}
-
 function Styles() {
   return (
     <style jsx global>{`
       .prod-pdf-logo-missing { margin: 8px 0 0; font-size: 11px; color: #fbbf24; }
       .prod-pdf-logo-missing a { color: #93c5fd; font-weight: 800; }
-      .prod-print-hint { margin: -4px 0 12px; font-size: 11px; color: #8398b1; line-height: 1.55; max-width: 720px; }
-
-      /* --- DASHBOARD: barra laterale (riepilogo + reparti) + tabella --- */
-      .prod-dashboard {
-        margin-top: 14px;
-        display: grid;
-        grid-template-columns: 260px 1fr;
-        gap: 14px;
-        align-items: start;
-      }
-
-      .prod-rail {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-        position: sticky;
-        top: 14px;
-      }
-
-      .prod-rail-card {
-        padding: 16px;
-        border: 1px solid rgba(148,163,184,.15);
-        border-radius: 14px;
-        background: #0b1828;
-      }
-
-      .prod-rail-card h3 {
-        margin: 0 0 12px;
-        font-size: 10px;
-        font-weight: 950;
-        letter-spacing: .9px;
-        text-transform: uppercase;
-        color: #8195ae;
-      }
-
-      .prod-stat-list {
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-      }
-
-      .prod-stat-list > div {
-        display: flex;
-        align-items: baseline;
-        justify-content: space-between;
-        gap: 10px;
-      }
-
-      .prod-stat-list span {
-        color: #91a4bc;
-        font-size: 11px;
-      }
-
-      .prod-stat-list strong {
-        font-size: 18px;
-        font-weight: 950;
-      }
-
-      .prod-stat-list strong.waiting { color: #fbbf24; }
-      .prod-stat-list strong.blocked { color: #fb7185; }
-      .prod-stat-list strong.done { color: #4ade80; }
-
-      .prod-dept-list {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-      }
-
-      .prod-dept-item {
-        width: 100%;
-        padding: 11px 12px;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 10px;
-        border: 1px solid rgba(96,165,250,.15);
-        border-radius: 10px;
-        background: rgba(255,255,255,.015);
-        color: #fff;
-        cursor: pointer;
-        text-align: left;
-        font-size: 12.5px;
-        font-weight: 700;
-      }
-
-      .prod-dept-item:hover {
-        border-color: rgba(96,165,250,.40);
-      }
-
-      .prod-dept-item .name small {
-        display: block;
-        margin-bottom: 2px;
-        color: #60a5fa;
-        font-size: 8.5px;
-        font-weight: 950;
-        letter-spacing: .6px;
-        text-transform: uppercase;
-      }
-
-      .prod-dept-item .count {
-        min-width: 26px;
-        padding: 3px 9px;
-        border-radius: 999px;
-        background: rgba(59,130,246,.12);
-        color: #93c5fd;
-        font-size: 11px;
-        font-weight: 950;
-        text-align: center;
-      }
 
       .prod-main {
+        margin-top: 16px;
         min-width: 0;
-        padding: 17px;
+        padding: 24px;
         border: 1px solid rgba(148,163,184,.15);
-        border-radius: 14px;
-        background: #0b1828;
+        border-radius: 18px;
+        background:
+          radial-gradient(circle at 100% 0%, rgba(37,99,235,.08), transparent 40%),
+          #0b1828;
+        box-shadow: 0 18px 40px -24px rgba(0,0,0,.55);
       }
 
       .prod-main-top {
         display: flex;
         align-items: flex-start;
         justify-content: space-between;
-        gap: 12px;
-        margin-bottom: 12px;
+        gap: 14px;
+        margin-bottom: 6px;
       }
 
       .prod-main-top h2 {
         margin: 0;
-        font-size: 18px;
+        font-size: 19px;
         font-weight: 950;
+        letter-spacing: -.3px;
       }
 
       .prod-main-top p {
@@ -1424,11 +1423,89 @@ function Styles() {
         font-size: 11px;
       }
 
-      .prod-print-action {
+      .prod-print-actions {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 8px;
+      }
+
+      .prod-btn.secondary.active {
+        border-color: rgba(96,165,250,.55);
+        background: rgba(59,130,246,.14);
+        color: #bfdbfe;
+      }
+
+      .prod-print-panel {
+        margin-top: 16px;
+        padding: 15px 16px;
+        border: 1px solid rgba(96,165,250,.22);
+        border-radius: 12px;
+        background: rgba(59,130,246,.05);
+      }
+
+      .prod-print-panel strong {
+        display: block;
+        font-size: 11px;
+        font-weight: 950;
+        letter-spacing: .3px;
+      }
+
+      .prod-print-panel p {
+        margin: 6px 0 0;
+        color: #91a4bc;
+        font-size: 10.5px;
+        line-height: 1.5;
+        max-width: 640px;
+      }
+
+      .prod-print-panel-controls {
+        margin-top: 12px;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-end;
+        gap: 10px;
+      }
+
+      .prod-print-panel-controls label {
         display: flex;
         flex-direction: column;
-        align-items: flex-end;
-        gap: 4px;
+        gap: 5px;
+        color: #8ea2ba;
+        font-size: 8px;
+        font-weight: 900;
+        text-transform: uppercase;
+        letter-spacing: .6px;
+      }
+
+      .prod-print-panel-controls input {
+        width: 118px;
+        min-height: 36px;
+        box-sizing: border-box;
+        padding: 0 10px;
+        border: 1px solid rgba(148,163,184,.22);
+        border-radius: 8px;
+        outline: none;
+        background: #081524;
+        color: #fff;
+        font-size: 11px;
+      }
+
+      .prod-print-panel-controls input:focus {
+        border-color: rgba(96,165,250,.55);
+      }
+
+      .prod-dept-pill {
+        display: inline-flex;
+        align-items: center;
+        padding: 5px 10px;
+        border: 1px solid rgba(96,165,250,.22);
+        border-radius: 999px;
+        background: rgba(59,130,246,.08);
+        color: #bcd6f7;
+        font-size: 9.5px;
+        font-weight: 800;
+        white-space: nowrap;
       }
 
       .prod-prog-cell {
@@ -1725,64 +1802,6 @@ function Styles() {
         color: #a9b7c9;
       }
 
-      .prod-status {
-        display: inline-flex;
-        align-items: center;
-        gap: 5px;
-        padding: 6px 9px;
-        border-radius: 999px;
-        font-size: 8px;
-        font-weight: 950;
-        letter-spacing: .2px;
-        white-space: nowrap;
-      }
-
-      .prod-status-dot {
-        width: 6px;
-        height: 6px;
-        flex: 0 0 auto;
-        border-radius: 50%;
-        font-style: normal;
-      }
-
-      .prod-status.queued {
-        border: 1px solid rgba(148,163,184,.30);
-        background: rgba(148,163,184,.10);
-        color: #dbe3ed;
-      }
-      .prod-status-dot.queued { background: #94a3b8; }
-
-      .prod-status.working {
-        border: 1px solid rgba(59,130,246,.45);
-        background: rgba(59,130,246,.16);
-        color: #bfdbfe;
-        box-shadow: 0 0 0 3px rgba(59,130,246,.08);
-      }
-      .prod-status-dot.working { background: #3b82f6; }
-
-      .prod-status.waiting {
-        border: 1px solid rgba(245,158,11,.45);
-        background: rgba(245,158,11,.14);
-        color: #fde68a;
-        box-shadow: 0 0 0 3px rgba(245,158,11,.08);
-      }
-      .prod-status-dot.waiting { background: #f59e0b; }
-
-      .prod-status.blocked {
-        border: 1px solid rgba(244,63,94,.48);
-        background: rgba(244,63,94,.16);
-        color: #fecdd3;
-        box-shadow: 0 0 0 3px rgba(244,63,94,.08);
-      }
-      .prod-status-dot.blocked { background: #f43f5e; }
-
-      .prod-status.completed {
-        border: 1px solid rgba(34,197,94,.45);
-        background: rgba(34,197,94,.16);
-        color: #bbf7d0;
-      }
-      .prod-status-dot.completed { background: #22c55e; }
-
       .prod-empty,
       .prod-empty-cell {
         padding: 26px;
@@ -1794,10 +1813,6 @@ function Styles() {
       @media (max-width: 1000px) {
         .prod-form-grid {
           grid-template-columns: repeat(2,minmax(0,1fr));
-        }
-
-        .prod-dashboard {
-          grid-template-columns: 210px 1fr;
         }
       }
 
@@ -1820,21 +1835,13 @@ function Styles() {
           grid-column: span 1;
         }
 
-        .prod-dashboard {
-          grid-template-columns: 1fr;
-        }
-
-        .prod-rail {
-          position: static;
-        }
-
         .prod-main-top {
           flex-direction: column;
           align-items: stretch;
         }
 
-        .prod-print-action {
-          align-items: flex-start;
+        .prod-print-actions {
+          justify-content: flex-start;
         }
       }
     `}</style>

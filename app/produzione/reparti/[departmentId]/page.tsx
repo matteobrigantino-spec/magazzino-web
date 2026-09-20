@@ -3,9 +3,9 @@
 import Link from "next/link";
 import { use, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import jsPDF from "jspdf";
 import { supabase } from "../../../../lib/supabaseClient";
-import { fetchCompanyLogo, drawCompanyLogoTopRight } from "../../../../lib/pdfLogo";
+import { fetchCompanyLogo } from "../../../../lib/pdfLogo";
+import { buildDepartmentProgramPdf } from "../../../../lib/productionPdf";
 
 type Department = {
   id: string;
@@ -48,14 +48,6 @@ type Tubolare = {
   tube_mount_done: boolean;
 };
 
-const statusLabel: Record<string, string> = {
-  queued: "Da iniziare",
-  working: "In lavorazione",
-  waiting: "In attesa",
-  blocked: "Bloccato",
-  completed: "Completato",
-};
-
 function isTubolariName(name: string) {
   return name.trim().toLowerCase() === "tubolari";
 }
@@ -78,7 +70,6 @@ export default function ProductionDepartmentPage({
   const [department, setDepartment] = useState<Department | null>(null);
   const [boats, setBoats] = useState<Boat[]>([]);
   const [steps, setSteps] = useState<Step[]>([]);
-  const [statusDrafts, setStatusDrafts] = useState<Record<string, string>>({});
   const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
   const [savingId, setSavingId] = useState("");
   const [loading, setLoading] = useState(true);
@@ -168,7 +159,6 @@ export default function ProductionDepartmentPage({
 
       if (boatIds.length === 0) {
         setSteps([]);
-        setStatusDrafts({});
         setNoteDrafts({});
         setTubolariMap({});
         setTubeColorDrafts({});
@@ -214,7 +204,6 @@ export default function ProductionDepartmentPage({
       }));
 
       setSteps(cleanSteps);
-      setStatusDrafts(Object.fromEntries(cleanSteps.map((step) => [step.id, step.status])));
       setNoteDrafts(
         Object.fromEntries(cleanSteps.map((step) => [step.id, step.current_note || ""]))
       );
@@ -275,9 +264,6 @@ export default function ProductionDepartmentPage({
     }));
 
     setSteps(cleanSteps);
-    setStatusDrafts(
-      Object.fromEntries(cleanSteps.map((step) => [step.id, step.status]))
-    );
     setNoteDrafts(
       Object.fromEntries(cleanSteps.map((step) => [step.id, step.current_note || ""]))
     );
@@ -406,23 +392,8 @@ export default function ProductionDepartmentPage({
     await loadData();
   }
 
-  async function saveStatus(step: Step) {
-    const nextStatus = statusDrafts[step.id] || step.status;
+  async function saveNote(step: Step) {
     const nextNote = (noteDrafts[step.id] || "").trim();
-
-    if (nextStatus === "blocked" && !nextNote) {
-      setErrorMessage("Quando un battello è BLOCCATO inserisci il motivo nelle note.");
-      return;
-    }
-
-    const completionWarning =
-      nextStatus === "completed"
-        ? window.confirm(
-            "Confermi COMPLETATO?\n\nIl battello uscirà da questo reparto e passerà automaticamente al reparto successivo."
-          )
-        : true;
-
-    if (!completionWarning) return;
 
     setSavingId(step.id);
     setMessage("");
@@ -435,13 +406,13 @@ export default function ProductionDepartmentPage({
 
     const { error } = await supabase.rpc("update_production_step_status", {
       p_step_id: step.id,
-      p_status: nextStatus,
+      p_status: step.status,
       p_note: nextNote || null,
       p_changed_by: operator,
     });
 
     if (error) {
-      setErrorMessage("Errore aggiornamento stato: " + error.message);
+      setErrorMessage("Errore salvataggio nota: " + error.message);
       setSavingId("");
       return;
     }
@@ -465,9 +436,62 @@ export default function ProductionDepartmentPage({
     }
 
     const boat = boatMap.get(step.boat_id);
-    setMessage(
-      `Ordine ${boat?.order_number || ""}: stato aggiornato a ${statusLabel[nextStatus] || nextStatus}.`
+    setMessage(`Ordine ${boat?.order_number || ""}: nota salvata.`);
+    setSavingId("");
+    await loadData();
+  }
+
+  async function completeStep(step: Step) {
+    const nextNote = (noteDrafts[step.id] || "").trim();
+
+    const confirmed = window.confirm(
+      "Confermi il completamento di questo reparto?\n\nIl battello uscirà da questo reparto e passerà automaticamente al reparto successivo."
     );
+
+    if (!confirmed) return;
+
+    setSavingId(step.id);
+    setMessage("");
+    setErrorMessage("");
+
+    const operator =
+      localStorage.getItem("magazzino_display_name") ||
+      localStorage.getItem("magazzino_user") ||
+      "Matteo";
+
+    const { error } = await supabase.rpc("update_production_step_status", {
+      p_step_id: step.id,
+      p_status: "completed",
+      p_note: nextNote || null,
+      p_changed_by: operator,
+    });
+
+    if (error) {
+      setErrorMessage("Errore completamento reparto: " + error.message);
+      setSavingId("");
+      return;
+    }
+
+    if (isTubolariDept) {
+      const tubError = await supabase.from("production_tubolari").upsert(
+        {
+          boat_id: step.boat_id,
+          tube_color: (tubeColorDrafts[step.boat_id] || "").trim(),
+          tube_done: Boolean(tubeDoneDrafts[step.boat_id]),
+          tube_mount_done: Boolean(tubeMountDrafts[step.boat_id]),
+        },
+        { onConflict: "boat_id" }
+      );
+
+      if (tubError.error) {
+        setErrorMessage("Errore salvataggio scheda tubolari: " + tubError.error.message);
+        setSavingId("");
+        return;
+      }
+    }
+
+    const boat = boatMap.get(step.boat_id);
+    setMessage(`Ordine ${boat?.order_number || ""}: reparto completato.`);
     setSavingId("");
     await loadData();
   }
@@ -477,185 +501,31 @@ export default function ProductionDepartmentPage({
 
     setErrorMessage("");
 
-    const sortedRows = [...rows].sort(
-      (a, b) =>
-        (a.boat.progressive_no ?? Infinity) - (b.boat.progressive_no ?? Infinity)
-    );
-
-    const fromText = pdfFromProg.trim();
-    const toText = pdfToProg.trim();
-
-    let fromNumber = fromText ? Number(fromText) : null;
-    let toNumber = toText ? Number(toText) : null;
-
-    if (fromText && (!Number.isFinite(fromNumber) || Number(fromNumber) <= 0)) {
-      setErrorMessage("Il progressivo \"Da\" non è valido.");
-      return;
-    }
-
-    if (toText && (!Number.isFinite(toNumber) || Number(toNumber) <= 0)) {
-      setErrorMessage("Il progressivo \"A\" non è valido.");
-      return;
-    }
-
-    if (fromNumber !== null && toNumber !== null && fromNumber > toNumber) {
-      setErrorMessage("Il progressivo \"Da\" deve essere minore o uguale a \"A\".");
-      return;
-    }
-
-    const pdfRows = sortedRows.filter((row) => {
-      const prog = row.boat.progressive_no;
-      if (fromNumber !== null || toNumber !== null) {
-        // Con un intervallo impostato, i battelli senza progressivo
-        // assegnato non possono rientrarci: li si esclude.
-        if (prog === null) return false;
-        if (fromNumber !== null && prog < fromNumber) return false;
-        if (toNumber !== null && prog > toNumber) return false;
-      }
-      return true;
-    });
-
-    if (pdfRows.length === 0) {
-      setErrorMessage(
-        fromText || toText
-          ? "Nessun battello del reparto rientra nell'intervallo di progressivi indicato."
-          : "Non ci sono battelli da inserire nel programma del reparto."
-      );
-      return;
-    }
-
-    const doc = new jsPDF({
-      orientation: "landscape",
-      unit: "mm",
-      format: "a4",
-    });
-
-    const companyLogo = await fetchCompanyLogo();
-    drawCompanyLogoTopRight(doc, companyLogo, { maxWidth: 34, maxHeight: 16 });
-
     const operator =
       localStorage.getItem("magazzino_display_name") ||
       localStorage.getItem("magazzino_user") ||
       "Matteo";
 
-    const today = new Intl.DateTimeFormat("it-IT").format(new Date());
+    try {
+      const companyLogo = await fetchCompanyLogo();
 
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(8);
-    doc.text("OPERATORE", 9, 10);
-    doc.text(operator.toUpperCase(), 54, 10);
-    doc.text("DATA PROGRAMMA", 9, 15);
-    doc.text(today, 54, 15);
-    doc.text("REPARTO", 9, 20);
-    doc.text(department.name.toUpperCase(), 54, 20);
-
-    const columns = isTubolariDept
-      ? [
-          { x: 9, title: "Prog.", w: 14 },
-          { x: 23, title: "N. ordine", w: 20 },
-          { x: 43, title: "Modello battello", w: 34 },
-          { x: 77, title: "Carena", w: 24 },
-          { x: 101, title: "Colore tubolare", w: 30 },
-          { x: 131, title: "Tubo", w: 18 },
-          { x: 149, title: "Montaggio tubo", w: 28 },
-          { x: 177, title: "Stato", w: 26 },
-          { x: 203, title: "Note", w: 33 },
-        ]
-      : [
-          { x: 9, title: "Prog.", w: 15 },
-          { x: 24, title: "N. ordine", w: 22 },
-          { x: 46, title: "Modello battello", w: 38 },
-          { x: 84, title: "Carena", w: 28 },
-          { x: 112, title: "Ragno/Longheroni", w: 38 },
-          { x: 150, title: "Coperta", w: 28 },
-          { x: 178, title: "Accessori", w: 39 },
-          { x: 217, title: "Stato", w: 30 },
-          { x: 247, title: "Note", w: 41 },
-        ];
-
-    let y = 29;
-
-    doc.setFontSize(6.4);
-    doc.setFont("helvetica", "bold");
-
-    for (const col of columns) {
-      doc.rect(col.x, y - 4, col.w, 8);
-      doc.text(col.title, col.x + 1.2, y + 1);
-    }
-
-    y += 4;
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(6.2);
-
-    for (const row of pdfRows) {
-      const boat = row.boat;
-      const tub = tubolariMap[boat.id];
-      const stepStatusText = row.step
-        ? statusLabel[row.step.status] || row.step.status
-        : "Non ancora arrivato";
-      const noteText = row.step?.current_note || boat.note || "";
-
-      const values = isTubolariDept
-        ? [
-            boat.progressive_no !== null ? String(boat.progressive_no) : "-",
-            boat.order_number,
-            boat.model_boat,
-            boat.hull,
-            tub?.tube_color || "-",
-            tub?.tube_done ? "Fatto" : "-",
-            tub?.tube_mount_done ? "Fatto" : "-",
-            stepStatusText,
-            noteText,
-          ]
-        : [
-            boat.progressive_no !== null ? String(boat.progressive_no) : "-",
-            boat.order_number,
-            boat.model_boat,
-            boat.hull,
-            boat.stringers,
-            boat.deck,
-            boat.accessories,
-            stepStatusText,
-            noteText,
-          ];
-
-      const noteLines = doc.splitTextToSize(values[8], columns[8].w - 2);
-      const modelLines = doc.splitTextToSize(values[2], columns[2].w - 2);
-      const rowH = Math.max(8, noteLines.length * 3 + 3, modelLines.length * 3 + 3);
-
-      if (y + rowH > 198) {
-        doc.addPage();
-        y = 12;
-      }
-
-      values.forEach((value, index) => {
-        const col = columns[index];
-        doc.rect(col.x, y, col.w, rowH);
-        const content =
-          index === 8
-            ? noteLines
-            : index === 2
-              ? modelLines
-              : doc.splitTextToSize(value, col.w - 2);
-
-        doc.text(content, col.x + 1.2, y + 4);
+      const { doc, filename } = buildDepartmentProgramPdf({
+        departmentName: department.name,
+        isTubolari: isTubolariDept,
+        rows,
+        tubolariMap,
+        companyLogo,
+        operator,
+        fromProg: pdfFromProg,
+        toProg: pdfToProg,
       });
 
-      y += rowH;
+      doc.save(filename);
+    } catch (pdfError) {
+      setErrorMessage(
+        pdfError instanceof Error ? pdfError.message : "Impossibile creare il PDF. Riprova."
+      );
     }
-
-    const safeName = department.name
-      .replace(/[^a-zA-Z0-9]+/g, "_")
-      .replace(/^_+|_+$/g, "");
-
-    const rangeSuffix =
-      fromNumber !== null || toNumber !== null
-        ? `_prog_${fromNumber ?? "inizio"}-${toNumber ?? "fine"}`
-        : "";
-
-    doc.save(
-      `Produzione_${safeName}${rangeSuffix}_${today.replace(/\//g, "-")}.pdf`
-    );
   }
 
   if (loading) {
@@ -686,8 +556,8 @@ export default function ProductionDepartmentPage({
           <div className="pdep-eyebrow">PROGRAMMA REPARTO</div>
           <h1>{department.name}</h1>
           <p>
-            Aggiorna lo stato ogni giorno. Lo storico resta salvato e alimenta
-            automaticamente le medie di produzione.
+            Segna una nota se serve, poi completa il reparto quando il
+            battello è pronto per passare al successivo.
           </p>
         </div>
 
@@ -757,18 +627,6 @@ export default function ProductionDepartmentPage({
           <span>{isTubolariDept ? "ORDINI ATTIVI" : "BATTELLI NEL REPARTO"}</span>
           <strong>{rows.length}</strong>
         </div>
-        <div>
-          <span>IN LAVORAZIONE</span>
-          <strong>{rows.filter((row) => row.step?.status === "working").length}</strong>
-        </div>
-        <div>
-          <span>IN ATTESA</span>
-          <strong>{rows.filter((row) => row.step?.status === "waiting").length}</strong>
-        </div>
-        <div>
-          <span>BLOCCATI</span>
-          <strong>{rows.filter((row) => row.step?.status === "blocked").length}</strong>
-        </div>
       </section>
 
       <section className="pdep-card">
@@ -793,15 +651,14 @@ export default function ProductionDepartmentPage({
                     <th>Accessori</th>
                   </>
                 )}
-                <th>Stato giornaliero</th>
-                <th>Note / motivo attesa</th>
+                <th>Note</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="pdep-empty">
+                  <td colSpan={9} className="pdep-empty">
                     {isTubolariDept
                       ? "Nessun ordine attivo in produzione."
                       : "Nessun battello attualmente in questo reparto."}
@@ -901,30 +758,6 @@ export default function ProductionDepartmentPage({
                       )}
                       <td>
                         {step ? (
-                          <select
-                            value={statusDrafts[step.id] || step.status}
-                            onChange={(e) =>
-                              setStatusDrafts((current) => ({
-                                ...current,
-                                [step.id]: e.target.value,
-                              }))
-                            }
-                            className={`pdep-status-select ${
-                              statusDrafts[step.id] || step.status
-                            }`}
-                          >
-                            <option value="queued">Da iniziare</option>
-                            <option value="working">In lavorazione</option>
-                            <option value="waiting">In attesa</option>
-                            <option value="blocked">Bloccato</option>
-                            <option value="completed">Completato</option>
-                          </select>
-                        ) : (
-                          <span className="pdep-not-arrived">Non ancora arrivato</span>
-                        )}
-                      </td>
-                      <td>
-                        {step ? (
                           <input
                             className="pdep-note"
                             value={noteDrafts[step.id] ?? step.current_note ?? ""}
@@ -934,21 +767,44 @@ export default function ProductionDepartmentPage({
                                 [step.id]: e.target.value,
                               }))
                             }
-                            placeholder="Nota giornaliera..."
+                            placeholder="Nota (facoltativa)..."
                           />
                         ) : (
-                          <span className="pdep-note-readonly">{boat.note || "—"}</span>
+                          <span className="pdep-not-arrived">
+                            Non ancora arrivato{boat.note ? ` · ${boat.note}` : ""}
+                          </span>
                         )}
                       </td>
-                      <td>
-                        <button
-                          type="button"
-                          className="pdep-save"
-                          disabled={savingId === (step ? step.id : boat.id)}
-                          onClick={() => (step ? saveStatus(step) : saveTubeOnly(boat.id))}
-                        >
-                          {savingId === (step ? step.id : boat.id) ? "..." : "Salva"}
-                        </button>
+                      <td className="pdep-actions-cell">
+                        {step ? (
+                          <>
+                            <button
+                              type="button"
+                              className="pdep-save"
+                              disabled={savingId === step.id}
+                              onClick={() => saveNote(step)}
+                            >
+                              {savingId === step.id ? "..." : "Salva nota"}
+                            </button>
+                            <button
+                              type="button"
+                              className="pdep-complete"
+                              disabled={savingId === step.id}
+                              onClick={() => completeStep(step)}
+                            >
+                              Completa reparto →
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            className="pdep-save"
+                            disabled={savingId === boat.id}
+                            onClick={() => saveTubeOnly(boat.id)}
+                          >
+                            {savingId === boat.id ? "..." : "Salva"}
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );
@@ -1231,7 +1087,6 @@ function Styles() {
         border-color: rgba(96,165,250,.55);
       }
 
-      .pdep-status-select,
       .pdep-note,
       .pdep-tube-select {
         min-height: 31px;
@@ -1243,17 +1098,6 @@ function Styles() {
         color: #fff;
         font-size: 9px;
       }
-
-      .pdep-status-select {
-        min-width: 135px;
-        padding: 0 7px;
-        font-weight: 850;
-      }
-
-      .pdep-status-select.working { color: #93c5fd; }
-      .pdep-status-select.waiting { color: #fbbf24; }
-      .pdep-status-select.blocked { color: #fb7185; }
-      .pdep-status-select.completed { color: #86efac; }
 
       .pdep-tube-select {
         min-width: 130px;
@@ -1289,9 +1133,10 @@ function Styles() {
         font-style: italic;
       }
 
-      .pdep-note-readonly {
-        color: #9eb0c5;
-        font-size: 9px;
+      .pdep-actions-cell {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
       }
 
       .pdep-save {
@@ -1304,9 +1149,24 @@ function Styles() {
         cursor: pointer;
         font-size: 8px;
         font-weight: 950;
+        white-space: nowrap;
       }
 
-      .pdep-save:disabled {
+      .pdep-complete {
+        min-height: 31px;
+        padding: 0 10px;
+        border: 1px solid rgba(34,197,94,.35);
+        border-radius: 6px;
+        background: rgba(34,197,94,.12);
+        color: #86efac;
+        cursor: pointer;
+        font-size: 8px;
+        font-weight: 950;
+        white-space: nowrap;
+      }
+
+      .pdep-save:disabled,
+      .pdep-complete:disabled {
         opacity: .5;
         cursor: wait;
       }

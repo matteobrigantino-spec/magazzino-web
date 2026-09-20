@@ -825,14 +825,8 @@ export default function ProductionPage() {
           </div>
 
           <div className="prod-actions">
-            <Link href="/produzione/analisi" className="prod-btn secondary">
-              Medie mensili
-            </Link>
             <Link href="/produzione/configurazioni" className="prod-btn secondary">
               Configurazioni
-            </Link>
-            <Link href="/produzione/reparti" className="prod-btn secondary">
-              Gestisci reparti
             </Link>
             <Link href="/produzione/consegne" className="prod-btn secondary">
               Consegne

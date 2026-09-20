@@ -97,6 +97,13 @@ export default function ProductionPage() {
   const [pdfLogo, setPdfLogo] = useState("");
   const [pdfLogoLoading, setPdfLogoLoading] = useState(true);
 
+  // Battelli che hanno almeno una richiesta di tappezzeria inserita
+  // (indipendentemente da assegnata/in ordine/da ordinare): serve solo a
+  // vedere subito in tabella a chi manca ancora l'inserimento.
+  const [upholsteryBoatIds, setUpholsteryBoatIds] = useState<Set<string>>(
+    new Set()
+  );
+
   const [upholsteryPdfBusy, setUpholsteryPdfBusy] = useState(false);
   const [upholsteryPdfError, setUpholsteryPdfError] = useState("");
 
@@ -147,7 +154,7 @@ export default function ProductionPage() {
       const { data, error } = await supabase
         .from("production_boat_upholstery")
         .select(
-          "id,item_id,color,details_logos,stitching,quilting,kit_id,created_at,production_boats(order_number,model_boat),upholstery_kits(matricola),order_items(qty,received_qty,requested_delivery_date)"
+          "id,item_id,color,details_logos,stitching,quilting,kit_id,created_at,production_boats(order_number,model_boat,requested_delivery_date),upholstery_kits(matricola),order_items(qty,received_qty,requested_delivery_date)"
         )
         .order("created_at", { ascending: true });
 
@@ -215,6 +222,9 @@ export default function ProductionPage() {
           return {
             boatOrderNumber: String(row.production_boats?.order_number || "-"),
             boatModel: String(row.production_boats?.model_boat || "-"),
+            boatDeliveryDate: row.production_boats?.requested_delivery_date
+              ? String(row.production_boats.requested_delivery_date)
+              : null,
             itemDescription: itemDescriptionById[String(row.item_id)] || "-",
             color: String(row.color || ""),
             detailsLogos: String(row.details_logos || ""),
@@ -224,7 +234,18 @@ export default function ProductionPage() {
             statusInfo,
           };
         })
-        .sort((a, b) => collator.compare(a.boatOrderNumber, b.boatOrderNumber));
+        // Ordine di stampa: prima le consegne piu' vicine (chi non ha una
+        // data di consegna richiesta va in fondo), poi per N. ordine.
+        .sort((a, b) => {
+          if (a.boatDeliveryDate && b.boatDeliveryDate) {
+            if (a.boatDeliveryDate !== b.boatDeliveryDate) {
+              return a.boatDeliveryDate < b.boatDeliveryDate ? -1 : 1;
+            }
+          } else if (a.boatDeliveryDate || b.boatDeliveryDate) {
+            return a.boatDeliveryDate ? -1 : 1;
+          }
+          return collator.compare(a.boatOrderNumber, b.boatOrderNumber);
+        });
 
       const doc = buildUpholsteryStatusPdf(rows, pdfLogo, formatItDate(todayInputValue()));
 
@@ -377,7 +398,7 @@ export default function ProductionPage() {
     setLoading(true);
     setErrorMessage("");
 
-    const [depRes, boatRes, stepRes, optionsRes] = await Promise.all([
+    const [depRes, boatRes, stepRes, optionsRes, upholsteryRes] = await Promise.all([
       supabase
         .from("production_departments")
         .select("id,name,sort_order,active")
@@ -396,6 +417,7 @@ export default function ProductionPage() {
         .eq("active", true)
         .order("sort_order", { ascending: true })
         .order("name", { ascending: true }),
+      supabase.from("production_boat_upholstery").select("boat_id"),
     ]);
 
     const firstError =
@@ -460,6 +482,12 @@ export default function ProductionPage() {
         active: row.active !== false,
         sort_order: Number(row.sort_order || 0),
       }))
+    );
+
+    setUpholsteryBoatIds(
+      new Set(
+        (upholsteryRes.data || []).map((row: any) => String(row.boat_id))
+      )
     );
 
     setLoading(false);
@@ -1294,13 +1322,14 @@ export default function ProductionPage() {
                 <th>N° ordine</th>
                 <th>Battello</th>
                 <th>Consegna richiesta</th>
+                <th>Tappezzeria</th>
                 <th>Note</th>
               </tr>
             </thead>
             <tbody>
               {activeBoats.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="prod-empty-cell">
+                  <td colSpan={6} className="prod-empty-cell">
                     Nessun battello attualmente in produzione.
                   </td>
                 </tr>
@@ -1340,6 +1369,13 @@ export default function ProductionPage() {
                         {boat.requested_delivery_date
                           ? formatItDate(boat.requested_delivery_date)
                           : "—"}
+                      </td>
+                      <td>
+                        {upholsteryBoatIds.has(boat.id) ? (
+                          <span className="prod-tap-pill yes">Inserita</span>
+                        ) : (
+                          <span className="prod-tap-pill no">Da inserire</span>
+                        )}
                       </td>
                       <td className="prod-note-cell">{boat.note || "—"}</td>
                     </tr>
@@ -1818,7 +1854,7 @@ function Styles() {
 
       .prod-table {
         width: 100%;
-        min-width: 820px;
+        min-width: 900px;
         border-collapse: collapse;
         font-size: 10px;
       }
@@ -1891,6 +1927,28 @@ function Styles() {
 
       .prod-date-cell.soon {
         color: #e9c98a;
+      }
+
+      .prod-tap-pill {
+        display: inline-flex;
+        align-items: center;
+        padding: 4px 9px;
+        border-radius: 999px;
+        font-size: 9px;
+        font-weight: 800;
+        white-space: nowrap;
+      }
+
+      .prod-tap-pill.yes {
+        border: 1px solid rgba(34,197,94,.28);
+        background: rgba(34,197,94,.08);
+        color: #86efac;
+      }
+
+      .prod-tap-pill.no {
+        border: 1px solid rgba(148,163,184,.22);
+        background: rgba(255,255,255,.03);
+        color: #8ea2ba;
       }
 
       .prod-note-cell {

@@ -733,13 +733,13 @@ export default function ProductionPage() {
       Il battello e' gia' sicuro (creato sopra). Ogni riga tappezzeria
       compilata diventa una "richiesta" collegata al battello: se in
       giacenza c'e' gia' un kit che corrisponde ESATTAMENTE (stesso
-      articolo, colore, dettagli, cucitura, trapuntatura) lo assegniamo
-      subito. Altrimenti resta "da ordinare": si puo' cercare in
-      giacenza a mano dalla scheda del battello, anche con un match
-      non esatto.
+      articolo, colore, dettagli, cucitura, trapuntatura), o se c'e'
+      gia' una riga d'ordine aperta per lo stesso fornitore/articolo,
+      va assegnato in automatico per priorita' di consegna tra TUTTI i
+      battelli in attesa (non necessariamente questo appena creato:
+      un altro battello con consegna piu' vicina puo' avere la
+      precedenza, come dalla scheda del singolo battello).
     */
-    let assignedCount = 0;
-
     const validTappezzeriaRows = tappezzeriaRows.filter(
       (row) =>
         row.supplierId &&
@@ -784,16 +784,34 @@ export default function ProductionPage() {
             .maybeSingle();
 
           if (stockMatch?.id) {
-            const { error: assignError } = await supabase.rpc(
-              "assign_upholstery_kit_to_boat",
-              {
+            // Kit identico gia' in giacenza: va al battello con la
+            // consegna richiesta piu' vicina tra tutti quelli in attesa
+            // dello stesso articolo (non necessariamente questo appena
+            // inserito).
+            try {
+              await supabase.rpc("assign_stock_kit_by_priority", {
                 p_kit_id: stockMatch.id,
-                p_boat_upholstery_id: inserted.id,
-              }
-            );
-
-            if (!assignError) {
-              assignedCount += 1;
+              });
+            } catch (priorityError) {
+              console.error(
+                "Errore assegnazione automatica kit in giacenza:",
+                priorityError
+              );
+            }
+          } else {
+            // Nessun kit identico in giacenza: prova ad abbinare in
+            // automatico una riga d'ordine gia' aperta per lo stesso
+            // fornitore + articolo, per priorita' di consegna.
+            try {
+              await supabase.rpc("sync_upholstery_order_links", {
+                p_supplier_id: row.supplierId,
+                p_item_id: row.itemId,
+              });
+            } catch (syncError) {
+              console.error(
+                "Errore abbinamento automatico tappezzeria:",
+                syncError
+              );
             }
           }
         } catch (tappezzeriaError) {
@@ -807,9 +825,7 @@ export default function ProductionPage() {
 
     const tappezzeriaSuffix =
       validTappezzeriaRows.length > 0
-        ? assignedCount > 0
-          ? ` Tappezzeria: ${assignedCount} di ${validTappezzeriaRows.length} assegnata subito dalla giacenza.`
-          : " Tappezzeria da ordinare (nessun kit compatibile in giacenza)."
+        ? ` Tappezzeria: collegamento automatico per priorita' di consegna tentato su ${validTappezzeriaRows.length} richiest${validTappezzeriaRows.length === 1 ? "a" : "e"} (vedi scheda battello per lo stato).`
         : "";
 
     setMessage(

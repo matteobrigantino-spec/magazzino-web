@@ -465,11 +465,6 @@ export default function ProductionPage() {
     setLoading(false);
   }
 
-  const depMap = useMemo(
-    () => new Map(departments.map((dep) => [dep.id, dep])),
-    [departments]
-  );
-
   const modelOptions = useMemo(
     () => productionOptions.filter((option) => option.option_type === "model"),
     [productionOptions]
@@ -480,31 +475,37 @@ export default function ProductionPage() {
     [productionOptions]
   );
 
-  const currentStepMap = useMemo(() => {
-    const result = new Map<string, Step>();
-
-    for (const step of steps) {
-      if (step.status === "completed") continue;
-
-      const current = result.get(step.boat_id);
-
-      if (!current) {
-        result.set(step.boat_id, step);
-        continue;
-      }
-
-      const currentOrder = depMap.get(current.department_id)?.sort_order ?? -1;
-      const nextOrder = depMap.get(step.department_id)?.sort_order ?? -1;
-
-      if (nextOrder > currentOrder) {
-        result.set(step.boat_id, step);
-      }
-    }
-
-    return result;
-  }, [steps, depMap]);
-
   const activeBoats = boats.filter((boat) => boat.status === "active");
+
+  /*
+    URGENZA CONSEGNA
+    Non e' piu' legata allo "stato" del battello (concetto eliminato),
+    solo alla data di consegna richiesta rispetto a oggi: serve per dare
+    un colpo d'occhio immediato in tabella e nella striscia di riepilogo
+    dell'intestazione.
+  */
+  function deliveryUrgency(value: string | null): "overdue" | "soon" | null {
+    if (!value) return null;
+    const target = new Date(value);
+    if (Number.isNaN(target.getTime())) return null;
+    target.setHours(0, 0, 0, 0);
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    const diffDays = Math.round((target.getTime() - now.getTime()) / 86400000);
+    if (diffDays < 0) return "overdue";
+    if (diffDays <= 7) return "soon";
+    return null;
+  }
+
+  const heroStats = activeBoats.reduce(
+    (acc, boat) => {
+      const urgency = deliveryUrgency(boat.requested_delivery_date);
+      if (urgency === "overdue") acc.overdue += 1;
+      else if (urgency === "soon") acc.soon += 1;
+      return acc;
+    },
+    { overdue: 0, soon: 0 }
+  );
 
   const verniciaturaDept = useMemo(
     () =>
@@ -619,12 +620,6 @@ export default function ProductionPage() {
     } finally {
       setPrintBusy(false);
     }
-  }
-
-  function daysFrom(value: string) {
-    const start = new Date(value).getTime();
-    if (!Number.isFinite(start)) return 0;
-    return Math.max(0, Math.floor((Date.now() - start) / 86400000));
   }
 
   // Numero progressivo: non e' piu' assegnato in automatico, si inserisce
@@ -819,35 +814,54 @@ export default function ProductionPage() {
   return (
     <div className="prod-page">
       <section className="prod-hero">
-        <div>
-          <div className="prod-eyebrow">CONTROLLO PRODUZIONE</div>
-          <h1>Produzione</h1>
-          <p>
-            Segui ogni battello con lo stesso Numero d&apos;Ordine dal primo
-            reparto fino al completamento.
-          </p>
+        <div className="prod-hero-top">
+          <div>
+            <div className="prod-eyebrow">CONTROLLO PRODUZIONE</div>
+            <h1>Produzione</h1>
+            <p>
+              Segui ogni battello con lo stesso Numero d&apos;Ordine dal primo
+              reparto fino al completamento.
+            </p>
+          </div>
+
+          <div className="prod-actions">
+            <Link href="/produzione/analisi" className="prod-btn secondary">
+              Medie mensili
+            </Link>
+            <Link href="/produzione/configurazioni" className="prod-btn secondary">
+              Configurazioni
+            </Link>
+            <Link href="/produzione/reparti" className="prod-btn secondary">
+              Gestisci reparti
+            </Link>
+            <Link href="/produzione/consegne" className="prod-btn secondary">
+              Consegne
+            </Link>
+            <button
+              type="button"
+              className="prod-btn primary"
+              onClick={() => setShowNew((value) => !value)}
+            >
+              + Nuovo battello
+            </button>
+          </div>
         </div>
 
-        <div className="prod-actions">
-          <Link href="/produzione/analisi" className="prod-btn secondary">
-            Medie mensili
-          </Link>
-          <Link href="/produzione/configurazioni" className="prod-btn secondary">
-            Configurazioni
-          </Link>
-          <Link href="/produzione/reparti" className="prod-btn secondary">
-            Gestisci reparti
-          </Link>
-          <Link href="/produzione/consegne" className="prod-btn secondary">
-            Consegne
-          </Link>
-          <button
-            type="button"
-            className="prod-btn primary"
-            onClick={() => setShowNew((value) => !value)}
-          >
-            + Nuovo battello
-          </button>
+        <div className="prod-hero-stats">
+          <div className="prod-hero-stat">
+            <span className="prod-hero-stat-value">{activeBoats.length}</span>
+            <span className="prod-hero-stat-label">Battelli in produzione</span>
+          </div>
+          <div className="prod-hero-stat-divider" />
+          <div className={`prod-hero-stat ${heroStats.overdue > 0 ? "danger" : ""}`}>
+            <span className="prod-hero-stat-value">{heroStats.overdue}</span>
+            <span className="prod-hero-stat-label">Consegne in ritardo</span>
+          </div>
+          <div className="prod-hero-stat-divider" />
+          <div className={`prod-hero-stat ${heroStats.soon > 0 ? "warn" : ""}`}>
+            <span className="prod-hero-stat-value">{heroStats.soon}</span>
+            <span className="prod-hero-stat-label">Consegne entro 7 giorni</span>
+          </div>
         </div>
       </section>
 
@@ -1284,25 +1298,21 @@ export default function ProductionPage() {
               <tr>
                 <th>Prog.</th>
                 <th>N° ordine</th>
-                <th>Modello</th>
-                <th>Reparto attuale</th>
+                <th>Battello</th>
                 <th>Consegna richiesta</th>
-                <th>Giorni reparto</th>
-                <th>Giorni totali</th>
                 <th>Note</th>
               </tr>
             </thead>
             <tbody>
               {activeBoats.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="prod-empty-cell">
+                  <td colSpan={5} className="prod-empty-cell">
                     Nessun battello attualmente in produzione.
                   </td>
                 </tr>
               ) : (
                 activeBoats.map((boat) => {
-                  const step = currentStepMap.get(boat.id);
-                  const dep = step ? depMap.get(step.department_id) : null;
+                  const urgency = deliveryUrgency(boat.requested_delivery_date);
 
                   return (
                     <tr
@@ -1322,22 +1332,22 @@ export default function ProductionPage() {
                         />
                       </td>
                       <td><span className="prod-order">{boat.order_number}</span></td>
-                      <td>{boat.model_boat}</td>
                       <td>
-                        {dep ? (
-                          <span className="prod-dept-pill">{dep.name}</span>
-                        ) : (
-                          "—"
-                        )}
+                        <div className="prod-boat-cell">
+                          <span className="prod-boat-model">{boat.model_boat}</span>
+                          <span className="prod-boat-meta">
+                            Carena {boat.hull || "—"} · Ragno/Longh. {boat.stringers || "—"} · Coperta {boat.deck || "—"}
+                          </span>
+                        </div>
                       </td>
-                      <td className="prod-note-cell">
+                      <td
+                        className={`prod-date-cell ${urgency === "overdue" ? "overdue" : urgency === "soon" ? "soon" : ""}`}
+                      >
                         {boat.requested_delivery_date
                           ? formatItDate(boat.requested_delivery_date)
                           : "—"}
                       </td>
-                      <td>{step ? daysFrom(step.entered_at) : 0} gg</td>
-                      <td>{daysFrom(boat.created_at)} gg</td>
-                      <td className="prod-note-cell">{step?.current_note || boat.note || "—"}</td>
+                      <td className="prod-note-cell">{boat.note || "—"}</td>
                     </tr>
                   );
                 })
@@ -1391,35 +1401,38 @@ function Styles() {
       .prod-pdf-logo-missing a { color: #93c5fd; font-weight: 800; }
 
       .prod-main {
-        margin-top: 16px;
+        position: relative;
+        margin-top: 18px;
         min-width: 0;
-        padding: 24px;
-        border: 1px solid rgba(148,163,184,.15);
-        border-radius: 18px;
+        padding: 28px;
+        border: 1px solid rgba(201,169,97,.14);
+        border-radius: 20px;
         background:
-          radial-gradient(circle at 100% 0%, rgba(37,99,235,.08), transparent 40%),
-          #0b1828;
-        box-shadow: 0 18px 40px -24px rgba(0,0,0,.55);
+          radial-gradient(circle at 100% 0%, rgba(37,99,235,.09), transparent 42%),
+          linear-gradient(180deg, #0c1a2c, #08131f);
+        box-shadow: 0 24px 48px -28px rgba(0,0,0,.65);
       }
 
       .prod-main-top {
         display: flex;
         align-items: flex-start;
         justify-content: space-between;
-        gap: 14px;
-        margin-bottom: 6px;
+        gap: 16px;
+        margin-bottom: 18px;
+        padding-bottom: 18px;
+        border-bottom: 1px solid rgba(148,163,184,.12);
       }
 
       .prod-main-top h2 {
         margin: 0;
-        font-size: 19px;
+        font-size: 21px;
         font-weight: 950;
-        letter-spacing: -.3px;
+        letter-spacing: -.4px;
       }
 
       .prod-main-top p {
-        margin: 4px 0 0;
-        color: #91a4bc;
+        margin: 5px 0 0;
+        color: #8ea2ba;
         font-size: 11px;
       }
 
@@ -1495,33 +1508,22 @@ function Styles() {
         border-color: rgba(96,165,250,.55);
       }
 
-      .prod-dept-pill {
-        display: inline-flex;
-        align-items: center;
-        padding: 5px 10px;
-        border: 1px solid rgba(96,165,250,.22);
-        border-radius: 999px;
-        background: rgba(59,130,246,.08);
-        color: #bcd6f7;
-        font-size: 9.5px;
-        font-weight: 800;
-        white-space: nowrap;
-      }
-
       .prod-prog-cell {
         padding: 6px 8px !important;
       }
 
       .prod-prog-input {
-        width: 56px;
-        min-height: 30px;
+        width: 58px;
+        min-height: 32px;
         padding: 0 7px;
         background: #081524;
-        color: #fff;
+        color: #e9c98a;
         border: 1px solid rgba(148,163,184,.22);
         border-radius: 7px;
-        font-size: 11.5px;
-        font-weight: 800;
+        font-family: var(--font-geist-mono), ui-monospace, monospace;
+        font-variant-numeric: tabular-nums;
+        font-size: 12px;
+        font-weight: 700;
         text-align: center;
       }
 
@@ -1546,40 +1548,104 @@ function Styles() {
       }
 
       .prod-hero {
-        padding: 22px;
+        position: relative;
+        overflow: hidden;
+        padding: 26px 26px 22px;
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+        border: 1px solid rgba(59,130,246,.22);
+        border-radius: 19px;
+        background:
+          radial-gradient(circle at 88% -10%, rgba(37,99,235,.22), transparent 36%),
+          linear-gradient(140deg,#0e2036,#060f1b 68%);
+        box-shadow: 0 26px 54px -30px rgba(0,0,0,.7);
+      }
+
+      .prod-hero::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 3px;
+        background: linear-gradient(90deg, #c9a961, #2563eb 55%, transparent);
+        opacity: .85;
+      }
+
+      .prod-hero-top {
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 20px;
-        border: 1px solid rgba(59,130,246,.25);
-        border-radius: 17px;
-        background:
-          radial-gradient(circle at 85% 0%, rgba(37,99,235,.20), transparent 32%),
-          linear-gradient(135deg,#0d1d31,#071321);
       }
 
       .prod-eyebrow {
-        color: #60a5fa;
+        color: #c9a961;
         font-size: 9px;
         font-weight: 950;
-        letter-spacing: 1.55px;
+        letter-spacing: 2.2px;
       }
 
       .prod-hero h1 {
-        margin: 6px 0 0;
-        font-size: 34px;
+        margin: 7px 0 0;
+        font-size: 36px;
         line-height: 1;
         font-weight: 950;
-        letter-spacing: -1px;
+        letter-spacing: -1.2px;
       }
 
       .prod-hero p,
       .prod-section-head p {
         max-width: 760px;
-        margin: 8px 0 0;
+        margin: 9px 0 0;
         color: #91a4bc;
         font-size: 11px;
         line-height: 1.55;
+      }
+
+      .prod-hero-stats {
+        display: flex;
+        align-items: stretch;
+        gap: 22px;
+        padding-top: 18px;
+        border-top: 1px solid rgba(148,163,184,.14);
+      }
+
+      .prod-hero-stat {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .prod-hero-stat-value {
+        font-family: var(--font-geist-mono), ui-monospace, monospace;
+        font-variant-numeric: tabular-nums;
+        font-size: 26px;
+        font-weight: 800;
+        line-height: 1;
+        color: #f8fafc;
+      }
+
+      .prod-hero-stat.danger .prod-hero-stat-value {
+        color: #f87171;
+      }
+
+      .prod-hero-stat.warn .prod-hero-stat-value {
+        color: #e9c98a;
+      }
+
+      .prod-hero-stat-label {
+        color: #8ea2ba;
+        font-size: 9px;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: .7px;
+      }
+
+      .prod-hero-stat-divider {
+        width: 1px;
+        background: rgba(148,163,184,.16);
       }
 
       .prod-actions,
@@ -1758,40 +1824,79 @@ function Styles() {
 
       .prod-table {
         width: 100%;
-        min-width: 1050px;
+        min-width: 820px;
         border-collapse: collapse;
         font-size: 10px;
       }
 
       .prod-table th {
-        padding: 10px;
-        background: rgba(255,255,255,.025);
+        padding: 12px 10px;
+        background: rgba(255,255,255,.03);
         color: #8299b6;
         text-align: left;
         font-size: 8px;
         font-weight: 950;
-        letter-spacing: .55px;
+        letter-spacing: .8px;
         text-transform: uppercase;
         white-space: nowrap;
+        border-bottom: 1px solid rgba(201,169,97,.22);
       }
 
       .prod-table td {
-        padding: 11px 10px;
-        border-top: 1px solid rgba(148,163,184,.09);
+        padding: 13px 10px;
+        border-top: 1px solid rgba(148,163,184,.08);
         vertical-align: middle;
       }
 
       .prod-click-row {
         cursor: pointer;
+        transition: background-color .12s ease, box-shadow .12s ease;
       }
 
       .prod-click-row:hover {
-        background: rgba(59,130,246,.055);
+        background: rgba(59,130,246,.06);
+        box-shadow: inset 3px 0 0 #c9a961;
       }
 
       .prod-order {
         color: #93c5fd;
-        font-weight: 950;
+        font-family: var(--font-geist-mono), ui-monospace, monospace;
+        font-weight: 700;
+        letter-spacing: .2px;
+      }
+
+      .prod-boat-cell {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+      }
+
+      .prod-boat-model {
+        font-size: 12px;
+        font-weight: 800;
+        color: #f1f5f9;
+      }
+
+      .prod-boat-meta {
+        font-size: 9.5px;
+        color: #7d90a8;
+        letter-spacing: .1px;
+      }
+
+      .prod-date-cell {
+        font-family: var(--font-geist-mono), ui-monospace, monospace;
+        font-variant-numeric: tabular-nums;
+        color: #c3d2e3;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+
+      .prod-date-cell.overdue {
+        color: #f87171;
+      }
+
+      .prod-date-cell.soon {
+        color: #e9c98a;
       }
 
       .prod-note-cell {
@@ -1804,7 +1909,7 @@ function Styles() {
 
       .prod-empty,
       .prod-empty-cell {
-        padding: 26px;
+        padding: 30px;
         color: #7388a3;
         text-align: center;
         font-size: 10px;
@@ -1817,9 +1922,14 @@ function Styles() {
       }
 
       @media (max-width: 700px) {
-        .prod-hero {
+        .prod-hero-top {
           align-items: stretch;
           flex-direction: column;
+        }
+
+        .prod-hero-stats {
+          flex-wrap: wrap;
+          row-gap: 14px;
         }
 
         .prod-actions,

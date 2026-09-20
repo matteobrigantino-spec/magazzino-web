@@ -612,6 +612,48 @@ export default function SupplierDetail({
             " Il kit è stato creato ma l'assegnazione al battello non è riuscita: puoi assegnarlo manualmente dalla scheda del battello.";
         }
       }
+    } else {
+      // Nessuna scelta manuale: assegna in automatico al battello in
+      // attesa con la consegna richiesta più vicina (se ce n'è uno),
+      // liberando un'eventuale riga d'ordine già prenotata per quel
+      // battello e ridandola in automatico al battello successivo.
+      const { data: createdKit } = await supabase
+        .from("upholstery_kits")
+        .select("id")
+        .eq("supplier_id", supplierId)
+        .eq("matricola", matricolaNumber)
+        .maybeSingle();
+
+      if (createdKit?.id) {
+        const { data: assignedRequestId, error: priorityError } =
+          await supabase.rpc("assign_stock_kit_by_priority", {
+            p_kit_id: createdKit.id,
+          });
+
+        if (!priorityError && assignedRequestId) {
+          setItems((current) =>
+            current.map((row) =>
+              row.id === item.id
+                ? { ...row, stock: row.stock - 1 }
+                : row
+            )
+          );
+
+          const matchedRequest = openBoatRequests.find(
+            (request) => request.id === assignedRequestId
+          );
+
+          assignedBoatLabel = matchedRequest
+            ? ` Assegnato in automatico al battello N. ${matchedRequest.boatOrderNumber} (consegna più vicina).`
+            : " Assegnato in automatico al battello con la consegna più vicina.";
+
+          setOpenBoatRequests((current) =>
+            current.filter(
+              (request) => request.id !== assignedRequestId
+            )
+          );
+        }
+      }
     }
 
     setKitMessage(
@@ -2210,7 +2252,7 @@ export default function SupplierDetail({
                                   style={kitInputStyle}
                                 >
                                   <option value="">
-                                    Nessuno (va in giacenza)
+                                    Automatico (consegna più vicina)
                                   </option>
                                   {boatRequestsFor(item.id).map(
                                     (request) => (

@@ -413,10 +413,20 @@ export default function ProductionBoatDetailPage({
       .maybeSingle();
 
     if (stockMatch?.id) {
-      await supabase.rpc("assign_upholstery_kit_to_boat", {
-        p_kit_id: stockMatch.id,
-        p_boat_upholstery_id: inserted.id,
-      });
+      // Un kit identico è già in giacenza: va al battello con la
+      // consegna richiesta più vicina tra tutti quelli in attesa
+      // dello stesso articolo (non necessariamente questo appena
+      // inserito).
+      try {
+        await supabase.rpc("assign_stock_kit_by_priority", {
+          p_kit_id: stockMatch.id,
+        });
+      } catch (priorityError) {
+        console.error(
+          "Errore assegnazione automatica kit in giacenza:",
+          priorityError
+        );
+      }
     } else {
       // Nessun kit identico già in giacenza: prova ad abbinare in
       // automatico una riga d'ordine già aperta per lo stesso

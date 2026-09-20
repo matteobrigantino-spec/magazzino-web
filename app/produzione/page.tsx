@@ -189,14 +189,14 @@ export default function ProductionPage() {
 
       const rows = requirementRows
         .map((row) => {
-          const openLines = (row.order_items || []).filter(
-            (line: any) => Number(line.qty || 0) > Number(line.received_qty || 0)
-          );
-
-          const deliveryDates = openLines
-            .map((line: any) => line.requested_delivery_date)
-            .filter((value: any) => Boolean(value))
-            .sort();
+          // Al massimo una riga d'ordine collegata per richiesta
+          // (production_boat_upholstery.order_item_id): piu' richieste
+          // possono condividere la stessa riga se la sua quantita' copre
+          // piu' battelli (STEP 23).
+          const orderLine = row.order_items || null;
+          const isOpen =
+            orderLine &&
+            Number(orderLine.qty || 0) > Number(orderLine.received_qty || 0);
 
           const kitMatricola = row.upholstery_kits
             ? Number(row.upholstery_kits.matricola)
@@ -204,7 +204,7 @@ export default function ProductionPage() {
 
           const status: "assegnata" | "ordine" | "da_ordinare" = row.kit_id
             ? "assegnata"
-            : openLines.length > 0
+            : isOpen
               ? "ordine"
               : "da_ordinare";
 
@@ -214,8 +214,8 @@ export default function ProductionPage() {
                 ? `Kit N. ${kitMatricola}`
                 : "Kit assegnato"
               : status === "ordine"
-                ? deliveryDates[0]
-                  ? `Consegna richiesta: ${formatItDate(String(deliveryDates[0]))}`
+                ? orderLine.requested_delivery_date
+                  ? `Consegna richiesta: ${formatItDate(String(orderLine.requested_delivery_date))}`
                   : "In ordine dal fornitore"
                 : "-";
 

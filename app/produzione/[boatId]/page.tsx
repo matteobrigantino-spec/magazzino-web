@@ -215,15 +215,14 @@ export default function ProductionBoatDetailPage({
     }
 
     const rows: BoatUpholsteryRequirement[] = (data as any[]).map((row) => {
-      const openLines = (row.order_items || []).filter(
-        (line: any) =>
-          Number(line.qty || 0) > Number(line.received_qty || 0)
-      );
-
-      const deliveryDates = openLines
-        .map((line: any) => line.requested_delivery_date)
-        .filter((value: any) => Boolean(value))
-        .sort();
+      // La richiesta ha al massimo UNA riga d'ordine collegata
+      // (production_boat_upholstery.order_item_id): piu' richieste
+      // possono pero' condividere la stessa riga d'ordine se la sua
+      // quantita' copre piu' battelli (vedi STEP 23).
+      const orderLine = row.order_items || null;
+      const isOpen =
+        orderLine &&
+        Number(orderLine.qty || 0) > Number(orderLine.received_qty || 0);
 
       return {
         id: String(row.id),
@@ -238,13 +237,12 @@ export default function ProductionBoatDetailPage({
         kitMatricola: row.upholstery_kits
           ? Number(row.upholstery_kits.matricola)
           : null,
-        openOrderQty: openLines.reduce(
-          (sum: number, line: any) =>
-            sum +
-            (Number(line.qty || 0) - Number(line.received_qty || 0)),
-          0
-        ),
-        requestedDelivery: deliveryDates[0] || null,
+        openOrderQty: isOpen
+          ? Number(orderLine.qty || 0) - Number(orderLine.received_qty || 0)
+          : 0,
+        requestedDelivery: isOpen
+          ? orderLine.requested_delivery_date || null
+          : null,
       };
     });
 

@@ -180,7 +180,8 @@ export default function SupplierOrderPage() {
           "id,item_id,color,production_boats(order_number,model_boat)"
         )
         .eq("supplier_id", supplierId)
-        .is("kit_id", null);
+        .is("kit_id", null)
+        .is("order_item_id", null);
 
       if (error) return;
 
@@ -1372,12 +1373,16 @@ export default function SupplierOrderPage() {
 
           if (!orderItemId) continue;
 
+          // Il collegamento "Per battello" e' sulla richiesta
+          // tappezzeria del battello (production_boat_upholstery),
+          // non piu' su order_items: cosi' la stessa riga d'ordine
+          // puo' coprire piu' battelli (STEP 23).
           const { error: boatUpholsteryError } = await supabase
-            .from("order_items")
+            .from("production_boat_upholstery")
             .update({
-              boat_upholstery_id: line.boatUpholsteryId,
+              order_item_id: orderItemId,
             })
-            .eq("id", orderItemId);
+            .eq("id", line.boatUpholsteryId);
 
           if (boatUpholsteryError) throw boatUpholsteryError;
         }

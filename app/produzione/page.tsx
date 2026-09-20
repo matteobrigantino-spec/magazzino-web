@@ -1444,17 +1444,17 @@ function Styles() {
   return (
     <style jsx global>{`
       .prod-pdf-logo-missing { margin: 8px 0 0; font-size: 11px; color: #fbbf24; }
-      .prod-pdf-logo-missing a { color: #93c5fd; font-weight: 800; }
+      .prod-pdf-logo-missing a { color: #7cf2c4; font-weight: 800; }
 
       .prod-main {
         position: relative;
         margin-top: 18px;
         min-width: 0;
         padding: 28px;
-        border: 1px solid rgba(201,169,97,.14);
+        border: 1px solid rgba(51,224,234,.14);
         border-radius: 20px;
         background:
-          radial-gradient(circle at 100% 0%, rgba(37,99,235,.09), transparent 42%),
+          radial-gradient(circle at 100% 0%, rgba(51,224,234,.09), transparent 42%),
           linear-gradient(180deg, #0c1a2c, #08131f);
         box-shadow: 0 24px 48px -28px rgba(0,0,0,.65);
       }
@@ -1490,17 +1490,17 @@ function Styles() {
       }
 
       .prod-btn.secondary.active {
-        border-color: rgba(96,165,250,.55);
-        background: rgba(59,130,246,.14);
-        color: #bfdbfe;
+        border-color: rgba(51,224,234,.55);
+        background: rgba(51,224,234,.14);
+        color: #bdf5e6;
       }
 
       .prod-print-panel {
         margin-top: 16px;
         padding: 15px 16px;
-        border: 1px solid rgba(96,165,250,.22);
+        border: 1px solid rgba(51,224,234,.22);
         border-radius: 12px;
-        background: rgba(59,130,246,.05);
+        background: rgba(51,224,234,.05);
       }
 
       .prod-print-panel strong {
@@ -1551,7 +1551,7 @@ function Styles() {
       }
 
       .prod-print-panel-controls input:focus {
-        border-color: rgba(96,165,250,.55);
+        border-color: rgba(51,224,234,.55);
       }
 
       .prod-prog-cell {
@@ -1575,7 +1575,7 @@ function Styles() {
 
       .prod-prog-input:focus {
         outline: none;
-        border-color: rgba(96,165,250,.55);
+        border-color: rgba(51,224,234,.55);
       }
 
       .prod-page {
@@ -1600,10 +1600,10 @@ function Styles() {
         display: flex;
         flex-direction: column;
         gap: 20px;
-        border: 1px solid rgba(59,130,246,.22);
+        border: 1px solid rgba(51,224,234,.22);
         border-radius: 19px;
         background:
-          radial-gradient(circle at 88% -10%, rgba(37,99,235,.22), transparent 36%),
+          radial-gradient(circle at 88% -10%, rgba(51,224,234,.22), transparent 36%),
           linear-gradient(140deg,#0e2036,#060f1b 68%);
         box-shadow: 0 26px 54px -30px rgba(0,0,0,.7);
       }
@@ -1615,7 +1615,7 @@ function Styles() {
         left: 0;
         right: 0;
         height: 3px;
-        background: linear-gradient(90deg, #c9a961, #2563eb 55%, transparent);
+        background: linear-gradient(90deg, #33e0ea, #0891b2 55%, transparent);
         opacity: .85;
       }
 
@@ -1627,7 +1627,7 @@ function Styles() {
       }
 
       .prod-eyebrow {
-        color: #c9a961;
+        color: #33e0ea;
         font-size: 9px;
         font-weight: 950;
         letter-spacing: 2.2px;
@@ -1716,8 +1716,8 @@ function Styles() {
       }
 
       .prod-btn.primary {
-        border: 1px solid #2563eb;
-        background: #2563eb;
+        border: 1px solid #0891b2;
+        background: #0891b2;
         color: white;
       }
 
@@ -1780,10 +1780,10 @@ function Styles() {
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        border: 1px solid rgba(96,165,250,.25);
+        border: 1px solid rgba(51,224,234,.25);
         border-radius: 999px;
-        background: rgba(59,130,246,.08);
-        color: #93c5fd;
+        background: rgba(51,224,234,.08);
+        color: #7cf2c4;
         font-size: 10px;
         font-weight: 950;
       }
@@ -1854,7 +1854,7 @@ function Styles() {
       .prod-field input:focus,
       .prod-field textarea:focus,
       .prod-field select:focus {
-        border-color: rgba(96,165,250,.55);
+        border-color: rgba(51,224,234,.55);
       }
 
       .prod-form-actions {
@@ -1885,7 +1885,7 @@ function Styles() {
         letter-spacing: .8px;
         text-transform: uppercase;
         white-space: nowrap;
-        border-bottom: 1px solid rgba(201,169,97,.22);
+        border-bottom: 1px solid rgba(51,224,234,.22);
       }
 
       .prod-table td {
@@ -1900,12 +1900,12 @@ function Styles() {
       }
 
       .prod-click-row:hover {
-        background: rgba(59,130,246,.06);
-        box-shadow: inset 3px 0 0 #c9a961;
+        background: rgba(51,224,234,.06);
+        box-shadow: inset 3px 0 0 #33e0ea;
       }
 
       .prod-order {
-        color: #93c5fd;
+        color: #7cf2c4;
         font-family: var(--font-geist-mono), ui-monospace, monospace;
         font-weight: 700;
         letter-spacing: .2px;

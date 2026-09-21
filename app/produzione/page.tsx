@@ -504,7 +504,10 @@ export default function ProductionPage() {
     [productionOptions]
   );
 
-  const activeBoats = boats.filter((boat) => boat.status === "active");
+  const activeBoats = useMemo(
+    () => boats.filter((boat) => boat.status === "active"),
+    [boats]
+  );
 
   /*
     URGENZA CONSEGNA

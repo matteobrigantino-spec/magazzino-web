@@ -935,7 +935,7 @@ export default function ParabrezzaPage() {
 function Styles() {
   return (
     <style jsx global>{`
-      .pbz-page { width:100%; max-width:1200px; margin:0 auto; color:#f8fafc; }
+      .pbz-page { width:100%; max-width:none; margin:0 auto; padding:0 24px; box-sizing:border-box; color:#f8fafc; }
       .pbz-loading { padding:60px; text-align:center; color:#7388a3; font-size:16px; }
       .pbz-hero { padding:26px 28px; display:flex; align-items:center; justify-content:space-between; gap:18px; flex-wrap:wrap; border:1px solid rgba(59,130,246,.24); border-radius:16px; background:linear-gradient(135deg,#0d1d31,#071321); }
       .pbz-eyebrow { color:#60a5fa; font-size:13px; font-weight:950; letter-spacing:1.6px; }

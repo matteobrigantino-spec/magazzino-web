@@ -554,10 +554,10 @@ export function buildDepartmentProgramPdf(params: {
 
   const widths = isTubolari
     ? [16, 26, 75, 58, 40, tableWidth - (16 + 26 + 75 + 58 + 40)]
-    : [15, 23, 40, 28, 40, 28, 40, tableWidth - (15 + 23 + 40 + 28 + 40 + 28 + 40)];
+    : [15, 23, 40, 28, 40, 28, tableWidth - (15 + 23 + 40 + 28 + 40 + 28)];
   const titles = isTubolari
     ? ["Prog.", "N. ordine", "Modello battello", "Colore tubolare", "Tubo", "Montaggio\ntubo"]
-    : ["Prog.", "N. ordine", "Modello battello", "Carena", "Ragno/\nLongheroni", "Coperta", "Accessori", "Note"];
+    : ["Prog.", "N. ordine", "Modello battello", "Carena", "Ragno/\nLongheroni", "Coperta", "Accessori"];
 
   let cx = margin;
   const columns = widths.map((w, index) => {
@@ -576,7 +576,6 @@ export function buildDepartmentProgramPdf(params: {
   function rowValues(row: DeptPdfRow) {
     const boat = row.boat;
     const tub = tubolariMap[boat.id];
-    const noteText = row.step?.current_note || boat.note || "";
     return isTubolari
       ? [
           boat.progressive_no !== null ? String(boat.progressive_no) : "-",
@@ -594,7 +593,6 @@ export function buildDepartmentProgramPdf(params: {
           boat.stringers || "-",
           boat.deck || "-",
           boat.accessories || "-",
-          noteText,
         ];
   }
 

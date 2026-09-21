@@ -579,13 +579,17 @@ export default function ProductionPage() {
     { overdue: 0, soon: 0 }
   );
 
-  const verniciaturaDept = useMemo(
-    () =>
-      departments.find((dep) =>
-        dep.name.trim().toLowerCase().includes("verniciatura")
-      ) || null,
-    [departments]
-  );
+  // C'e' piu' di un reparto il cui nome contiene "verniciatura" (es. il
+  // vecchio "Verniciatura", disattivato, e quello davvero usato oggi,
+  // "Verniciatura resina") - va preso quello ATTIVO, altrimenti "find"
+  // si fermava al primo per ordine e restava sempre su quello disattivato
+  // e vuoto, anche se i battelli passavano regolarmente da quello vero.
+  const verniciaturaDept = useMemo(() => {
+    const matches = departments.filter((dep) =>
+      dep.name.trim().toLowerCase().includes("verniciatura")
+    );
+    return matches.find((dep) => dep.active) || matches[0] || null;
+  }, [departments]);
 
   const tubolariDept = useMemo(
     () => departments.find((dep) => isTubolariName(dep.name)) || null,
@@ -1413,7 +1417,10 @@ export default function ProductionPage() {
         {printPanel && (
           <div className="prod-print-panel">
             <strong>
-              Programma {printPanel === "tubolari" ? "Tubolari" : "Verniciatura"}
+              Programma{" "}
+              {printPanel === "tubolari"
+                ? "Tubolari"
+                : verniciaturaDept?.name || "Verniciatura"}
             </strong>
             <p>
               Spunta i battelli da mettere nel PDF (in qualsiasi combinazione,

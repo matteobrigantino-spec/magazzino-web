@@ -242,9 +242,11 @@ export default function ParabrezzaPage() {
   function itemLabel(itemId: string) {
     const item = itemMap.get(itemId);
     if (!item) return "Articolo non trovato";
-    const supplierName = supplierMap.get(item.supplier_id) || "";
+    // Il fornitore e' sempre Paris Plast su questa pagina: ripeterlo
+    // ad ogni articolo era solo rumore, si mostra solo codice e
+    // descrizione.
     const code = item.supplier_code || item.code;
-    return `${supplierName ? supplierName + " · " : ""}${code} — ${item.description}`;
+    return `${code} — ${item.description}`;
   }
 
   // Un modello puo' avere piu' articoli abbinati (STEP 29): non si
@@ -597,6 +599,26 @@ export default function ParabrezzaPage() {
       });
   }, [requirements, boatMap]);
 
+  // Con piu' articoli per modello, un battello puo' comparire piu'
+  // volte in statusRows (una riga per articolo): si raggruppano qui
+  // per battello cosi' la tabella mostra un solo rigo per battello,
+  // con tutti i suoi articoli/stati impilati dentro, invece di
+  // ripetere consegna/ordine/modello ad ogni articolo.
+  const boatGroups = useMemo(() => {
+    const order: string[] = [];
+    const map = new Map<string, { boat: Boat; rows: { req: Requirement; status: string }[] }>();
+    statusRows.forEach(({ req, boat, status }) => {
+      const existing = map.get(boat.id);
+      if (existing) {
+        existing.rows.push({ req, status });
+      } else {
+        map.set(boat.id, { boat, rows: [{ req, status }] });
+        order.push(boat.id);
+      }
+    });
+    return order.map((id) => map.get(id)!);
+  }, [statusRows]);
+
   if (loading) {
     return (
       <div className="pbz-page">
@@ -820,57 +842,59 @@ export default function ParabrezzaPage() {
 
       <section className="pbz-card">
         <div className="pbz-eyebrow">STATO BATTELLI</div>
-        <h2>Parabrezza per battello ({statusRows.length})</h2>
+        <h2>Parabrezza per battello ({boatGroups.length})</h2>
 
-        {statusRows.length === 0 ? (
+        {boatGroups.length === 0 ? (
           <p className="pbz-hint">
             Nessun battello ha ancora un parabrezza tracciato (mappa i modelli qui sopra).
           </p>
         ) : (
-          <table className="pbz-table">
+          <table className="pbz-table pbz-table-grouped">
             <thead>
               <tr>
                 <th>Consegna</th>
                 <th>N. ordine</th>
                 <th>Modello</th>
-                <th>Articolo</th>
-                <th>Stato</th>
-                <th></th>
+                <th>Articoli</th>
               </tr>
             </thead>
             <tbody>
-              {statusRows.map(({ req, boat, status }) => {
-                const kit = req.kit_id ? kits.find((k) => k.id === req.kit_id) : null;
-                return (
-                  <tr key={req.id}>
-                    <td>{formatItDate(boat.requested_delivery_date) || "—"}</td>
-                    <td>{boat.order_number}</td>
-                    <td>{boat.model_boat}</td>
-                    <td>{itemLabel(req.item_id)}</td>
-                    <td>
-                      <span className={`pbz-status ${status}`}>
-                        {status === "assegnato"
-                          ? "ASSEGNATO"
-                          : status === "ordine"
-                          ? "IN ORDINE"
-                          : "DA ORDINARE"}
-                      </span>
-                    </td>
-                    <td>
-                      {kit && (
-                        <button
-                          type="button"
-                          className="danger"
-                          disabled={busyKitId === kit.id}
-                          onClick={() => releaseKit(kit)}
-                        >
-                          Libera
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
+              {boatGroups.map(({ boat, rows }) => (
+                <tr key={boat.id}>
+                  <td>{formatItDate(boat.requested_delivery_date) || "—"}</td>
+                  <td>{boat.order_number}</td>
+                  <td>{boat.model_boat}</td>
+                  <td>
+                    <div className="pbz-article-list">
+                      {rows.map(({ req, status }) => {
+                        const kit = req.kit_id ? kits.find((k) => k.id === req.kit_id) : null;
+                        return (
+                          <div className="pbz-article-row" key={req.id}>
+                            <span className="pbz-article-name">{itemLabel(req.item_id)}</span>
+                            <span className={`pbz-status ${status}`}>
+                              {status === "assegnato"
+                                ? "ASSEGNATO"
+                                : status === "ordine"
+                                ? "IN ORDINE"
+                                : "DA ORDINARE"}
+                            </span>
+                            {kit && (
+                              <button
+                                type="button"
+                                className="danger"
+                                disabled={busyKitId === kit.id}
+                                onClick={() => releaseKit(kit)}
+                              >
+                                Libera
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         )}
@@ -945,10 +969,16 @@ function Styles() {
       .pbz-matrix-add button:disabled, .pbz-kit-form button:disabled { opacity:.5; cursor:default; }
       button.danger { border:1px solid rgba(239,68,68,.28); background:rgba(239,68,68,.08); color:#fca5a5; padding:8px 14px; border-radius:7px; cursor:pointer; font-size:12px; font-weight:900; }
       button.danger:disabled { opacity:.5; cursor:wait; }
-      .pbz-table { margin-top:16px; width:100%; border-collapse:collapse; font-size:13px; }
-      .pbz-table th { padding:9px 10px; background:rgba(255,255,255,.03); color:#86a0bf; text-align:left; font-size:11px; font-weight:950; letter-spacing:.5px; text-transform:uppercase; }
-      .pbz-table td { padding:10px 10px; border-top:1px solid rgba(148,163,184,.09); }
-      .pbz-status { padding:5px 10px; border-radius:999px; font-size:12px; font-weight:900; }
+      .pbz-table { margin-top:16px; width:100%; border-collapse:collapse; font-size:15px; }
+      .pbz-table th { padding:11px 14px; background:rgba(255,255,255,.03); color:#86a0bf; text-align:left; font-size:12px; font-weight:950; letter-spacing:.5px; text-transform:uppercase; }
+      .pbz-table td { padding:14px; border-top:1px solid rgba(148,163,184,.16); vertical-align:top; }
+      .pbz-table-grouped tbody tr:nth-child(even) { background:rgba(255,255,255,.02); }
+      .pbz-table-grouped tbody tr:hover { background:rgba(59,130,246,.06); }
+      .pbz-table-grouped td:first-child, .pbz-table-grouped td:nth-child(2) { white-space:nowrap; }
+      .pbz-article-list { display:flex; flex-direction:column; gap:9px; }
+      .pbz-article-row { display:flex; align-items:center; gap:11px; flex-wrap:wrap; }
+      .pbz-article-name { color:#e2e8f0; font-weight:700; }
+      .pbz-status { padding:6px 12px; border-radius:999px; font-size:13px; font-weight:900; white-space:nowrap; }
       .pbz-status.assegnato { background:rgba(34,197,94,.12); color:#86efac; }
       .pbz-status.ordine { background:rgba(59,130,246,.14); color:#93c5fd; }
       .pbz-status.da_ordinare { background:rgba(249,115,22,.14); color:#fdba74; }

@@ -482,10 +482,10 @@ export default function ParabrezzaPage() {
     da_ordinare: [194, 65, 12],
   };
 
-  // PDF stampabile dello stato parabrezza per battello: stessa
-  // logica della tabella a schermo (un rigo per battello, articoli
-  // impilati dentro), stesso stile degli altri PDF del sito (logo
-  // in alto a destra, tabella disegnata a mano con jsPDF).
+  // PDF stampabile dello stato parabrezza per battello: orizzontale
+  // (piu' spazio per la colonna Articoli), un rigo per battello,
+  // stato scritto sulla STESSA riga dell'articolo quando ci sta
+  // (va a capo solo se la descrizione e' davvero troppo lunga).
   async function generateWindshieldStatusPdf() {
     if (boatGroups.length === 0) return;
 
@@ -494,7 +494,9 @@ export default function ParabrezzaPage() {
     setErrorMessage("");
 
     try {
-      const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+      const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
       const companyLogo = await fetchCompanyLogo();
       drawCompanyLogoTopRight(doc, companyLogo, { maxWidth: 28, maxHeight: 13 });
 
@@ -510,14 +512,17 @@ export default function ParabrezzaPage() {
 
       let y = 32;
 
+      const rightMargin = 12;
       const columns = [
-        { x: 12, title: "Consegna", w: 22 },
-        { x: 34, title: "N. ordine", w: 24 },
-        { x: 58, title: "Modello", w: 38 },
-        { x: 96, title: "Articoli", w: 102 },
+        { x: 12, title: "Consegna", w: 24 },
+        { x: 36, title: "N. ordine", w: 26 },
+        { x: 62, title: "Modello", w: 44 },
+        { x: 106, title: "Articoli", w: pageWidth - rightMargin - 106 },
       ];
 
-      const lineH = 4.6;
+      const lineH = 4.8;
+      const statusGap = 5;
+      const pageBottom = pageHeight - 18;
 
       function drawHeader() {
         doc.setFont("helvetica", "bold");
@@ -531,20 +536,70 @@ export default function ParabrezzaPage() {
 
       drawHeader();
 
+      // Misura quanto spazio (righe) prende un articolo nella colonna
+      // Articoli, e se lo stato ci sta sulla stessa riga del testo o
+      // deve andare sotto. Non disegna nulla: serve solo per calcolare
+      // l'altezza del rigo prima di disegnare i bordi.
+      function measureArticle(text: string, status: string, colW: number) {
+        const availW = colW - 3;
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(9.5);
+        const oneLineWidth = doc.getTextWidth(text);
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8.5);
+        const statusText = statusLabel[status] || "";
+        const statusWidth = doc.getTextWidth(statusText);
+
+        if (oneLineWidth + statusGap + statusWidth <= availW) {
+          return { lines: [text], inline: true, statusText, lineCount: 1 };
+        }
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(9.5);
+        const lines: string[] = doc.splitTextToSize(text, availW);
+        return { lines, inline: false, statusText, lineCount: lines.length + 1 };
+      }
+
+      function drawArticle(x: number, yTop: number, colW: number, measured: ReturnType<typeof measureArticle>, status: string) {
+        const color = statusColor[status] || [90, 100, 115];
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(9.5);
+        doc.setTextColor(0, 0, 0);
+        doc.text(measured.lines, x + 1.5, yTop);
+
+        if (measured.inline) {
+          const textWidth = doc.getTextWidth(measured.lines[0]);
+          doc.setFont("helvetica", "bold");
+          doc.setFontSize(8.5);
+          doc.setTextColor(color[0], color[1], color[2]);
+          doc.text(measured.statusText, x + 1.5 + textWidth + statusGap, yTop);
+          doc.setTextColor(0, 0, 0);
+          return lineH;
+        }
+
+        const textHeight = measured.lines.length * lineH;
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8.5);
+        doc.setTextColor(color[0], color[1], color[2]);
+        doc.text(measured.statusText, x + 4, yTop + textHeight);
+        doc.setTextColor(0, 0, 0);
+        return textHeight + lineH;
+      }
+
       for (const { boat, rows } of boatGroups) {
         const consegna = formatItDate(boat.requested_delivery_date) || "—";
         const modelloLines = doc.splitTextToSize(boat.model_boat, columns[2].w - 3);
 
-        // Ogni articolo diventa un blocco di 2 righe: il testo
-        // dell'articolo (che puo' andare a capo) e sotto, in colore,
-        // lo stato - cosi' resta leggibile anche con piu' articoli.
-        const articleBlocks = rows.map(({ req, status }) => {
-          const textLines: string[] = doc.splitTextToSize(itemLabel(req.item_id), columns[3].w - 3);
-          return { textLines, status };
-        });
+        const measuredArticles = rows.map(({ req, status }) => ({
+          measured: measureArticle(itemLabel(req.item_id), status, columns[3].w),
+          status,
+        }));
 
-        const articleLineCount = articleBlocks.reduce(
-          (sum, block) => sum + block.textLines.length + 1,
+        const articleLineCount = measuredArticles.reduce(
+          (sum, a) => sum + a.measured.lineCount,
           0
         );
 
@@ -554,7 +609,7 @@ export default function ParabrezzaPage() {
           modelloLines.length * lineH + 4.5
         );
 
-        if (y + rowH > 280) {
+        if (y + rowH > pageBottom) {
           doc.addPage();
           y = 16;
           drawHeader();
@@ -575,20 +630,8 @@ export default function ParabrezzaPage() {
 
         doc.rect(columns[3].x, y, columns[3].w, rowH);
         let articleY = y + 5.3;
-        for (const block of articleBlocks) {
-          doc.setFont("helvetica", "normal");
-          doc.setFontSize(9.5);
-          doc.setTextColor(0, 0, 0);
-          doc.text(block.textLines, columns[3].x + 1.5, articleY);
-          articleY += block.textLines.length * lineH;
-
-          const color = statusColor[block.status] || [90, 100, 115];
-          doc.setFont("helvetica", "bold");
-          doc.setFontSize(8.5);
-          doc.setTextColor(color[0], color[1], color[2]);
-          doc.text(statusLabel[block.status] || "", columns[3].x + 4, articleY);
-          doc.setTextColor(0, 0, 0);
-          articleY += lineH;
+        for (const { measured, status } of measuredArticles) {
+          articleY += drawArticle(columns[3].x, articleY, columns[3].w, measured, status);
         }
 
         y += rowH;

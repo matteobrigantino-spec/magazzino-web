@@ -102,6 +102,8 @@ export default function SupplierDetail({
   const [supplierName, setSupplierName] = useState("Fornitore");
   const [upholsteryEnabled, setUpholsteryEnabled] =
     useState(false);
+  const [windshieldEnabled, setWindshieldEnabled] =
+    useState(false);
   const [items, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -205,6 +207,21 @@ export default function SupplierDetail({
 
       setUpholsteryEnabled(
         supplier?.upholstery_enabled === true
+      );
+
+      // Query separata e isolata: se la colonna windshield_enabled non
+      // esiste ancora (STEP26 non ancora eseguito su Supabase), fallisce
+      // da sola senza bloccare il resto della pagina.
+      const { data: windshieldRow, error: windshieldError } =
+        await supabase
+          .from("suppliers")
+          .select("windshield_enabled")
+          .eq("id", supplierId)
+          .maybeSingle();
+
+      setWindshieldEnabled(
+        !windshieldError &&
+          windshieldRow?.windshield_enabled === true
       );
 
       const shouldLoadPrice =
@@ -1596,6 +1613,94 @@ export default function SupplierDetail({
             }}
           >
             Apri gestione tappezzerie →
+          </Link>
+        </section>
+      )}
+
+      {windshieldEnabled && (
+        <section
+          style={{
+            marginBottom: 20,
+            padding: "18px 20px",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 18,
+            flexWrap: "wrap",
+            border:
+              "1px solid rgba(37,99,235,0.28)",
+            borderRadius: 14,
+            background:
+              "linear-gradient(135deg, rgba(37,99,235,0.10), rgba(59,130,246,0.035))",
+            boxShadow:
+              "0 10px 28px rgba(37,99,235,0.07)",
+          }}
+        >
+          <div
+            style={{
+              minWidth: 0,
+            }}
+          >
+            <div
+              style={{
+                marginBottom: 5,
+                color: "#2563eb",
+                fontSize: 11,
+                fontWeight: 900,
+                letterSpacing: 1.1,
+                textTransform: "uppercase",
+              }}
+            >
+              Fornitore parabrezza
+            </div>
+
+            <div
+              style={{
+                fontSize: 20,
+                fontWeight: 900,
+                lineHeight: 1.2,
+              }}
+            >
+              Gestione Parabrezza
+            </div>
+
+            <div
+              style={{
+                marginTop: 6,
+                maxWidth: 720,
+                color: "var(--muted-foreground, #64748b)",
+                fontSize: 13,
+                lineHeight: 1.55,
+              }}
+            >
+              Mappa i modelli battello agli articoli parabrezza,
+              registra gli arrivi in giacenza e vedi lo stato di
+              assegnazione per ogni battello.
+            </div>
+          </div>
+
+          <Link
+            href="/produzione/parabrezza"
+            style={{
+              minHeight: 44,
+              padding: "0 17px",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              border:
+                "1px solid rgba(37,99,235,0.40)",
+              borderRadius: 10,
+              background: "#2563eb",
+              color: "#ffffff",
+              textDecoration: "none",
+              fontSize: 13,
+              fontWeight: 900,
+              whiteSpace: "nowrap",
+              boxShadow:
+                "0 8px 18px rgba(37,99,235,0.20)",
+            }}
+          >
+            Apri gestione parabrezza →
           </Link>
         </section>
       )}

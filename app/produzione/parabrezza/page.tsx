@@ -244,11 +244,17 @@ export default function ParabrezzaPage() {
     return `${supplierName ? supplierName + " · " : ""}${code} — ${item.description}`;
   }
 
-  const mappedModels = useMemo(() => new Set(matrix.map((row) => row.model_boat)), [matrix]);
-  const unmappedModels = useMemo(
-    () => modelOptions.filter((option) => !mappedModels.has(option.name)),
-    [modelOptions, mappedModels]
-  );
+  // Un modello puo' avere piu' articoli abbinati (STEP 29): non si
+  // nasconde piu' dal picker un modello gia' mappato, si mostra solo
+  // quanti articoli ha gia' cosi' e' chiaro che se ne sta aggiungendo
+  // un altro.
+  const articleCountByModel = useMemo(() => {
+    const counts = new Map<string, number>();
+    matrix.forEach((row) => {
+      counts.set(row.model_boat, (counts.get(row.model_boat) || 0) + 1);
+    });
+    return counts;
+  }, [matrix]);
 
   // Il fornitore dei parabrezza e' solo Paris Plast: i selettori di
   // articolo mostrano solo il suo catalogo, non tutto il magazzino.
@@ -265,6 +271,21 @@ export default function ParabrezzaPage() {
         ? items.filter((item) => item.supplier_id === parisPlastSupplierId)
         : items,
     [items, parisPlastSupplierId]
+  );
+
+  // Articoli Paris Plast gia' abbinati al modello scelto nel form: si
+  // escludono dal picker per evitare di riproporre lo stesso articolo
+  // due volte sullo stesso modello (bloccato comunque a livello DB).
+  const alreadyMappedItemIds = useMemo(() => {
+    if (!newMappingModel) return new Set<string>();
+    return new Set(
+      matrix.filter((row) => row.model_boat === newMappingModel).map((row) => row.item_id)
+    );
+  }, [matrix, newMappingModel]);
+
+  const availableItemsForNewMapping = useMemo(
+    () => parisPlastItems.filter((item) => !alreadyMappedItemIds.has(item.id)),
+    [parisPlastItems, alreadyMappedItemIds]
   );
 
   const filteredItemsForKit = useMemo(() => {
@@ -512,9 +533,9 @@ export default function ParabrezzaPage() {
           <div className="pbz-eyebrow">PRODUZIONE</div>
           <h1>Parabrezza</h1>
           <p>
-            Ogni modello di battello ha un parabrezza abbinato: quando crei un battello, il
-            pezzo si assegna da solo (in giacenza o dall'ordine aperto), dando la precedenza
-            a chi consegna prima. Non devi scegliere nulla a mano.
+            Ogni modello di battello ha uno o più articoli parabrezza abbinati: quando crei un
+            battello, ogni pezzo si assegna da solo (in giacenza o dall'ordine aperto), dando
+            la precedenza a chi consegna prima. Non devi scegliere nulla a mano.
           </p>
         </div>
         <div className="pbz-actions">
@@ -559,16 +580,22 @@ export default function ParabrezzaPage() {
 
         <div className="pbz-matrix-add">
           <select value={newMappingModel} onChange={(e) => setNewMappingModel(e.target.value)}>
-            <option value="">Modello senza mappatura...</option>
-            {unmappedModels.map((option) => (
-              <option key={option.id} value={option.name}>
-                {option.name}
-              </option>
-            ))}
+            <option value="">Scegli modello...</option>
+            {modelOptions.map((option) => {
+              const count = articleCountByModel.get(option.name) || 0;
+              return (
+                <option key={option.id} value={option.name}>
+                  {option.name}
+                  {count > 0
+                    ? ` (${count} articol${count === 1 ? "o" : "i"} già abbinat${count === 1 ? "o" : "i"})`
+                    : ""}
+                </option>
+              );
+            })}
           </select>
           <select value={newMappingItemId} onChange={(e) => setNewMappingItemId(e.target.value)}>
             <option value="">Articolo parabrezza...</option>
-            {parisPlastItems.map((item) => (
+            {availableItemsForNewMapping.map((item) => (
               <option key={item.id} value={item.id}>
                 {itemLabel(item.id)}
               </option>
@@ -582,8 +609,10 @@ export default function ParabrezzaPage() {
             {savingMapping ? "Salvataggio..." : "+ Aggiungi mappatura"}
           </button>
         </div>
-        {unmappedModels.length === 0 && modelOptions.length > 0 && (
-          <p className="pbz-hint">Tutti i modelli attivi hanno già un parabrezza abbinato.</p>
+        {newMappingModel && availableItemsForNewMapping.length === 0 && (
+          <p className="pbz-hint">
+            Tutti gli articoli Paris Plast sono già abbinati a questo modello.
+          </p>
         )}
       </section>
 

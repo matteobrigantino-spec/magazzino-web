@@ -510,12 +510,6 @@ export default function ProductionDeliveriesPage() {
     const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
     const companyLogo = await fetchCompanyLogo();
     drawCompanyLogoTopRight(doc, companyLogo, { maxWidth: 28, maxHeight: 13 });
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(13);
-
-    const titleLabel = months.map((m) => monthLabel(m)).join(" + ").toUpperCase();
-
-    doc.text(`PROGRAMMA CONSEGNE - ${titleLabel}`, 12, 16);
 
     let y2 = 26;
     for (const delivery of combined.deliveries) {

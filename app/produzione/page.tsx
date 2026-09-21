@@ -611,18 +611,22 @@ export default function ProductionPage() {
             boat,
             step: steps.find((s) => s.boat_id === boat.id && s.department_id === dept.id) || null,
           }))
-      : steps
-          .filter(
-            (s) =>
-              s.department_id === dept.id &&
-              s.status !== "completed" &&
-              !stepsPrinted[s.id]
-          )
-          .map((s) => {
-            const boat = boats.find((b) => b.id === s.boat_id);
-            return boat ? { boat, step: s } : null;
-          })
-          .filter((row): row is { boat: Boat; step: Step } => Boolean(row));
+      : // Stessa idea di Tubolari: tutti i battelli attivi, non solo quelli
+        // che hanno gia' un passaggio aperto qui - cosi' si vede la lista
+        // intera (compresi quelli che non sono ancora ufficialmente
+        // "entrati" nel reparto) invece di doverli aspettare uno a uno.
+        // Resta escluso solo chi ha gia' completato questo reparto (e'
+        // andato avanti) o e' gia' stato stampato.
+        activeBoats
+          .map((boat) => ({
+            boat,
+            step:
+              steps.find(
+                (s) => s.boat_id === boat.id && s.department_id === dept.id
+              ) || null,
+          }))
+          .filter((row) => row.step?.status !== "completed")
+          .filter((row) => !(row.step && stepsPrinted[row.step.id]));
 
     // Ordinati per data di consegna richiesta (come nel PDF): prima le
     // consegne piu' vicine, chi non ha una data va in fondo; a parita'
@@ -1448,29 +1452,23 @@ export default function ProductionPage() {
             {printCandidateRows.length === 0 ? (
               <p className="prod-print-empty">
                 {(() => {
-                  if (printPanel === "tubolari") {
-                    return activeBoats.some((boat) => tubolariPrinted[boat.id])
-                      ? "Tutti i battelli sono gia' stati stampati."
-                      : "Nessun battello disponibile per questo reparto.";
+                  const dept = printPanel === "tubolari" ? tubolariDept : verniciaturaDept;
+                  if (!dept) {
+                    return printPanel === "tubolari"
+                      ? 'Reparto "Tubolari" non trovato tra i reparti configurati.'
+                      : 'Reparto "Verniciatura" non trovato tra i reparti configurati.';
                   }
-                  // Verniciatura (o altro reparto col pannello rapido): qui
-                  // serve capire SE il motivo e' "tutti gia' stampati" o
-                  // "non c'e' proprio nessun passaggio aperto in reparto" -
-                  // sono due situazioni diverse e senza distinguerle sembra
-                  // sempre un bug anche quando e' normale.
-                  if (!verniciaturaDept) {
-                    return 'Reparto "Verniciatura" non trovato tra i reparti configurati.';
+                  if (activeBoats.length === 0) {
+                    return "Nessun battello attivo in produzione.";
                   }
-                  const deptSteps = steps.filter(
-                    (s) => s.department_id === verniciaturaDept.id
-                  );
-                  const openSteps = deptSteps.filter((s) => s.status !== "completed");
-                  if (openSteps.length === 0) {
-                    return deptSteps.length === 0
-                      ? "Nessun battello e' mai passato da questo reparto finora."
-                      : "Nessun battello attualmente in questo reparto: tutti i passaggi aperti sono stati completati.";
-                  }
-                  return "Tutti i battelli sono gia' stati stampati.";
+                  // Con la lista sempre a partire da tutti i battelli
+                  // attivi, arrivare a zero qui vuol dire che sono tutti
+                  // gia' passati oltre questo reparto (o gia' stati
+                  // stampati) - non che il reparto e' "vuoto" per qualche
+                  // errore.
+                  return printPanel === "tubolari"
+                    ? "Tutti i battelli sono gia' stati stampati."
+                    : "Tutti i battelli attivi hanno gia' completato questo reparto o sono gia' stati stampati.";
                 })()}
               </p>
             ) : (

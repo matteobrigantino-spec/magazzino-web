@@ -1372,9 +1372,6 @@ export default function ProductionPage() {
             <Link href="/produzione/reparti" className="prod-btn secondary">
               Reparti
             </Link>
-            <Link href="/produzione/parabrezza" className="prod-btn secondary">
-              Parabrezza
-            </Link>
             <button
               type="button"
               className={`prod-btn secondary ${printPanel === "verniciatura" ? "active" : ""}`}

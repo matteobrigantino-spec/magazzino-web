@@ -89,15 +89,6 @@ export default function ParabrezzaPage() {
   const [newMappingItemId, setNewMappingItemId] = useState("");
   const [savingMapping, setSavingMapping] = useState(false);
 
-  const [kitItemId, setKitItemId] = useState("");
-  const [kitMatricola, setKitMatricola] = useState("");
-  const [kitPrice, setKitPrice] = useState("");
-  const [kitNote, setKitNote] = useState("");
-  const [kitFilter, setKitFilter] = useState("");
-  const [savingKit, setSavingKit] = useState(false);
-  const [convertItemId, setConvertItemId] = useState("");
-  const [convertQuantity, setConvertQuantity] = useState("");
-  const [convertingStock, setConvertingStock] = useState(false);
   const [generatingPdf, setGeneratingPdf] = useState(false);
   const [busyKitId, setBusyKitId] = useState("");
 
@@ -236,10 +227,6 @@ export default function ParabrezzaPage() {
   }
 
   const itemMap = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
-  const supplierMap = useMemo(
-    () => new Map(suppliers.map((supplier) => [supplier.id, supplier.name])),
-    [suppliers]
-  );
   const boatMap = useMemo(() => new Map(boats.map((boat) => [boat.id, boat])), [boats]);
 
   function itemLabel(itemId: string) {
@@ -295,20 +282,6 @@ export default function ParabrezzaPage() {
     () => parisPlastItems.filter((item) => !alreadyMappedItemIds.has(item.id)),
     [parisPlastItems, alreadyMappedItemIds]
   );
-
-  const filteredItemsForKit = useMemo(() => {
-    const term = kitFilter.trim().toLowerCase();
-    if (!term) return parisPlastItems;
-    return parisPlastItems.filter((item) => {
-      const supplierName = (supplierMap.get(item.supplier_id) || "").toLowerCase();
-      return (
-        item.description.toLowerCase().includes(term) ||
-        item.code.toLowerCase().includes(term) ||
-        (item.supplier_code || "").toLowerCase().includes(term) ||
-        supplierName.includes(term)
-      );
-    });
-  }, [parisPlastItems, kitFilter, supplierMap]);
 
   async function addMapping() {
     setMessage("");
@@ -409,101 +382,6 @@ export default function ParabrezzaPage() {
     await loadData();
   }
 
-  async function registerKit() {
-    setMessage("");
-    setErrorMessage("");
-
-    if (!kitItemId) {
-      setErrorMessage("Scegli l'articolo del parabrezza arrivato.");
-      return;
-    }
-
-    setSavingKit(true);
-
-    const priceNumber = kitPrice.trim() ? Number(kitPrice.trim().replace(",", ".")) : null;
-
-    const { data: kitId, error } = await supabase.rpc("create_windshield_stock_kit", {
-      p_item_id: kitItemId,
-      p_matricola: kitMatricola.trim() || null,
-      p_unit_price: priceNumber,
-      p_note: kitNote.trim() || null,
-    });
-
-    if (error || !kitId) {
-      setErrorMessage("Errore registrazione arrivo: " + (error?.message || ""));
-      setSavingKit(false);
-      return;
-    }
-
-    const { data: assignedReqId, error: priorityError } = await supabase.rpc(
-      "assign_windshield_stock_kit_by_priority",
-      { p_kit_id: kitId }
-    );
-
-    if (priorityError) {
-      console.error("Errore assegnazione automatica parabrezza:", priorityError);
-    }
-
-    if (assignedReqId) {
-      setMessage("Arrivo registrato e assegnato subito al battello in attesa con la consegna più vicina.");
-    } else {
-      setMessage("Arrivo registrato in giacenza. Nessun battello in attesa di questo articolo al momento.");
-    }
-
-    setKitMatricola("");
-    setKitPrice("");
-    setKitNote("");
-    setSavingKit(false);
-    await loadData();
-  }
-
-  // Trasforma pezzi gia' in giacenza generale (arrivati da Movimenti o
-  // da un ordine, mai passati da "Registra un arrivo") in pezzi
-  // tracciati singolarmente, pronti per l'assegnazione automatica.
-  // Non tocca items.stock: quei pezzi sono gia' conteggiati li'.
-  async function convertStock() {
-    setMessage("");
-    setErrorMessage("");
-
-    const quantity = Number(convertQuantity.trim());
-
-    if (!convertItemId) {
-      setErrorMessage("Scegli l'articolo da convertire.");
-      return;
-    }
-    if (!quantity || quantity <= 0 || !Number.isInteger(quantity)) {
-      setErrorMessage("Inserisci una quantità valida.");
-      return;
-    }
-
-    setConvertingStock(true);
-
-    const { data, error } = await supabase.rpc("convert_item_stock_to_windshield_kits", {
-      p_item_id: convertItemId,
-      p_quantity: quantity,
-    });
-
-    if (error) {
-      setErrorMessage("Errore conversione giacenza: " + error.message);
-      setConvertingStock(false);
-      return;
-    }
-
-    const result = Array.isArray(data) ? data[0] : data;
-    const created = Number(result?.created || 0);
-    const assigned = Number(result?.assigned || 0);
-
-    setMessage(
-      assigned > 0
-        ? `Convertiti ${created} pezzi in giacenza tracciata, ${assigned} assegnati subito ai battelli in attesa.`
-        : `Convertiti ${created} pezzi in giacenza tracciata.`
-    );
-    setConvertItemId("");
-    setConvertQuantity("");
-    setConvertingStock(false);
-    await loadData();
-  }
-
   async function deleteKit(kit: Kit) {
     const ok = window.confirm("Eliminare questo kit dalla giacenza?");
     if (!ok) return;
@@ -550,36 +428,6 @@ export default function ParabrezzaPage() {
 
   const stockKits = useMemo(() => kits.filter((kit) => kit.status === "stock"), [kits]);
   const outKits = useMemo(() => kits.filter((kit) => kit.status === "out"), [kits]);
-
-  // Pezzi in giacenza generale dell'articolo (items.stock) non ancora
-  // tracciati singolarmente qui: es. arrivati da Movimenti o da un
-  // ordine ricevuto, mai passati da "Registra un arrivo". Servono per
-  // il pulsante di conversione qui sotto.
-  const trackedStockByItem = useMemo(() => {
-    const counts = new Map<string, number>();
-    stockKits.forEach((kit) => {
-      counts.set(kit.item_id, (counts.get(kit.item_id) || 0) + 1);
-    });
-    return counts;
-  }, [stockKits]);
-
-  const untrackedStockItems = useMemo(
-    () =>
-      parisPlastItems
-        .map((item) => ({
-          item,
-          untracked: item.stock - (trackedStockByItem.get(item.id) || 0),
-        }))
-        .filter((row) => row.untracked > 0),
-    [parisPlastItems, trackedStockByItem]
-  );
-
-  const selectedUntrackedQuantity = useMemo(() => {
-    if (!convertItemId) return 0;
-    const item = itemMap.get(convertItemId);
-    if (!item) return 0;
-    return item.stock - (trackedStockByItem.get(convertItemId) || 0);
-  }, [convertItemId, itemMap, trackedStockByItem]);
 
   const statusRows = useMemo(() => {
     return requirements
@@ -854,87 +702,14 @@ export default function ParabrezzaPage() {
       </section>
 
       <section className="pbz-card">
-        <div className="pbz-eyebrow">MAGAZZINO PARABREZZA</div>
-        <h2>Registra un arrivo</h2>
-
-        <div className="pbz-kit-form">
-          <input
-            className="pbz-kit-filter"
-            value={kitFilter}
-            onChange={(e) => setKitFilter(e.target.value)}
-            placeholder="Cerca articolo per fornitore, codice o descrizione..."
-          />
-          <select value={kitItemId} onChange={(e) => setKitItemId(e.target.value)}>
-            <option value="">Seleziona articolo...</option>
-            {filteredItemsForKit.map((item) => (
-              <option key={item.id} value={item.id}>
-                {itemLabel(item.id)} (giacenza: {item.stock})
-              </option>
-            ))}
-          </select>
-          <input
-            value={kitMatricola}
-            onChange={(e) => setKitMatricola(e.target.value)}
-            placeholder="Matricola / riferimento (facoltativo)"
-          />
-          <input
-            value={kitPrice}
-            onChange={(e) => setKitPrice(e.target.value)}
-            placeholder="Prezzo (facoltativo)"
-            inputMode="decimal"
-          />
-          <input
-            value={kitNote}
-            onChange={(e) => setKitNote(e.target.value)}
-            placeholder="Nota (facoltativa)"
-          />
-          <button type="button" onClick={registerKit} disabled={savingKit || !kitItemId}>
-            {savingKit ? "Registrazione..." : "Registra in giacenza"}
-          </button>
-        </div>
-
-        {untrackedStockItems.length > 0 && (
-          <div className="pbz-convert-box">
-            <p className="pbz-hint">
-              Alcuni articoli hanno già giacenza generale (arrivata da Movimenti o da un ordine)
-              mai registrata qui come pezzi singoli: puoi convertirla senza raddoppiare il
-              conteggio.
-            </p>
-            <div className="pbz-convert-form">
-              <select value={convertItemId} onChange={(e) => setConvertItemId(e.target.value)}>
-                <option value="">Articolo da convertire...</option>
-                {untrackedStockItems.map(({ item, untracked }) => (
-                  <option key={item.id} value={item.id}>
-                    {itemLabel(item.id)} ({untracked} non tracciati)
-                  </option>
-                ))}
-              </select>
-              <input
-                value={convertQuantity}
-                onChange={(e) => setConvertQuantity(e.target.value)}
-                placeholder="Quantità"
-                inputMode="numeric"
-              />
-              <button
-                type="button"
-                onClick={convertStock}
-                disabled={convertingStock || !convertItemId || !convertQuantity}
-              >
-                {convertingStock ? "Conversione..." : "Converti da giacenza generale"}
-              </button>
-            </div>
-            {convertItemId && (
-              <p className="pbz-hint">
-                Non tracciati per questo articolo: {selectedUntrackedQuantity}.
-              </p>
-            )}
-          </div>
-        )}
-      </section>
-
-      <section className="pbz-card">
         <div className="pbz-eyebrow">GIACENZA</div>
         <h2>Parabrezza in giacenza ({stockKits.length})</h2>
+        <p className="pbz-hint">
+          Si aggiorna da sola: appena la giacenza di un articolo mappato sale (da Movimenti, da
+          un ordine ricevuto o da qualsiasi altra modifica sulla scheda del fornitore), il pezzo
+          arriva qui già pronto e viene assegnato subito al battello in attesa con la consegna
+          più vicina. Non c'è niente da registrare a mano.
+        </p>
 
         {stockKits.length === 0 ? (
           <p className="pbz-hint">Nessun parabrezza in giacenza al momento.</p>
@@ -1101,19 +876,15 @@ function Styles() {
       .pbz-matrix-row { padding:11px 14px; display:grid; grid-template-columns:190px 1fr auto; align-items:center; gap:11px; border:1px solid rgba(148,163,184,.13); border-radius:9px; background:rgba(255,255,255,.02); }
       .pbz-matrix-row strong { color:#93c5fd; font-size:14px; }
       .pbz-matrix-add { margin-top:16px; display:grid; grid-template-columns:1fr 1.6fr auto; gap:11px; }
-      .pbz-kit-form { margin-top:16px; display:grid; grid-template-columns:1fr 1.6fr 0.8fr 0.6fr 1fr auto; gap:11px; }
-      .pbz-kit-filter { grid-column:1; }
-      .pbz-convert-box { margin-top:16px; padding-top:16px; border-top:1px dashed rgba(148,163,184,.2); }
-      .pbz-convert-form { margin-top:9px; display:grid; grid-template-columns:1.6fr 0.6fr auto; gap:11px; }
       .pbz-page select, .pbz-page input {
         min-height:46px; box-sizing:border-box; padding:0 13px; border:1px solid rgba(148,163,184,.19);
         border-radius:9px; outline:none; background:#081524; color:#fff; font-size:14px;
       }
-      .pbz-matrix-add button, .pbz-kit-form button, .pbz-card-heading button {
+      .pbz-matrix-add button, .pbz-card-heading button {
         min-height:46px; padding:0 16px; border:1px solid rgba(96,165,250,.32); border-radius:9px;
         background:rgba(59,130,246,.14); color:#bfdbfe; cursor:pointer; font-size:13px; font-weight:900; white-space:nowrap;
       }
-      .pbz-matrix-add button:disabled, .pbz-kit-form button:disabled, .pbz-card-heading button:disabled { opacity:.5; cursor:default; }
+      .pbz-matrix-add button:disabled, .pbz-card-heading button:disabled { opacity:.5; cursor:default; }
       button.danger { border:1px solid rgba(239,68,68,.28); background:rgba(239,68,68,.08); color:#fca5a5; padding:8px 14px; border-radius:7px; cursor:pointer; font-size:12px; font-weight:900; }
       button.danger:disabled { opacity:.5; cursor:wait; }
       .pbz-table { margin-top:16px; width:100%; border-collapse:collapse; font-size:15px; }
@@ -1129,7 +900,7 @@ function Styles() {
       .pbz-status.assegnato { background:rgba(34,197,94,.12); color:#86efac; }
       .pbz-status.ordine { background:rgba(59,130,246,.14); color:#93c5fd; }
       .pbz-status.da_ordinare { background:rgba(249,115,22,.14); color:#fdba74; }
-      @media(max-width:900px){ .pbz-matrix-add,.pbz-kit-form,.pbz-convert-form{grid-template-columns:1fr} .pbz-matrix-row{grid-template-columns:1fr} }
+      @media(max-width:900px){ .pbz-matrix-add{grid-template-columns:1fr} .pbz-matrix-row{grid-template-columns:1fr} }
     `}</style>
   );
 }

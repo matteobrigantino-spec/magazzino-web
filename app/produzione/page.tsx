@@ -611,22 +611,16 @@ export default function ProductionPage() {
             boat,
             step: steps.find((s) => s.boat_id === boat.id && s.department_id === dept.id) || null,
           }))
-      : // Stessa idea di Tubolari: tutti i battelli attivi, non solo quelli
-        // che hanno gia' un passaggio aperto qui - cosi' si vede la lista
-        // intera (compresi quelli che non sono ancora ufficialmente
-        // "entrati" nel reparto) invece di doverli aspettare uno a uno.
-        // Resta escluso solo chi ha gia' completato questo reparto (e'
-        // andato avanti) o e' gia' stato stampato.
-        activeBoats
-          .map((boat) => ({
-            boat,
-            step:
-              steps.find(
-                (s) => s.boat_id === boat.id && s.department_id === dept.id
-              ) || null,
-          }))
-          .filter((row) => row.step?.status !== "completed")
-          .filter((row) => !(row.step && stepsPrinted[row.step.id]));
+      : // Qui li vuole vedere davvero tutti, senza nessuna esclusione: ne'
+        // per stato del passaggio in reparto, ne' per gia' stampato (a
+        // differenza di Tubolari, dove l'esclusione dei gia' stampati resta).
+        activeBoats.map((boat) => ({
+          boat,
+          step:
+            steps.find(
+              (s) => s.boat_id === boat.id && s.department_id === dept.id
+            ) || null,
+        }));
 
     // Ordinati per data di consegna richiesta (come nel PDF): prima le
     // consegne piu' vicine, chi non ha una data va in fondo; a parita'
@@ -1429,24 +1423,19 @@ export default function ProductionPage() {
             <p>
               Spunta i battelli da mettere nel PDF (in qualsiasi combinazione,
               non serve che siano di fila).
-              {(() => {
-                const printedCount =
-                  printPanel === "tubolari"
-                    ? activeBoats.filter((boat) => tubolariPrinted[boat.id]).length
-                    : steps.filter(
-                        (s) =>
-                          s.department_id === verniciaturaDept?.id &&
-                          s.status !== "completed" &&
-                          stepsPrinted[s.id]
-                      ).length;
-                return printedCount > 0 ? (
-                  <>
-                    {" "}
-                    {printedCount} gia' stampat{printedCount === 1 ? "o" : "i"} non
-                    compaiono piu' qui.
-                  </>
-                ) : null;
-              })()}
+              {printPanel === "tubolari" &&
+                (() => {
+                  const printedCount = activeBoats.filter(
+                    (boat) => tubolariPrinted[boat.id]
+                  ).length;
+                  return printedCount > 0 ? (
+                    <>
+                      {" "}
+                      {printedCount} gia' stampat{printedCount === 1 ? "o" : "i"} non
+                      compaiono piu' qui.
+                    </>
+                  ) : null;
+                })()}
             </p>
 
             {printCandidateRows.length === 0 ? (
@@ -1461,14 +1450,10 @@ export default function ProductionPage() {
                   if (activeBoats.length === 0) {
                     return "Nessun battello attivo in produzione.";
                   }
-                  // Con la lista sempre a partire da tutti i battelli
-                  // attivi, arrivare a zero qui vuol dire che sono tutti
-                  // gia' passati oltre questo reparto (o gia' stati
-                  // stampati) - non che il reparto e' "vuoto" per qualche
-                  // errore.
-                  return printPanel === "tubolari"
-                    ? "Tutti i battelli sono gia' stati stampati."
-                    : "Tutti i battelli attivi hanno gia' completato questo reparto o sono gia' stati stampati.";
+                  // Verniciatura mostra sempre tutti i battelli attivi senza
+                  // esclusioni, quindi puo' arrivare a zero solo se non ce
+                  // ne sono. Tubolari invece esclude i gia' stampati.
+                  return "Tutti i battelli sono gia' stati stampati.";
                 })()}
               </p>
             ) : (

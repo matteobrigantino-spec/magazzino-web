@@ -429,6 +429,33 @@ export default function ParabrezzaPage() {
   const stockKits = useMemo(() => kits.filter((kit) => kit.status === "stock"), [kits]);
   const outKits = useMemo(() => kits.filter((kit) => kit.status === "out"), [kits]);
 
+  // Senza matricola i pezzi in giacenza sono tutti interscambiabili:
+  // elencarli uno per uno (tutti identici) e' solo confusione, si
+  // raggruppa per articolo mostrando la quantita'.
+  const groupedStockKits = useMemo(() => {
+    const order: string[] = [];
+    const map = new Map<string, Kit[]>();
+    stockKits.forEach((kit) => {
+      const existing = map.get(kit.item_id);
+      if (existing) {
+        existing.push(kit);
+      } else {
+        map.set(kit.item_id, [kit]);
+        order.push(kit.item_id);
+      }
+    });
+    return order.map((itemId) => {
+      const groupKits = map.get(itemId)!;
+      const dates = groupKits
+        .map((kit) => (kit.received_at ? kit.received_at.slice(0, 10) : null))
+        .filter((d): d is string => !!d)
+        .sort();
+      const earliest = dates[0] || null;
+      const latest = dates[dates.length - 1] || null;
+      return { itemId, kits: groupKits, earliest, latest };
+    });
+  }, [stockKits]);
+
   const statusRows = useMemo(() => {
     return requirements
       .map((req) => {
@@ -754,36 +781,38 @@ export default function ParabrezzaPage() {
           più vicina. Non c'è niente da registrare a mano.
         </p>
 
-        {stockKits.length === 0 ? (
+        {groupedStockKits.length === 0 ? (
           <p className="pbz-hint">Nessun parabrezza in giacenza al momento.</p>
         ) : (
           <table className="pbz-table">
             <thead>
               <tr>
                 <th>Articolo</th>
-                <th>Matricola</th>
-                <th>Prezzo</th>
+                <th>Quantità</th>
                 <th>Arrivato il</th>
-                <th>Note</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
-              {stockKits.map((kit) => (
-                <tr key={kit.id}>
-                  <td>{itemLabel(kit.item_id)}</td>
-                  <td>{kit.matricola || "—"}</td>
-                  <td>{formatMoney(kit.unit_price) || "—"}</td>
-                  <td>{kit.received_at ? formatItDate(kit.received_at.slice(0, 10)) : "—"}</td>
-                  <td>{kit.note || "—"}</td>
+              {groupedStockKits.map(({ itemId, kits: groupKits, earliest, latest }) => (
+                <tr key={itemId}>
+                  <td>{itemLabel(itemId)}</td>
+                  <td>{groupKits.length}</td>
+                  <td>
+                    {earliest
+                      ? earliest === latest
+                        ? formatItDate(earliest)
+                        : `${formatItDate(earliest)} – ${formatItDate(latest!)}`
+                      : "—"}
+                  </td>
                   <td>
                     <button
                       type="button"
                       className="danger"
-                      disabled={busyKitId === kit.id}
-                      onClick={() => deleteKit(kit)}
+                      disabled={busyKitId === groupKits[0].id}
+                      onClick={() => deleteKit(groupKits[0])}
                     >
-                      Elimina
+                      Elimina 1
                     </button>
                   </td>
                 </tr>

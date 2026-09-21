@@ -2144,43 +2144,50 @@ export default function Home() {
       <style jsx global>{`
         .home-dashboard {
           width: 100%;
-          max-width: 1500px;
+          max-width: 1440px;
           margin: 0 auto;
-          padding: 30px 32px 40px;
-          border-radius: 26px;
+          padding: 38px 42px 46px;
+          border-radius: 28px;
           position: relative;
           overflow: hidden;
-          color: #eaf7f9;
+          color: #f5f7fa;
+          border: 1px solid rgba(255,255,255,0.06);
           background:
-            radial-gradient(1200px 560px at 88% -14%, rgba(51,224,234,0.20), transparent 60%),
-            radial-gradient(760px 460px at -8% 108%, rgba(124,242,196,0.14), transparent 60%),
-            linear-gradient(165deg, #031320 0%, #04283a 40%, #075a6e 74%, #0a7f86 100%);
-          box-shadow: 0 40px 80px -46px rgba(3,19,32,0.6);
+            radial-gradient(900px 480px at 88% -12%, rgba(45,212,191,0.10), transparent 62%),
+            linear-gradient(175deg, #060a10 0%, #081019 45%, #0a141d 100%);
+          box-shadow: 0 60px 110px -60px rgba(0,0,0,0.75);
         }
 
         .home-loading {
-          max-width: 1500px;
+          max-width: 1440px;
           margin: 0 auto;
-          padding: 35px 20px;
-          opacity: 0.6;
+          padding: 40px 20px;
+          color: rgba(255,255,255,0.5);
+          font-size: 13px;
         }
 
         .home-hero {
           position: relative;
           z-index: 1;
-          min-height: 200px;
-          margin-bottom: 22px;
+          min-height: 190px;
+          margin-bottom: 28px;
         }
 
         .home-hero-main {
           position: relative;
           z-index: 2;
-          min-height: 200px;
-          padding: 4px 0 0;
+          min-height: 190px;
+          padding: 2px 0 0;
           display: grid;
-          grid-template-columns: minmax(0, 1fr) 205px;
-          gap: 35px;
-          align-items: center;
+          grid-template-columns: minmax(0, 1fr) 220px;
+          gap: 48px;
+          align-items: stretch;
+        }
+
+        .home-hero-copy {
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
         }
 
         .home-brand-row {
@@ -2190,82 +2197,73 @@ export default function Home() {
         }
 
         .home-brand-row img {
-          height: 38px;
+          height: 32px;
           width: auto;
           display: block;
+          opacity: 0.92;
         }
 
         .home-hero h1 {
-          margin: 18px 0 0;
-          color: #f4fdfe;
-          font-size: 39px;
+          margin: 22px 0 0;
+          color: #f7fafc;
+          font-size: 44px;
           line-height: 1;
-          letter-spacing: -1.3px;
-          font-weight: 950;
+          letter-spacing: -1.7px;
+          font-weight: 800;
         }
 
         .home-hero h1 span {
-          background: linear-gradient(90deg, #33e0ea, #7cf2c4);
+          background: linear-gradient(90deg, #2dd4bf, #5eead4);
           -webkit-background-clip: text;
           background-clip: text;
           color: transparent;
         }
 
         .home-hero-subtitle {
-          margin: 10px 0 0;
-          color: #a9d3dc;
-          font-size: 13px;
+          margin: 11px 0 0;
+          color: rgba(255,255,255,0.42);
+          font-size: 13.5px;
+          font-weight: 500;
         }
 
         .home-quote {
-          max-width: 610px;
-          margin-top: 24px;
-          padding: 14px 18px;
+          max-width: 560px;
+          margin-top: 26px;
+          padding: 2px 0 2px 16px;
           display: flex;
           align-items: center;
-          gap: 14px;
-          border: 1px solid rgba(255,255,255,0.16);
-          border-left: 3px solid #33e0ea;
-          border-radius: 4px 14px 14px 4px;
-          background: rgba(255,255,255,0.06);
-          backdrop-filter: blur(14px);
-          -webkit-backdrop-filter: blur(14px);
+          gap: 12px;
+          border-left: 2px solid rgba(45,212,191,0.55);
         }
 
         .home-quote-symbol {
-          color: #5fb9c4;
-          font-family: Georgia, serif;
-          font-size: 39px;
-          line-height: 0.75;
-          font-weight: 900;
+          display: none;
         }
 
         .home-quote-text {
-          color: #eefbfd;
-          font-size: 13px;
-          font-weight: 750;
-          line-height: 1.45;
+          color: rgba(245,247,250,0.72);
+          font-size: 13.5px;
+          font-style: italic;
+          font-weight: 500;
+          line-height: 1.6;
         }
 
         .home-quote-label {
-          margin-top: 4px;
-          color: #7fb8c4;
-          font-size: 8px;
-          font-weight: 900;
-          letter-spacing: 1.5px;
+          margin-top: 7px;
+          color: rgba(94,234,212,0.65);
+          font-size: 9px;
+          font-weight: 800;
+          letter-spacing: 2px;
         }
 
         .home-calendar {
-          padding: 18px;
-          min-height: 188px;
+          padding: 22px;
+          min-height: 190px;
           display: flex;
           flex-direction: column;
-          border: 1px solid rgba(255,255,255,0.16);
-          border-radius: 16px;
-          background: rgba(255,255,255,0.08);
-          backdrop-filter: blur(18px);
-          -webkit-backdrop-filter: blur(18px);
-          box-shadow: 0 20px 40px -28px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.14);
+          border: 1px solid rgba(255,255,255,0.08);
+          border-radius: 20px;
+          background: rgba(255,255,255,0.03);
           box-sizing: border-box;
         }
 
@@ -2273,89 +2271,112 @@ export default function Home() {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          color: #f1fbfd;
-          font-size: 14px;
+          color: rgba(255,255,255,0.55);
+          font-size: 11.5px;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.6px;
         }
 
         .home-calendar-icon {
-          width: 34px;
-          height: 34px;
+          width: 28px;
+          height: 28px;
           display: flex;
           align-items: center;
           justify-content: center;
-          border-radius: 9px;
-          background: rgba(51,224,234,0.14);
-          border: 1px solid rgba(51,224,234,0.4);
+          border-radius: 8px;
+          background: rgba(45,212,191,0.08);
+          border: 1px solid rgba(45,212,191,0.28);
         }
 
         .home-calendar-day {
-          margin-top: 13px;
-          color: #f1fbfd;
+          margin-top: 16px;
+          color: #f7fafc;
           font-family: var(--font-geist-mono), ui-monospace, monospace;
           font-variant-numeric: tabular-nums;
-          font-size: 52px;
-          line-height: 0.95;
-          letter-spacing: -2px;
-          font-weight: 800;
+          font-size: 54px;
+          line-height: 0.92;
+          letter-spacing: -2.5px;
+          font-weight: 700;
         }
 
         .home-calendar-month {
-          margin-top: 8px;
-          color: #a9d3dc;
-          font-size: 12px;
+          margin-top: 7px;
+          color: rgba(255,255,255,0.4);
+          font-size: 11.5px;
           text-transform: capitalize;
-          font-weight: 700;
+          font-weight: 600;
         }
 
         .home-calendar-time {
           margin-top: auto;
-          padding-top: 13px;
+          padding-top: 15px;
           display: flex;
           align-items: center;
           gap: 8px;
-          border-top: 1px solid rgba(255,255,255,0.14);
-          color: #7cf2c4;
+          border-top: 1px solid rgba(255,255,255,0.08);
+          color: #5eead4;
           font-family: var(--font-geist-mono), ui-monospace, monospace;
           font-variant-numeric: tabular-nums;
           font-size: 15px;
+          font-weight: 600;
         }
 
         .home-error {
-          margin-bottom: 18px;
-          padding: 13px 15px;
-          border-radius: 10px;
-          border: 1px solid rgba(248,113,113,0.45);
-          background: rgba(248,113,113,0.14);
-          color: #fecaca;
-          font-weight: 700;
+          margin-bottom: 20px;
+          padding: 13px 16px;
+          border-radius: 12px;
+          border: 1px solid rgba(248,113,113,0.35);
+          background: rgba(248,113,113,0.08);
+          color: #fca5a5;
+          font-weight: 600;
+          font-size: 13px;
         }
 
         .home-kpi-grid {
           display: grid;
           grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-          gap: 14px;
-          margin-bottom: 18px;
+          gap: 16px;
+          margin-bottom: 22px;
         }
 
         .home-kpi {
-          min-height: 150px;
-          padding: 18px;
-          border: 1px solid rgba(255,255,255,0.16);
-          border-radius: 16px;
-          background: rgba(255,255,255,0.07);
-          backdrop-filter: blur(16px);
-          -webkit-backdrop-filter: blur(16px);
-          box-shadow: 0 20px 40px -28px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.12);
-          color: #f1fbfd;
+          position: relative;
+          overflow: hidden;
+          min-height: 148px;
+          padding: 20px;
+          border: 1px solid rgba(255,255,255,0.07);
+          border-radius: 18px;
+          background: rgba(255,255,255,0.025);
+          box-shadow: 0 22px 46px -36px rgba(0,0,0,0.7);
+          color: #f5f7fa;
           text-align: left;
           cursor: pointer;
-          transition: transform .15s ease, box-shadow .15s ease, background .15s ease;
+          transition: transform .18s ease, box-shadow .18s ease, background .18s ease, border-color .18s ease;
         }
 
+        .home-kpi::before {
+          content: "";
+          position: absolute;
+          top: 0;
+          left: 18px;
+          right: 18px;
+          height: 3px;
+          border-radius: 0 0 4px 4px;
+          background: rgba(255,255,255,0.2);
+          opacity: 0.9;
+        }
+
+        .home-kpi:has(.home-tone-orange)::before { background: #fb923c; }
+        .home-kpi:has(.home-tone-blue)::before { background: #38bdf8; }
+        .home-kpi:has(.home-tone-purple)::before { background: #a78bfa; }
+        .home-kpi:has(.home-tone-green)::before { background: #34d399; }
+
         .home-kpi:not(.no-click):hover {
-          transform: translateY(-2px);
-          background: rgba(255,255,255,0.11);
-          box-shadow: 0 26px 50px -24px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.18);
+          transform: translateY(-3px);
+          background: rgba(255,255,255,0.045);
+          border-color: rgba(255,255,255,0.14);
+          box-shadow: 0 28px 54px -32px rgba(0,0,0,0.75);
         }
 
         .home-kpi.no-click {
@@ -2363,98 +2384,96 @@ export default function Home() {
         }
 
         .home-kpi-icon {
-          width: 38px;
-          height: 38px;
+          width: 32px;
+          height: 32px;
           display: flex;
           align-items: center;
           justify-content: center;
-          border-radius: 10px;
+          border-radius: 9px;
         }
 
         .home-tone-orange {
-          color: #ffb37a;
-          background: rgba(255,179,122,0.14);
-          border: 1px solid rgba(255,179,122,0.35);
+          color: #fb923c;
+          background: rgba(251,146,60,0.10);
+          border: 1px solid rgba(251,146,60,0.26);
         }
 
         .home-tone-blue {
-          color: #5ec8ff;
-          background: rgba(94,200,255,0.14);
-          border: 1px solid rgba(94,200,255,0.35);
+          color: #38bdf8;
+          background: rgba(56,189,248,0.10);
+          border: 1px solid rgba(56,189,248,0.26);
         }
 
         .home-tone-purple {
-          color: #c9a6ff;
-          background: rgba(201,166,255,0.14);
-          border: 1px solid rgba(201,166,255,0.35);
+          color: #a78bfa;
+          background: rgba(167,139,250,0.10);
+          border: 1px solid rgba(167,139,250,0.26);
         }
 
         .home-tone-green {
-          color: #7cf2c4;
-          background: rgba(124,242,196,0.14);
-          border: 1px solid rgba(124,242,196,0.35);
+          color: #34d399;
+          background: rgba(52,211,153,0.10);
+          border: 1px solid rgba(52,211,153,0.26);
         }
 
         .home-kpi-title {
-          margin-top: 13px;
-          font-size: 10px;
-          font-weight: 850;
-          letter-spacing: 0.8px;
+          margin-top: 16px;
+          font-size: 10.5px;
+          font-weight: 750;
+          letter-spacing: 0.9px;
           text-transform: uppercase;
-          color: #a9d3dc;
+          color: rgba(255,255,255,0.4);
         }
 
         .home-kpi-value {
-          margin-top: 7px;
+          margin-top: 6px;
           font-family: var(--font-geist-mono), ui-monospace, monospace;
           font-variant-numeric: tabular-nums;
-          font-size: 27px;
+          font-size: 26px;
           font-weight: 700;
           letter-spacing: -0.5px;
-          color: #f1fbfd;
+          color: #f7fafc;
         }
 
         .home-kpi-subtitle {
           margin-top: 4px;
-          font-size: 10px;
-          color: #7fb8c4;
+          font-size: 10.5px;
+          color: rgba(255,255,255,0.35);
         }
 
         .home-panel {
           overflow: hidden;
-          border: 1px solid rgba(255,255,255,0.16);
-          border-radius: 16px;
-          background: rgba(255,255,255,0.06);
-          backdrop-filter: blur(16px);
-          -webkit-backdrop-filter: blur(16px);
-          box-shadow: 0 20px 40px -28px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.1);
+          border: 1px solid rgba(255,255,255,0.07);
+          border-radius: 18px;
+          background: rgba(255,255,255,0.025);
+          box-shadow: 0 22px 46px -36px rgba(0,0,0,0.7);
         }
 
         .home-actions-panel {
-          margin-bottom: 20px;
+          margin-bottom: 22px;
         }
 
         .home-panel-title {
-          padding: 17px 19px;
+          padding: 19px 22px;
           display: flex;
           align-items: center;
           justify-content: space-between;
           gap: 12px;
-          border-bottom: 1px solid rgba(255,255,255,0.12);
+          border-bottom: 1px solid rgba(255,255,255,0.07);
         }
 
         .home-panel-title strong {
           display: block;
-          color: #f1fbfd;
-          font-size: 16px;
-          font-weight: 900;
+          color: #f7fafc;
+          font-size: 15px;
+          font-weight: 750;
         }
 
         .home-panel-title span {
           display: block;
-          margin-top: 3px;
-          color: #a9d3dc;
-          font-size: 10px;
+          margin-top: 4px;
+          color: rgba(255,255,255,0.4);
+          font-size: 11px;
         }
 
         .home-panel-title-right {
@@ -2464,8 +2483,8 @@ export default function Home() {
         }
 
         .home-panel-count {
-          min-width: 28px;
-          height: 28px;
+          min-width: 26px;
+          height: 26px;
           padding: 0 7px;
           display: flex;
           align-items: center;
@@ -2474,93 +2493,99 @@ export default function Home() {
           background: #ef4444;
           color: white;
           font-size: 11px;
-          font-weight: 950;
+          font-weight: 800;
         }
 
         .home-panel-secondary-action {
-          padding: 7px 10px;
-          border: 1px solid rgba(255,255,255,0.18);
-          border-radius: 8px;
+          padding: 7px 11px;
+          border: 1px solid rgba(255,255,255,0.12);
+          border-radius: 9px;
           background: transparent;
-          color: #cfe9ee;
+          color: rgba(255,255,255,0.65);
           cursor: pointer;
-          font-size: 10px;
-          font-weight: 850;
+          font-size: 10.5px;
+          font-weight: 700;
+          transition: background .15s ease, color .15s ease;
         }
 
         .home-panel-secondary-action:hover {
-          color: #f1fbfd;
-          background: rgba(255,255,255,0.08);
+          color: #f7fafc;
+          background: rgba(255,255,255,0.06);
         }
 
         .home-panel-action {
-          padding: 7px 10px;
-          border: 1px solid rgba(51,224,234,0.4);
-          border-radius: 8px;
-          background: rgba(51,224,234,0.12);
-          color: #33e0ea;
+          padding: 7px 11px;
+          border: 1px solid rgba(45,212,191,0.32);
+          border-radius: 9px;
+          background: rgba(45,212,191,0.08);
+          color: #5eead4;
           cursor: pointer;
-          font-size: 10px;
-          font-weight: 850;
+          font-size: 10.5px;
+          font-weight: 700;
+          transition: background .15s ease;
+        }
+
+        .home-panel-action:hover {
+          background: rgba(45,212,191,0.16);
         }
 
         .home-actions-grid {
-          padding: 16px;
+          padding: 18px;
           display: grid;
           grid-template-columns: repeat(5, minmax(0, 1fr));
-          gap: 11px;
+          gap: 12px;
         }
 
         .home-action {
-          min-height: 100px;
+          min-height: 98px;
           padding: 14px;
           display: flex;
           flex-direction: column;
           align-items: center;
           justify-content: center;
-          gap: 9px;
-          border: 1px solid rgba(255,255,255,0.14);
-          border-radius: 13px;
-          background: rgba(255,255,255,0.05);
-          color: #f1fbfd;
+          gap: 10px;
+          border: 1px solid rgba(255,255,255,0.07);
+          border-radius: 14px;
+          background: rgba(255,255,255,0.02);
+          color: #f5f7fa;
           cursor: pointer;
-          font-weight: 800;
+          font-weight: 700;
           font-size: 11px;
-          transition: border-color .15s ease, background .15s ease, transform .15s ease, box-shadow .15s ease;
+          transition: border-color .18s ease, background .18s ease, transform .18s ease, box-shadow .18s ease;
         }
 
         .home-action:hover {
-          border-color: rgba(51,224,234,0.55);
-          background: rgba(51,224,234,0.10);
+          border-color: rgba(45,212,191,0.4);
+          background: rgba(45,212,191,0.06);
           transform: translateY(-2px);
-          box-shadow: 0 18px 30px -18px rgba(51,224,234,0.4);
+          box-shadow: 0 16px 28px -20px rgba(45,212,191,0.35);
         }
 
         .home-action-icon {
-          width: 35px;
-          height: 35px;
+          width: 34px;
+          height: 34px;
           display: flex;
           align-items: center;
           justify-content: center;
           border-radius: 10px;
-          background: rgba(51,224,234,0.14);
-          color: #33e0ea;
+          background: rgba(45,212,191,0.10);
+          color: #5eead4;
         }
 
         .home-lower-grid,
         .home-bottom-grid {
           display: grid;
           grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
-          gap: 18px;
-          margin-bottom: 18px;
+          gap: 16px;
+          margin-bottom: 16px;
         }
 
         .home-reminder-row {
-          padding: 11px 14px;
+          padding: 12px 15px;
           display: flex;
           align-items: center;
           gap: 12px;
-          border-bottom: 1px solid rgba(255,255,255,0.10);
+          border-bottom: 1px solid rgba(255,255,255,0.06);
         }
 
         .home-date-badge {
@@ -2572,7 +2597,7 @@ export default function Home() {
           align-items: center;
           justify-content: center;
           border: 1px solid;
-          border-radius: 9px;
+          border-radius: 10px;
         }
 
         .home-date-badge strong {
@@ -2595,22 +2620,23 @@ export default function Home() {
 
         .home-reminder-copy strong {
           display: block;
-          font-size: 11px;
-          font-weight: 850;
+          font-size: 11.5px;
+          font-weight: 700;
+          color: #f5f7fa;
         }
 
         .home-reminder-copy span {
           display: block;
           margin-top: 2px;
-          font-size: 9px;
-          font-weight: 750;
+          font-size: 9.5px;
+          font-weight: 700;
         }
 
         .home-reminder-copy small {
           display: block;
           margin-top: 4px;
-          font-size: 9px;
-          opacity: 0.43;
+          font-size: 9.5px;
+          color: rgba(255,255,255,0.4);
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
@@ -2618,29 +2644,40 @@ export default function Home() {
 
         .home-done-button {
           flex-shrink: 0;
-          padding: 7px 9px;
-          border: 1px solid rgba(124,242,196,0.4);
-          border-radius: 8px;
-          background: rgba(124,242,196,0.12);
-          color: #7cf2c4;
+          padding: 7px 10px;
+          border: 1px solid rgba(52,211,153,0.32);
+          border-radius: 9px;
+          background: rgba(52,211,153,0.08);
+          color: #34d399;
           cursor: pointer;
-          font-size: 9px;
-          font-weight: 900;
+          font-size: 9.5px;
+          font-weight: 800;
+          transition: background .15s ease;
+        }
+
+        .home-done-button:hover {
+          background: rgba(52,211,153,0.16);
         }
 
         .home-activity-row,
         .home-order-row {
           width: 100%;
-          padding: 11px 15px;
+          padding: 12px 16px;
           display: flex;
           align-items: center;
           gap: 12px;
           border: none;
-          border-bottom: 1px solid rgba(255,255,255,0.10);
+          border-bottom: 1px solid rgba(255,255,255,0.06);
           background: transparent;
-          color: #f1fbfd;
+          color: #f5f7fa;
           cursor: pointer;
           text-align: left;
+          transition: background .15s ease;
+        }
+
+        .home-activity-row:hover,
+        .home-order-row:hover {
+          background: rgba(255,255,255,0.03);
         }
 
         .home-activity-copy {
@@ -2650,31 +2687,31 @@ export default function Home() {
 
         .home-activity-copy strong {
           display: block;
-          font-size: 11px;
-          font-weight: 850;
+          font-size: 11.5px;
+          font-weight: 700;
         }
 
         .home-activity-copy span {
           display: block;
           margin-top: 2px;
-          font-size: 9px;
-          opacity: 0.46;
+          font-size: 9.5px;
+          color: rgba(255,255,255,0.4);
         }
 
         .home-activity-icon {
-          width: 31px;
-          height: 31px;
+          width: 30px;
+          height: 30px;
           flex-shrink: 0;
           display: flex;
           align-items: center;
           justify-content: center;
-          border-radius: 8px;
-          background: rgba(51,224,234,0.14);
-          color: #33e0ea;
+          border-radius: 9px;
+          background: rgba(45,212,191,0.10);
+          color: #5eead4;
         }
 
         .home-success-empty {
-          padding: 25px 18px;
+          padding: 26px 18px;
           display: flex;
           align-items: center;
           justify-content: center;
@@ -2688,12 +2725,13 @@ export default function Home() {
 
         .home-success-empty strong {
           font-size: 12px;
+          color: #f5f7fa;
         }
 
         .home-success-empty span {
           margin-top: 3px;
           font-size: 10px;
-          opacity: 0.45;
+          color: rgba(255,255,255,0.4);
         }
 
         .home-success-icon {
@@ -2703,17 +2741,17 @@ export default function Home() {
           align-items: center;
           justify-content: center;
           border-radius: 50%;
-          color: #22c55e;
-          background: rgba(34,197,94,0.10);
-          border: 1px solid rgba(34,197,94,0.24);
-          font-weight: 950;
+          color: #34d399;
+          background: rgba(52,211,153,0.08);
+          border: 1px solid rgba(52,211,153,0.22);
+          font-weight: 800;
         }
 
         .home-empty {
-          padding: 34px;
+          padding: 36px;
           text-align: center;
           font-size: 11px;
-          opacity: 0.46;
+          color: rgba(255,255,255,0.35);
         }
 
         .home-shared-note-body {
@@ -2732,9 +2770,9 @@ export default function Home() {
           align-items: center;
           justify-content: center;
           border-radius: 12px;
-          border: 1px solid rgba(51,224,234,0.4);
-          background: rgba(51,224,234,0.12);
-          color: #33e0ea;
+          border: 1px solid rgba(45,212,191,0.32);
+          background: rgba(45,212,191,0.08);
+          color: #5eead4;
         }
 
         .home-shared-note-copy {
@@ -2748,35 +2786,36 @@ export default function Home() {
 
         .home-shared-note-copy strong {
           font-size: 13px;
-          font-weight: 900;
+          font-weight: 750;
+          color: #f5f7fa;
         }
 
         .home-shared-note-copy span {
           margin-top: 6px;
           max-width: 520px;
-          font-size: 10px;
+          font-size: 10.5px;
           line-height: 1.55;
-          opacity: 0.52;
+          color: rgba(255,255,255,0.42);
         }
 
         .home-shared-note-help {
           margin-top: 12px;
-          padding: 10px 11px;
-          border-radius: 8px;
-          border: 1px solid rgba(51,224,234,0.22);
-          background: rgba(51,224,234,0.06);
-          color: #cfe9ee;
+          padding: 10px 12px;
+          border-radius: 9px;
+          border: 1px solid rgba(45,212,191,0.18);
+          background: rgba(45,212,191,0.05);
+          color: rgba(255,255,255,0.55);
           font-size: 10px;
           line-height: 1.5;
         }
 
         .home-stock-row {
-          padding: 11px 15px;
+          padding: 12px 16px;
           display: flex;
           justify-content: space-between;
           align-items: center;
           gap: 18px;
-          border-bottom: 1px solid rgba(255,255,255,0.10);
+          border-bottom: 1px solid rgba(255,255,255,0.06);
         }
 
         .home-stock-row strong,
@@ -2789,36 +2828,35 @@ export default function Home() {
 
         .home-stock-row strong,
         .home-order-row strong {
-          font-size: 11px;
-          font-weight: 850;
+          font-size: 11.5px;
+          font-weight: 700;
         }
 
         .home-stock-row span,
         .home-order-row span {
           margin-top: 2px;
-          font-size: 9px;
-          opacity: 0.48;
+          font-size: 9.5px;
+          color: rgba(255,255,255,0.42);
         }
 
         .home-stock-row small {
           margin-top: 3px;
-          font-size: 8px;
-          opacity: 0.35;
+          font-size: 8.5px;
+          color: rgba(255,255,255,0.3);
         }
 
         .home-stock-qty {
           flex-shrink: 0;
           text-align: right;
-          color: #ffb37a;
+          color: #fb923c;
           font-size: 16px;
-          font-weight: 950;
+          font-weight: 800;
         }
 
         .home-stock-qty small {
-          color: #eaf7f9;
+          color: rgba(255,255,255,0.4);
           font-size: 8px;
           font-weight: 500;
-          opacity: 0.5;
         }
 
         .home-order-row {
@@ -2827,10 +2865,10 @@ export default function Home() {
 
         .home-status {
           display: inline-block;
-          padding: 5px 7px;
+          padding: 5px 8px;
           border-radius: 999px;
-          font-size: 8px;
-          font-weight: 900;
+          font-size: 8.5px;
+          font-weight: 800;
           white-space: nowrap;
         }
 
@@ -2842,63 +2880,63 @@ export default function Home() {
           display: flex;
           align-items: center;
           justify-content: center;
-          background: rgba(0,0,0,0.68);
-          backdrop-filter: blur(5px);
+          background: rgba(3,7,12,0.72);
+          backdrop-filter: blur(4px);
         }
 
         .reminder-modal {
           width: min(520px, 100%);
           overflow: hidden;
-          border: 1px solid rgba(51,224,234,0.30);
-          border-radius: 16px;
-          background: #04202c;
+          border: 1px solid rgba(45,212,191,0.24);
+          border-radius: 18px;
+          background: #0a1218;
           color: white;
-          box-shadow: 0 28px 90px rgba(0,0,0,0.55);
+          box-shadow: 0 30px 90px rgba(0,0,0,0.6);
         }
 
         .reminder-modal-header {
-          padding: 20px 21px;
+          padding: 20px 22px;
           display: flex;
           align-items: flex-start;
           justify-content: space-between;
           gap: 15px;
-          border-bottom: 1px solid rgba(51,224,234,0.16);
+          border-bottom: 1px solid rgba(255,255,255,0.07);
         }
 
         .reminder-modal-header h2 {
           margin: 5px 0 0;
-          font-size: 22px;
-          font-weight: 950;
+          font-size: 21px;
+          font-weight: 800;
         }
 
         .reminder-modal-label {
-          color: #33e0ea;
+          color: #5eead4;
           font-size: 9px;
-          font-weight: 900;
-          letter-spacing: 1.5px;
+          font-weight: 800;
+          letter-spacing: 1.6px;
         }
 
         .reminder-close {
           width: 32px;
           height: 32px;
-          border: 1px solid rgba(255,255,255,0.13);
-          border-radius: 8px;
-          background: rgba(255,255,255,0.04);
+          border: 1px solid rgba(255,255,255,0.1);
+          border-radius: 9px;
+          background: rgba(255,255,255,0.03);
           color: white;
           cursor: pointer;
-          font-size: 20px;
+          font-size: 19px;
         }
 
         .reminder-form {
-          padding: 20px 21px;
+          padding: 20px 22px;
         }
 
         .reminder-form label {
           display: block;
-          margin: 14px 0 7px;
-          color: rgba(255,255,255,0.72);
+          margin: 15px 0 7px;
+          color: rgba(255,255,255,0.6);
           font-size: 10px;
-          font-weight: 850;
+          font-weight: 750;
           text-transform: uppercase;
           letter-spacing: 0.6px;
         }
@@ -2911,7 +2949,7 @@ export default function Home() {
           margin-left: 6px;
           font-weight: 500;
           text-transform: none;
-          opacity: 0.45;
+          color: rgba(255,255,255,0.4);
         }
 
         .reminder-form input,
@@ -2920,18 +2958,19 @@ export default function Home() {
           width: 100%;
           box-sizing: border-box;
           padding: 12px 13px;
-          border: 1px solid rgba(51,224,234,0.22);
-          border-radius: 9px;
+          border: 1px solid rgba(255,255,255,0.1);
+          border-radius: 10px;
           outline: none;
-          background: rgba(255,255,255,0.035);
+          background: rgba(255,255,255,0.025);
           color: white;
           font: inherit;
+          transition: border-color .15s ease;
         }
 
         .reminder-form input:focus,
         .reminder-form select:focus,
         .reminder-form textarea:focus {
-          border-color: #33e0ea;
+          border-color: #2dd4bf;
         }
 
         .reminder-form textarea {
@@ -2939,7 +2978,7 @@ export default function Home() {
         }
 
         .reminder-modal-actions {
-          padding: 15px 21px 20px;
+          padding: 16px 22px 21px;
           display: flex;
           justify-content: flex-end;
           gap: 9px;
@@ -2947,23 +2986,23 @@ export default function Home() {
 
         .reminder-cancel,
         .reminder-save {
-          padding: 10px 14px;
-          border-radius: 8px;
+          padding: 10px 15px;
+          border-radius: 9px;
           cursor: pointer;
           font-size: 11px;
-          font-weight: 900;
+          font-weight: 800;
         }
 
         .reminder-cancel {
-          border: 1px solid rgba(255,255,255,0.13);
+          border: 1px solid rgba(255,255,255,0.1);
           background: transparent;
           color: white;
         }
 
         .reminder-save {
           border: 1px solid #0891b2;
-          background: linear-gradient(135deg, #33e0ea, #0891b2);
-          color: #04202c;
+          background: linear-gradient(135deg, #2dd4bf, #0891b2);
+          color: #04141a;
         }
 
         @media (max-width: 1000px) {
@@ -2977,8 +3016,13 @@ export default function Home() {
         }
 
         @media (max-width: 760px) {
+          .home-dashboard {
+            padding: 26px 20px 32px;
+          }
+
           .home-hero-main {
             grid-template-columns: 1fr;
+            gap: 22px;
           }
 
           .home-calendar {
@@ -3247,7 +3291,7 @@ function CalendarIcon() {
         width: 15,
         height: 15,
         border:
-          "2px solid #33e0ea",
+          "2px solid #5eead4",
         borderRadius: 3,
         position: "relative",
         boxSizing:
@@ -3263,7 +3307,7 @@ function CalendarIcon() {
           top: 3,
           height: 2,
           background:
-            "#33e0ea",
+            "#5eead4",
         }}
       />
     </div>
@@ -3277,7 +3321,7 @@ function ClockIcon() {
         width: 16,
         height: 16,
         border:
-          "2px solid #7cf2c4",
+          "2px solid #5eead4",
         borderRadius:
           "50%",
       }}

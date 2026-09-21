@@ -543,10 +543,10 @@ export function buildDepartmentProgramPdf(params: {
   const availableHeight = bottom - bodyStart;
 
   const widths = isTubolari
-    ? [15, 22, 38, 27, 30, 22, 30, tableWidth - (15 + 22 + 38 + 27 + 30 + 22 + 30)]
+    ? [16, 26, 75, 58, 40, tableWidth - (16 + 26 + 75 + 58 + 40)]
     : [15, 23, 40, 28, 40, 28, 40, tableWidth - (15 + 23 + 40 + 28 + 40 + 28 + 40)];
   const titles = isTubolari
-    ? ["Prog.", "N. ordine", "Modello battello", "Carena", "Colore tubolare", "Tubo", "Montaggio\ntubo", "Note"]
+    ? ["Prog.", "N. ordine", "Modello battello", "Colore tubolare", "Tubo", "Montaggio\ntubo"]
     : ["Prog.", "N. ordine", "Modello battello", "Carena", "Ragno/\nLongheroni", "Coperta", "Accessori", "Note"];
 
   let cx = margin;
@@ -556,9 +556,7 @@ export function buildDepartmentProgramPdf(params: {
     return col;
   });
 
-  const modelColIndex = 2;
-  const noteColIndex = columns.length - 1;
-  const checkColIndexes = isTubolari ? new Set([5, 6]) : new Set<number>();
+  const checkColIndexes = isTubolari ? new Set([4, 5]) : new Set<number>();
 
   function rowValues(row: DeptPdfRow) {
     const boat = row.boat;
@@ -569,11 +567,9 @@ export function buildDepartmentProgramPdf(params: {
           boat.progressive_no !== null ? String(boat.progressive_no) : "-",
           boat.order_number,
           boat.model_boat,
-          boat.hull || "-",
           tub?.tube_color || "-",
           tub?.tube_done ? "1" : "0",
           tub?.tube_mount_done ? "1" : "0",
-          noteText,
         ]
       : [
           boat.progressive_no !== null ? String(boat.progressive_no) : "-",

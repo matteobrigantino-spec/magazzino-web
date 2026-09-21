@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import jsPDF from "jspdf";
 import { supabase } from "../../../lib/supabaseClient";
+import { fetchCompanyLogo, drawCompanyLogoTopRight } from "../../../lib/pdfLogo";
 
 type Item = {
   id: string;
@@ -96,6 +98,7 @@ export default function ParabrezzaPage() {
   const [convertItemId, setConvertItemId] = useState("");
   const [convertQuantity, setConvertQuantity] = useState("");
   const [convertingStock, setConvertingStock] = useState(false);
+  const [generatingPdf, setGeneratingPdf] = useState(false);
   const [busyKitId, setBusyKitId] = useState("");
 
   useEffect(() => {
@@ -619,6 +622,138 @@ export default function ParabrezzaPage() {
     return order.map((id) => map.get(id)!);
   }, [statusRows]);
 
+  const statusLabel: Record<string, string> = {
+    assegnato: "ASSEGNATO",
+    ordine: "IN ORDINE",
+    da_ordinare: "DA ORDINARE",
+  };
+
+  const statusColor: Record<string, [number, number, number]> = {
+    assegnato: [21, 128, 61],
+    ordine: [29, 78, 216],
+    da_ordinare: [194, 65, 12],
+  };
+
+  // PDF stampabile dello stato parabrezza per battello: stessa
+  // logica della tabella a schermo (un rigo per battello, articoli
+  // impilati dentro), stesso stile degli altri PDF del sito (logo
+  // in alto a destra, tabella disegnata a mano con jsPDF).
+  async function generateWindshieldStatusPdf() {
+    if (boatGroups.length === 0) return;
+
+    setGeneratingPdf(true);
+    setMessage("");
+    setErrorMessage("");
+
+    try {
+      const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+      const companyLogo = await fetchCompanyLogo();
+      drawCompanyLogoTopRight(doc, companyLogo, { maxWidth: 28, maxHeight: 13 });
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(14);
+      doc.text("STATO PARABREZZA PER BATTELLO", 12, 16);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9.5);
+      doc.setTextColor(90, 100, 115);
+      doc.text(`Generato il ${formatItDate(new Date().toISOString().slice(0, 10))}`, 12, 22);
+      doc.setTextColor(0, 0, 0);
+
+      let y = 32;
+
+      const columns = [
+        { x: 12, title: "Consegna", w: 22 },
+        { x: 34, title: "N. ordine", w: 24 },
+        { x: 58, title: "Modello", w: 38 },
+        { x: 96, title: "Articoli", w: 102 },
+      ];
+
+      const lineH = 4.6;
+
+      function drawHeader() {
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(9.5);
+        for (const col of columns) {
+          doc.rect(col.x, y - 5.5, col.w, 10);
+          doc.text(col.title, col.x + 1.5, y + 1);
+        }
+        y += 5;
+      }
+
+      drawHeader();
+
+      for (const { boat, rows } of boatGroups) {
+        const consegna = formatItDate(boat.requested_delivery_date) || "—";
+        const modelloLines = doc.splitTextToSize(boat.model_boat, columns[2].w - 3);
+
+        // Ogni articolo diventa un blocco di 2 righe: il testo
+        // dell'articolo (che puo' andare a capo) e sotto, in colore,
+        // lo stato - cosi' resta leggibile anche con piu' articoli.
+        const articleBlocks = rows.map(({ req, status }) => {
+          const textLines: string[] = doc.splitTextToSize(itemLabel(req.item_id), columns[3].w - 3);
+          return { textLines, status };
+        });
+
+        const articleLineCount = articleBlocks.reduce(
+          (sum, block) => sum + block.textLines.length + 1,
+          0
+        );
+
+        const rowH = Math.max(
+          10,
+          articleLineCount * lineH + 4.5,
+          modelloLines.length * lineH + 4.5
+        );
+
+        if (y + rowH > 280) {
+          doc.addPage();
+          y = 16;
+          drawHeader();
+        }
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(9.5);
+        doc.setTextColor(0, 0, 0);
+
+        doc.rect(columns[0].x, y, columns[0].w, rowH);
+        doc.text(consegna, columns[0].x + 1.5, y + 5.3);
+
+        doc.rect(columns[1].x, y, columns[1].w, rowH);
+        doc.text(boat.order_number, columns[1].x + 1.5, y + 5.3);
+
+        doc.rect(columns[2].x, y, columns[2].w, rowH);
+        doc.text(modelloLines, columns[2].x + 1.5, y + 5.3);
+
+        doc.rect(columns[3].x, y, columns[3].w, rowH);
+        let articleY = y + 5.3;
+        for (const block of articleBlocks) {
+          doc.setFont("helvetica", "normal");
+          doc.setFontSize(9.5);
+          doc.setTextColor(0, 0, 0);
+          doc.text(block.textLines, columns[3].x + 1.5, articleY);
+          articleY += block.textLines.length * lineH;
+
+          const color = statusColor[block.status] || [90, 100, 115];
+          doc.setFont("helvetica", "bold");
+          doc.setFontSize(8.5);
+          doc.setTextColor(color[0], color[1], color[2]);
+          doc.text(statusLabel[block.status] || "", columns[3].x + 4, articleY);
+          doc.setTextColor(0, 0, 0);
+          articleY += lineH;
+        }
+
+        y += rowH;
+      }
+
+      doc.save(`stato_parabrezza_${new Date().toISOString().slice(0, 10)}.pdf`);
+    } catch (err: any) {
+      setErrorMessage("Errore generazione PDF: " + (err?.message || String(err)));
+    } finally {
+      setGeneratingPdf(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="pbz-page">
@@ -841,8 +976,19 @@ export default function ParabrezzaPage() {
       </section>
 
       <section className="pbz-card">
-        <div className="pbz-eyebrow">STATO BATTELLI</div>
-        <h2>Parabrezza per battello ({boatGroups.length})</h2>
+        <div className="pbz-card-heading">
+          <div>
+            <div className="pbz-eyebrow">STATO BATTELLI</div>
+            <h2>Parabrezza per battello ({boatGroups.length})</h2>
+          </div>
+          <button
+            type="button"
+            onClick={generateWindshieldStatusPdf}
+            disabled={generatingPdf || boatGroups.length === 0}
+          >
+            {generatingPdf ? "Generazione PDF..." : "Stampa PDF"}
+          </button>
+        </div>
 
         {boatGroups.length === 0 ? (
           <p className="pbz-hint">
@@ -949,6 +1095,7 @@ function Styles() {
       .pbz-message.error { border:1px solid rgba(239,68,68,.28); background:rgba(239,68,68,.08); color:#fca5a5; }
       .pbz-card { margin-top:14px; padding:22px; border:1px solid rgba(148,163,184,.15); border-radius:14px; background:#0b1828; }
       .pbz-card h2 { margin:6px 0 0; font-size:21px; }
+      .pbz-card-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; flex-wrap:wrap; }
       .pbz-hint { margin-top:13px; color:#7388a3; font-size:13px; }
       .pbz-matrix-list { margin-top:16px; display:flex; flex-direction:column; gap:9px; }
       .pbz-matrix-row { padding:11px 14px; display:grid; grid-template-columns:190px 1fr auto; align-items:center; gap:11px; border:1px solid rgba(148,163,184,.13); border-radius:9px; background:rgba(255,255,255,.02); }
@@ -962,11 +1109,11 @@ function Styles() {
         min-height:46px; box-sizing:border-box; padding:0 13px; border:1px solid rgba(148,163,184,.19);
         border-radius:9px; outline:none; background:#081524; color:#fff; font-size:14px;
       }
-      .pbz-matrix-add button, .pbz-kit-form button {
+      .pbz-matrix-add button, .pbz-kit-form button, .pbz-card-heading button {
         min-height:46px; padding:0 16px; border:1px solid rgba(96,165,250,.32); border-radius:9px;
         background:rgba(59,130,246,.14); color:#bfdbfe; cursor:pointer; font-size:13px; font-weight:900; white-space:nowrap;
       }
-      .pbz-matrix-add button:disabled, .pbz-kit-form button:disabled { opacity:.5; cursor:default; }
+      .pbz-matrix-add button:disabled, .pbz-kit-form button:disabled, .pbz-card-heading button:disabled { opacity:.5; cursor:default; }
       button.danger { border:1px solid rgba(239,68,68,.28); background:rgba(239,68,68,.08); color:#fca5a5; padding:8px 14px; border-radius:7px; cursor:pointer; font-size:12px; font-weight:900; }
       button.danger:disabled { opacity:.5; cursor:wait; }
       .pbz-table { margin-top:16px; width:100%; border-collapse:collapse; font-size:15px; }

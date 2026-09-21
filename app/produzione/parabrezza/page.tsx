@@ -285,7 +285,25 @@ export default function ParabrezzaPage() {
       return;
     }
 
-    setMessage(`Mappatura salvata: ${newMappingModel} → ${itemLabel(newMappingItemId)}.`);
+    // Aggancia subito anche i battelli di questo modello gia' in
+    // produzione: senza questa chiamata resterebbero per sempre
+    // senza parabrezza tracciato (la richiesta si crea solo alla
+    // creazione del battello, non retroattivamente).
+    const { data: backfilledCount, error: backfillError } = await supabase.rpc(
+      "backfill_windshield_requirements_for_model",
+      { p_model_boat: newMappingModel }
+    );
+
+    if (backfillError) {
+      console.error("Errore aggancio battelli esistenti:", backfillError);
+    }
+
+    const boatsNote =
+      !backfillError && backfilledCount
+        ? ` Agganciati anche ${backfilledCount} battelli già in produzione di questo modello.`
+        : "";
+
+    setMessage(`Mappatura salvata: ${newMappingModel} → ${itemLabel(newMappingItemId)}.${boatsNote}`);
     setNewMappingModel("");
     setNewMappingItemId("");
     setSavingMapping(false);
@@ -296,6 +314,8 @@ export default function ParabrezzaPage() {
     setMessage("");
     setErrorMessage("");
 
+    const mapping = matrix.find((row) => row.id === mappingId);
+
     const { error } = await supabase
       .from("production_windshield_matrix")
       .update({ item_id: itemId, updated_at: new Date().toISOString() })
@@ -304,6 +324,19 @@ export default function ParabrezzaPage() {
     if (error) {
       setErrorMessage("Errore aggiornamento mappatura: " + error.message);
       return;
+    }
+
+    // Aggancia anche eventuali battelli di questo modello che per
+    // qualche motivo fossero rimasti senza richiesta parabrezza
+    // (non tocca quelli che ne hanno gia' una con l'articolo vecchio).
+    if (mapping) {
+      const { error: backfillError } = await supabase.rpc(
+        "backfill_windshield_requirements_for_model",
+        { p_model_boat: mapping.model_boat }
+      );
+      if (backfillError) {
+        console.error("Errore aggancio battelli esistenti:", backfillError);
+      }
     }
 
     await loadData();

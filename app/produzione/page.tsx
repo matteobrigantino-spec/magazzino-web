@@ -116,6 +116,13 @@ export default function ProductionPage() {
   const [printBusy, setPrintBusy] = useState(false);
   const [printError, setPrintError] = useState("");
 
+  // Battelli Tubolari gia' messi in un PDF: spariscono dalla lista di
+  // quelli selezionabili per il prossimo, cosi' non si ristampa per
+  // sbaglio chi e' gia' stato consegnato al reparto. Mappa boat_id ->
+  // data/ora di stampa; vuota (e la spunta resta invariata) finche' la
+  // colonna printed_at non esiste ancora su production_tubolari.
+  const [tubolariPrinted, setTubolariPrinted] = useState<Record<string, string>>({});
+
   useEffect(() => {
     async function loadPdfLogo() {
       const { data, error } = await supabase
@@ -421,6 +428,23 @@ export default function ProductionPage() {
       supabase.from("production_boat_upholstery").select("boat_id"),
     ]);
 
+    // Separata dalle altre: finche' su Supabase non esiste ancora la
+    // colonna printed_at (va aggiunta a mano una volta sola), questa
+    // query fallisce da sola senza bloccare il resto della pagina - la
+    // lista "gia' stampati" resta semplicemente vuota fino ad allora.
+    const tubPrintedRes = await supabase
+      .from("production_tubolari")
+      .select("boat_id,printed_at");
+    setTubolariPrinted(
+      tubPrintedRes.error
+        ? {}
+        : Object.fromEntries(
+            (tubPrintedRes.data || [])
+              .filter((row: any) => row.printed_at)
+              .map((row: any) => [String(row.boat_id), String(row.printed_at)])
+          )
+    );
+
     const firstError =
       depRes.error || boatRes.error || stepRes.error || optionsRes.error;
 
@@ -561,10 +585,12 @@ export default function ProductionPage() {
     if (!dept) return [];
 
     const list = printPanel === "tubolari"
-      ? activeBoats.map((boat) => ({
-          boat,
-          step: steps.find((s) => s.boat_id === boat.id && s.department_id === dept.id) || null,
-        }))
+      ? activeBoats
+          .filter((boat) => !tubolariPrinted[boat.id])
+          .map((boat) => ({
+            boat,
+            step: steps.find((s) => s.boat_id === boat.id && s.department_id === dept.id) || null,
+          }))
       : steps
           .filter((s) => s.department_id === dept.id && s.status !== "completed")
           .map((s) => {
@@ -586,7 +612,7 @@ export default function ProductionPage() {
       }
       return (a.boat.progressive_no ?? Infinity) - (b.boat.progressive_no ?? Infinity);
     });
-  }, [printPanel, tubolariDept, verniciaturaDept, activeBoats, steps, boats]);
+  }, [printPanel, tubolariDept, verniciaturaDept, activeBoats, steps, boats, tubolariPrinted]);
 
   // Ogni apertura del pannello riparte con tutti spuntati (cosi' "tutti i
   // battelli" resta a zero click), poi l'utente toglie la spunta a chi
@@ -667,6 +693,35 @@ export default function ProductionPage() {
       });
 
       await doc.save(filename, { returnPromise: true });
+
+      // Tubolari: segna i battelli appena stampati cosi' spariscono dalla
+      // lista di quelli selezionabili per il prossimo PDF. Se la colonna
+      // printed_at non esiste ancora su Supabase l'upsert fallisce da solo
+      // e il PDF resta comunque generato - semplicemente non sparisce.
+      if (isTub) {
+        const now = new Date().toISOString();
+        const upsertRows = rows.map((row) => ({
+          boat_id: row.boat.id,
+          tube_color: tubMap[row.boat.id]?.tube_color || "",
+          tube_done: tubMap[row.boat.id]?.tube_done || false,
+          tube_mount_done: tubMap[row.boat.id]?.tube_mount_done || false,
+          printed_at: now,
+        }));
+        const { error: markError } = await supabase
+          .from("production_tubolari")
+          .upsert(upsertRows, { onConflict: "boat_id" });
+
+        if (!markError) {
+          setTubolariPrinted((current) => {
+            const next = { ...current };
+            rows.forEach((row) => {
+              next[row.boat.id] = now;
+            });
+            return next;
+          });
+        }
+      }
+
       setPrintPanel(null);
     } catch (error) {
       setPrintError(
@@ -1308,11 +1363,27 @@ export default function ProductionPage() {
             <p>
               Spunta i battelli da mettere nel PDF (in qualsiasi combinazione,
               non serve che siano di fila).
+              {printPanel === "tubolari" &&
+                (() => {
+                  const printedCount = activeBoats.filter(
+                    (boat) => tubolariPrinted[boat.id]
+                  ).length;
+                  return printedCount > 0 ? (
+                    <>
+                      {" "}
+                      {printedCount} gia' stampat{printedCount === 1 ? "o" : "i"} non
+                      compaiono piu' qui.
+                    </>
+                  ) : null;
+                })()}
             </p>
 
             {printCandidateRows.length === 0 ? (
               <p className="prod-print-empty">
-                Nessun battello disponibile per questo reparto.
+                {printPanel === "tubolari" &&
+                activeBoats.some((boat) => tubolariPrinted[boat.id])
+                  ? "Tutti i battelli attivi sono gia' stati stampati."
+                  : "Nessun battello disponibile per questo reparto."}
               </p>
             ) : (
               <div className="prod-print-boatlist">

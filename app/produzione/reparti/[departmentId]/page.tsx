@@ -47,6 +47,7 @@ type Tubolare = {
   tube_color: string;
   tube_done: boolean;
   tube_mount_done: boolean;
+  printed_at: string | null;
 };
 
 function isTubolariName(name: string) {
@@ -172,7 +173,7 @@ export default function ProductionDepartmentPage({
         return;
       }
 
-      const [stepRes, tubRes, optionsRes] = await Promise.all([
+      const [stepRes, tubRes, optionsRes, printedRes] = await Promise.all([
         supabase
           .from("production_department_steps")
           .select("id,boat_id,department_id,status,current_note,entered_at")
@@ -189,6 +190,10 @@ export default function ProductionDepartmentPage({
           .eq("active", true)
           .order("sort_order", { ascending: true })
           .order("name", { ascending: true }),
+        // Query separata e "silenziosa": finche' su Supabase non esiste
+        // ancora la colonna printed_at, questa fallisce da sola senza far
+        // sparire colore/spunte tubolari gia' salvati (vedi tubRes sopra).
+        supabase.from("production_tubolari").select("boat_id,printed_at").in("boat_id", boatIds),
       ]);
 
       if (stepRes.error) {
@@ -211,12 +216,20 @@ export default function ProductionDepartmentPage({
         Object.fromEntries(cleanSteps.map((step) => [step.id, step.current_note || ""]))
       );
 
+      const printedMap: Record<string, string> = {};
+      if (!printedRes.error) {
+        (printedRes.data || []).forEach((row: any) => {
+          if (row.printed_at) printedMap[String(row.boat_id)] = String(row.printed_at);
+        });
+      }
+
       const cleanTub: Tubolare[] = (tubRes.data || []).map((row: any) => ({
         id: String(row.id),
         boat_id: String(row.boat_id),
         tube_color: String(row.tube_color || ""),
         tube_done: Boolean(row.tube_done),
         tube_mount_done: Boolean(row.tube_mount_done),
+        printed_at: printedMap[String(row.boat_id)] || null,
       }));
 
       const tubMap = Object.fromEntries(cleanTub.map((t) => [t.boat_id, t]));
@@ -368,7 +381,12 @@ export default function ProductionDepartmentPage({
       let changed = false;
       for (const row of rows) {
         const id = row.boat.id;
-        next[id] = id in current ? current[id] : true;
+        // Un battello Tubolari gia' stampato parte deselezionato (cosi' non
+        // finisce per sbaglio nel prossimo PDF), ma resta comunque in
+        // tabella per poter spuntare Tubo/Montaggio a mano; l'operatore puo'
+        // comunque rispuntarlo se vuole ristamparlo apposta.
+        const defaultChecked = isTubolariDept ? !tubolariMap[id]?.printed_at : true;
+        next[id] = id in current ? current[id] : defaultChecked;
         if (next[id] !== current[id]) changed = true;
       }
       if (!changed && Object.keys(current).length === Object.keys(next).length) {
@@ -376,7 +394,7 @@ export default function ProductionDepartmentPage({
       }
       return next;
     });
-  }, [rows]);
+  }, [rows, isTubolariDept, tubolariMap]);
 
   // Numero progressivo: non e' piu' assegnato in automatico, si inserisce
   // a mano qui (o dalla pagina principale) solo quando serve per stampare
@@ -565,6 +583,42 @@ export default function ProductionDepartmentPage({
       });
 
       doc.save(filename);
+
+      // Tubolari: segna i battelli appena stampati (stessa logica della
+      // pagina principale) cosi' partono deselezionati nel prossimo giro.
+      // Se printed_at non esiste ancora su Supabase l'upsert fallisce da
+      // solo, senza intaccare il PDF gia' generato.
+      if (isTubolariDept) {
+        const now = new Date().toISOString();
+        const upsertRows = selectedRows.map((row) => ({
+          boat_id: row.boat.id,
+          tube_color: tubolariMap[row.boat.id]?.tube_color || "",
+          tube_done: tubolariMap[row.boat.id]?.tube_done || false,
+          tube_mount_done: tubolariMap[row.boat.id]?.tube_mount_done || false,
+          printed_at: now,
+        }));
+        const { error: markError } = await supabase
+          .from("production_tubolari")
+          .upsert(upsertRows, { onConflict: "boat_id" });
+
+        if (!markError) {
+          setTubolariMap((current) => {
+            const next = { ...current };
+            selectedRows.forEach((row) => {
+              const id = row.boat.id;
+              next[id] = {
+                id: current[id]?.id || "",
+                boat_id: id,
+                tube_color: current[id]?.tube_color || "",
+                tube_done: current[id]?.tube_done || false,
+                tube_mount_done: current[id]?.tube_mount_done || false,
+                printed_at: now,
+              };
+            });
+            return next;
+          });
+        }
+      }
     } catch (pdfError) {
       setErrorMessage(
         pdfError instanceof Error ? pdfError.message : "Impossibile creare il PDF. Riprova."

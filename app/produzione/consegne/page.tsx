@@ -395,23 +395,23 @@ export default function ProductionDeliveriesPage() {
     let y = startY;
 
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
+    doc.setFontSize(14);
     doc.text(
       `${formatItDate(delivery.trip_date)}${delivery.title ? " · " + delivery.title : ""}`,
       12,
       y
     );
-    y += 4;
+    y += 6;
 
     if (delivery.note) {
       doc.setFont("helvetica", "normal");
-      doc.setFontSize(7.5);
+      doc.setFontSize(10.5);
       const noteLines = doc.splitTextToSize(delivery.note, 186);
-      doc.text(noteLines, 12, y + 2);
-      y += noteLines.length * 3.2 + 2;
+      doc.text(noteLines, 12, y + 3);
+      y += noteLines.length * 4.6 + 3;
     }
 
-    y += 3;
+    y += 4;
 
     const columns = [
       { x: 12, title: "Prog.", w: 15 },
@@ -421,15 +421,15 @@ export default function ProductionDeliveriesPage() {
     ];
 
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(6.6);
+    doc.setFontSize(9.5);
     for (const col of columns) {
-      doc.rect(col.x, y - 4, col.w, 7);
-      doc.text(col.title, col.x + 1.2, y + 0.6);
+      doc.rect(col.x, y - 5.5, col.w, 10);
+      doc.text(col.title, col.x + 1.5, y + 1);
     }
-    y += 3;
+    y += 5;
 
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(6.6);
+    doc.setFontSize(9.5);
 
     for (const row of rows) {
       const boat = row.boat!;
@@ -440,9 +440,9 @@ export default function ProductionDeliveriesPage() {
         row.item.note || "",
       ];
 
-      const noteLines = doc.splitTextToSize(values[3], columns[3].w - 2);
-      const modelLines = doc.splitTextToSize(values[2], columns[2].w - 2);
-      const rowH = Math.max(7, noteLines.length * 3 + 3, modelLines.length * 3 + 3);
+      const noteLines = doc.splitTextToSize(values[3], columns[3].w - 3);
+      const modelLines = doc.splitTextToSize(values[2], columns[2].w - 3);
+      const rowH = Math.max(10, noteLines.length * 4.6 + 4.5, modelLines.length * 4.6 + 4.5);
 
       if (y + rowH > 280) {
         doc.addPage();
@@ -453,8 +453,8 @@ export default function ProductionDeliveriesPage() {
         const col = columns[index];
         doc.rect(col.x, y, col.w, rowH);
         const content =
-          index === 3 ? noteLines : index === 2 ? modelLines : doc.splitTextToSize(value, col.w - 2);
-        doc.text(content, col.x + 1.2, y + 3.6);
+          index === 3 ? noteLines : index === 2 ? modelLines : doc.splitTextToSize(value, col.w - 3);
+        doc.text(content, col.x + 1.5, y + 5.3);
       });
 
       y += rowH;

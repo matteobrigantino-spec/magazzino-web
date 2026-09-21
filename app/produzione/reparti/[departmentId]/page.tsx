@@ -76,11 +76,10 @@ export default function ProductionDepartmentPage({
   const [message, setMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
 
-  // Stampa PDF solo di un intervallo di battelli, scelto con il vero
-  // numero progressivo (quello nella colonna "Prog."), non con la
-  // posizione in tabella. Vuoti = stampa tutti i battelli del reparto.
-  const [pdfFromProg, setPdfFromProg] = useState("");
-  const [pdfToProg, setPdfToProg] = useState("");
+  // Stampa PDF: il battello va scelto uno per uno con la spunta, non
+  // con un intervallo di progressivi (mai contigui in pratica). Tutti
+  // selezionati di default, cosi' "tutti i battelli" resta a zero click.
+  const [pdfSelected, setPdfSelected] = useState<Record<string, boolean>>({});
 
   // Scheda Tubolari: colore + i due passaggi da spuntare. Caricata e
   // mostrata SOLO quando questo reparto e' "Tubolari" - gli altri reparti
@@ -339,6 +338,25 @@ export default function ProductionDepartmentPage({
       );
   }, [isTubolariDept, boats, steps, boatMap]);
 
+  // Nuovo battello arrivato in reparto -> selezionato di default. Un
+  // battello che sceglie di deselezionare resta deselezionato anche
+  // dopo un salvataggio/ricarica, finche' non lo tocca di nuovo lui.
+  useEffect(() => {
+    setPdfSelected((current) => {
+      const next: Record<string, boolean> = {};
+      let changed = false;
+      for (const row of rows) {
+        const id = row.boat.id;
+        next[id] = id in current ? current[id] : true;
+        if (next[id] !== current[id]) changed = true;
+      }
+      if (!changed && Object.keys(current).length === Object.keys(next).length) {
+        return current;
+      }
+      return next;
+    });
+  }, [rows]);
+
   // Numero progressivo: non e' piu' assegnato in automatico, si inserisce
   // a mano qui (o dalla pagina principale) solo quando serve per stampare
   // il programma di reparto in PDF.
@@ -506,18 +524,23 @@ export default function ProductionDepartmentPage({
       localStorage.getItem("magazzino_user") ||
       "Matteo";
 
+    const selectedRows = rows.filter((row) => pdfSelected[row.boat.id]);
+
+    if (selectedRows.length === 0) {
+      setErrorMessage("Seleziona almeno un battello prima di generare il PDF.");
+      return;
+    }
+
     try {
       const companyLogo = await fetchCompanyLogo();
 
       const { doc, filename } = buildDepartmentProgramPdf({
         departmentName: department.name,
         isTubolari: isTubolariDept,
-        rows,
+        rows: selectedRows,
         tubolariMap,
         companyLogo,
         operator,
-        fromProg: pdfFromProg,
-        toProg: pdfToProg,
       });
 
       doc.save(filename);
@@ -580,41 +603,35 @@ export default function ProductionDepartmentPage({
       <section className="pdep-pdf-panel">
         <strong>Stampa PDF reparto</strong>
         <p>
-          Lascia vuoto per stampare tutti i battelli, oppure scegli un
-          intervallo di numeri progressivi (quelli della colonna “Prog.”).
+          Spunta nella tabella qui sotto i battelli da mettere nel programma
+          (in qualsiasi combinazione, non serve che siano di fila) e genera
+          il PDF.
         </p>
         <div className="pdep-pdf-controls">
-          <label>
-            Da progressivo
-            <input
-              type="number"
-              min="1"
-              step="1"
-              placeholder="Es. 1900"
-              value={pdfFromProg}
-              onChange={(e) => setPdfFromProg(e.target.value)}
-            />
-          </label>
-          <label>
-            A progressivo
-            <input
-              type="number"
-              min="1"
-              step="1"
-              placeholder="Es. 1920"
-              value={pdfToProg}
-              onChange={(e) => setPdfToProg(e.target.value)}
-            />
-          </label>
+          <span className="pdep-pdf-count">
+            {rows.filter((row) => pdfSelected[row.boat.id]).length} di {rows.length} selezionati
+          </span>
           <button
             type="button"
             className="pdep-btn secondary"
-            onClick={() => {
-              setPdfFromProg("");
-              setPdfToProg("");
-            }}
+            onClick={() =>
+              setPdfSelected(
+                Object.fromEntries(rows.map((row) => [row.boat.id, true]))
+              )
+            }
           >
-            Tutti i battelli
+            Seleziona tutti
+          </button>
+          <button
+            type="button"
+            className="pdep-btn secondary"
+            onClick={() =>
+              setPdfSelected(
+                Object.fromEntries(rows.map((row) => [row.boat.id, false]))
+              )
+            }
+          >
+            Deseleziona tutti
           </button>
           <button type="button" className="pdep-btn primary" onClick={generatePdf}>
             Genera PDF reparto
@@ -634,6 +651,18 @@ export default function ProductionDepartmentPage({
           <table className="pdep-table">
             <thead>
               <tr>
+                <th className="pdep-pdf-check-col">
+                  <input
+                    type="checkbox"
+                    title="Seleziona/deseleziona tutti per il PDF"
+                    checked={rows.length > 0 && rows.every((row) => pdfSelected[row.boat.id])}
+                    onChange={(e) =>
+                      setPdfSelected(
+                        Object.fromEntries(rows.map((row) => [row.boat.id, e.target.checked]))
+                      )
+                    }
+                  />
+                </th>
                 <th>Prog.</th>
                 <th>N° ordine</th>
                 <th>Modello battello</th>
@@ -658,7 +687,7 @@ export default function ProductionDepartmentPage({
             <tbody>
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="pdep-empty">
+                  <td colSpan={10} className="pdep-empty">
                     {isTubolariDept
                       ? "Nessun ordine attivo in produzione."
                       : "Nessun battello attualmente in questo reparto."}
@@ -675,6 +704,18 @@ export default function ProductionDepartmentPage({
                       className="pdep-row"
                       onDoubleClick={() => router.push(`/produzione/${boat.id}`)}
                     >
+                      <td className="pdep-pdf-check-col" onDoubleClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={Boolean(pdfSelected[boat.id])}
+                          onChange={(e) =>
+                            setPdfSelected((current) => ({
+                              ...current,
+                              [boat.id]: e.target.checked,
+                            }))
+                          }
+                        />
+                      </td>
                       <td className="pdep-prog-cell" onDoubleClick={(e) => e.stopPropagation()}>
                         <input
                           type="number"
@@ -933,28 +974,28 @@ function Styles() {
         gap: 9px;
       }
 
-      .pdep-pdf-controls label {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-        color: #8095af;
-        font-size: 8px;
-        font-weight: 900;
-        text-transform: uppercase;
-        letter-spacing: .4px;
-      }
-
-      .pdep-pdf-controls input {
-        min-height: 36px;
-        width: 120px;
-        box-sizing: border-box;
-        padding: 0 9px;
+      .pdep-pdf-count {
+        margin-right: 4px;
+        padding: 8px 12px;
         border: 1px solid rgba(148,163,184,.20);
         border-radius: 8px;
-        outline: none;
-        background: #081524;
-        color: #fff;
+        background: rgba(59,130,246,.08);
+        color: #dbeafe;
         font-size: 11px;
+        font-weight: 850;
+        white-space: nowrap;
+      }
+
+      .pdep-pdf-check-col {
+        width: 32px;
+        text-align: center;
+      }
+
+      .pdep-pdf-check-col input[type="checkbox"] {
+        width: 15px;
+        height: 15px;
+        cursor: pointer;
+        accent-color: #2563eb;
       }
 
       .pdep-message,

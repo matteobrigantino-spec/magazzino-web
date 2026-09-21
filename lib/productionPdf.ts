@@ -517,81 +517,39 @@ export function buildDepartmentProgramPdf(params: {
   tubolariMap: Record<string, DeptPdfTubolare>;
   companyLogo: string;
   operator: string;
-  fromProg: string;
-  toProg: string;
 }): { doc: jsPDF; filename: string } {
-  const {
-    departmentName,
-    isTubolari,
-    rows,
-    tubolariMap,
-    companyLogo,
-    operator,
-    fromProg,
-    toProg,
-  } = params;
+  const { departmentName, isTubolari, rows, tubolariMap, companyLogo, operator } = params;
 
-  const sortedRows = [...rows].sort(
+  if (rows.length === 0) {
+    throw new Error("Seleziona almeno un battello prima di generare il PDF.");
+  }
+
+  const pdfRows = [...rows].sort(
     (a, b) => (a.boat.progressive_no ?? Infinity) - (b.boat.progressive_no ?? Infinity)
   );
 
-  const fromText = fromProg.trim();
-  const toText = toProg.trim();
-
-  const fromNumber = fromText ? Number(fromText) : null;
-  const toNumber = toText ? Number(toText) : null;
-
-  if (fromText && (!Number.isFinite(fromNumber) || Number(fromNumber) <= 0)) {
-    throw new Error('Il progressivo "Da" non è valido.');
-  }
-  if (toText && (!Number.isFinite(toNumber) || Number(toNumber) <= 0)) {
-    throw new Error('Il progressivo "A" non è valido.');
-  }
-  if (fromNumber !== null && toNumber !== null && fromNumber > toNumber) {
-    throw new Error('Il progressivo "Da" deve essere minore o uguale a "A".');
-  }
-
-  const pdfRows = sortedRows.filter((row) => {
-    const prog = row.boat.progressive_no;
-    if (fromNumber !== null || toNumber !== null) {
-      if (prog === null) return false;
-      if (fromNumber !== null && prog < fromNumber) return false;
-      if (toNumber !== null && prog > toNumber) return false;
-    }
-    return true;
+  const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+  doc.setProperties({
+    title: `Programma reparto ${departmentName}`,
+    subject: "Battelli selezionati",
   });
 
-  if (pdfRows.length === 0) {
-    throw new Error(
-      fromText || toText
-        ? "Nessun battello rientra nell'intervallo di progressivi indicato."
-        : "Non ci sono battelli da inserire nel programma."
-    );
-  }
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const margin = 14;
+  const tableWidth = pageWidth - margin * 2;
+  const headerY = 68;
+  const bodyStart = 80;
+  const bottom = 194;
+  const availableHeight = bottom - bodyStart;
 
-  const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
-  drawCompanyLogoTopRight(doc, companyLogo, { maxWidth: 34, maxHeight: 16 });
-
-  const today = new Intl.DateTimeFormat("it-IT").format(new Date());
-
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(8);
-  doc.text("OPERATORE", 9, 10);
-  doc.text((operator || "-").toUpperCase(), 54, 10);
-  doc.text("DATA PROGRAMMA", 9, 15);
-  doc.text(today, 54, 15);
-  doc.text("REPARTO", 9, 20);
-  doc.text(departmentName.toUpperCase(), 54, 20);
-
-  const marginX = 9;
   const widths = isTubolari
-    ? [16, 22, 40, 28, 32, 20, 30, 100]
-    : [17, 24, 42, 30, 42, 30, 44, 58];
+    ? [15, 22, 38, 27, 30, 22, 30, tableWidth - (15 + 22 + 38 + 27 + 30 + 22 + 30)]
+    : [15, 23, 40, 28, 40, 28, 40, tableWidth - (15 + 23 + 40 + 28 + 40 + 28 + 40)];
   const titles = isTubolari
-    ? ["Prog.", "N. ordine", "Modello battello", "Carena", "Colore tubolare", "Tubo", "Montaggio tubo", "Note"]
-    : ["Prog.", "N. ordine", "Modello battello", "Carena", "Ragno/Longheroni", "Coperta", "Accessori", "Note"];
+    ? ["Prog.", "N. ordine", "Modello battello", "Carena", "Colore tubolare", "Tubo", "Montaggio\ntubo", "Note"]
+    : ["Prog.", "N. ordine", "Modello battello", "Carena", "Ragno/\nLongheroni", "Coperta", "Accessori", "Note"];
 
-  let cx = marginX;
+  let cx = margin;
   const columns = widths.map((w, index) => {
     const col = { x: cx, title: titles[index], w };
     cx += w;
@@ -600,79 +558,215 @@ export function buildDepartmentProgramPdf(params: {
 
   const modelColIndex = 2;
   const noteColIndex = columns.length - 1;
+  const checkColIndexes = isTubolari ? new Set([5, 6]) : new Set<number>();
 
-  let y = 29;
-
-  doc.setFontSize(6.4);
-  doc.setFont("helvetica", "bold");
-
-  for (const col of columns) {
-    doc.rect(col.x, y - 4, col.w, 8);
-    doc.text(col.title, col.x + 1.2, y + 1);
-  }
-
-  y += 4;
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(6.2);
-
-  for (const row of pdfRows) {
+  function rowValues(row: DeptPdfRow) {
     const boat = row.boat;
     const tub = tubolariMap[boat.id];
     const noteText = row.step?.current_note || boat.note || "";
-
-    const values = isTubolari
+    return isTubolari
       ? [
           boat.progressive_no !== null ? String(boat.progressive_no) : "-",
           boat.order_number,
           boat.model_boat,
-          boat.hull,
+          boat.hull || "-",
           tub?.tube_color || "-",
-          tub?.tube_done ? "Fatto" : "-",
-          tub?.tube_mount_done ? "Fatto" : "-",
+          tub?.tube_done ? "1" : "0",
+          tub?.tube_mount_done ? "1" : "0",
           noteText,
         ]
       : [
           boat.progressive_no !== null ? String(boat.progressive_no) : "-",
           boat.order_number,
           boat.model_boat,
-          boat.hull,
-          boat.stringers,
-          boat.deck,
-          boat.accessories,
+          boat.hull || "-",
+          boat.stringers || "-",
+          boat.deck || "-",
+          boat.accessories || "-",
           noteText,
         ];
+  }
 
-    const noteLines = doc.splitTextToSize(String(values[noteColIndex] ?? ""), columns[noteColIndex].w - 2);
-    const modelLines = doc.splitTextToSize(String(values[modelColIndex] ?? ""), columns[modelColIndex].w - 2);
-    const rowH = Math.max(8, noteLines.length * 3 + 3, modelLines.length * 3 + 3);
+  const image = doc.getImageProperties(companyLogo);
+  const logoMaxWidth = 52;
+  const logoMaxHeight = 18;
+  const logoScale = Math.min(logoMaxWidth / image.width, logoMaxHeight / image.height);
+  const logoWidth = image.width * logoScale;
+  const logoHeight = image.height * logoScale;
 
-    if (y + rowH > 198) {
-      doc.addPage();
-      y = 12;
+  function measureTotalHeight(scale: number) {
+    const pad = BASE_PADDING * scale;
+    const lh = BASE_LINE_HEIGHT * scale;
+    const checkboxFloor = BASE_CHECKBOX_SIZE * scale + 2 * scale;
+    doc.setFontSize(BASE_FONT_SIZE * scale);
+    let total = 0;
+    pdfRows.forEach((row) => {
+      const values = rowValues(row);
+      let maxLines = 1;
+      values.forEach((value, index) => {
+        if (checkColIndexes.has(index)) return;
+        doc.setFont("helvetica", index === 1 ? "bold" : "normal");
+        const text = String(value ?? "").trim().replace(/\r\n?/g, "\n");
+        const cellLines = doc.splitTextToSize(text || "-", widths[index] - pad * 2);
+        maxLines = Math.max(maxLines, cellLines.length);
+      });
+      total += Math.max(checkboxFloor, maxLines * lh + pad * 2);
+    });
+    return total;
+  }
+
+  let scale: number;
+  if (measureTotalHeight(MAX_SCALE) <= availableHeight) {
+    scale = MAX_SCALE;
+  } else if (measureTotalHeight(MIN_SCALE) > availableHeight) {
+    scale = MIN_SCALE;
+  } else {
+    let lo = MIN_SCALE;
+    let hi = MAX_SCALE;
+    for (let i = 0; i < 18; i++) {
+      const mid = (lo + hi) / 2;
+      if (measureTotalHeight(mid) <= availableHeight) lo = mid; else hi = mid;
     }
+    scale = lo;
+  }
 
-    values.forEach((value, index) => {
-      const col = columns[index];
-      doc.rect(col.x, y, col.w, rowH);
-      const content =
-        index === noteColIndex
-          ? noteLines
-          : index === modelColIndex
-            ? modelLines
-            : doc.splitTextToSize(String(value ?? ""), col.w - 2);
-      doc.text(content, col.x + 1.2, y + 4);
+  const fontSize = BASE_FONT_SIZE * scale;
+  const lineHeight = BASE_LINE_HEIGHT * scale;
+  const padding = BASE_PADDING * scale;
+  const checkboxSize = Math.min(BASE_CHECKBOX_SIZE * scale * 1.3, 6.5);
+  const minRowHeight = Math.max(checkboxSize + 2 * scale, 6);
+  const baselineOffset = 3.2 * scale;
+
+  const today = new Intl.DateTimeFormat("it-IT").format(new Date());
+
+  function header() {
+    const logoX = (pageWidth - logoWidth) / 2;
+    const logoY = 8;
+    doc.addImage(companyLogo, "PNG", logoX, logoY, logoWidth, logoHeight, "dept-logo");
+
+    let cursorY = logoY + logoHeight + 7;
+    doc.setTextColor(140, 150, 163);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8);
+    doc.text("PROGRAMMA REPARTO", pageWidth / 2, cursorY, { align: "center" });
+
+    cursorY += 6.5;
+    doc.setTextColor(24, 39, 59);
+    doc.setFontSize(15);
+    doc.text(departmentName.toUpperCase(), pageWidth / 2, cursorY, { align: "center" });
+
+    cursorY = logoY + logoHeight + 7;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.5);
+    doc.setTextColor(90, 102, 118);
+    doc.text(`Operatore: ${operator || "-"}`, margin, cursorY);
+    cursorY += 4.3;
+    doc.text(`Data programma: ${today}`, margin, cursorY);
+    cursorY += 4.3;
+    doc.text(`Battelli in stampa: ${pdfRows.length}`, margin, cursorY);
+
+    doc.setFillColor(244, 246, 248);
+    doc.rect(margin, headerY, tableWidth, bodyStart - headerY, "F");
+    doc.setFontSize(7.6);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(65, 77, 93);
+    columns.forEach((col) => {
+      const labels = col.title.split("\n");
+      const firstBaseline = headerY + (labels.length === 1 ? 7.2 : 5.4);
+      labels.forEach((line, lineIndex) =>
+        doc.text(line, col.x + padding, firstBaseline + lineIndex * 3.4)
+      );
     });
 
+    doc.setDrawColor(160, 169, 182);
+    doc.setLineWidth(0.3);
+    let gridX = margin;
+    widths.forEach((w, index) => {
+      gridX += w;
+      if (index < widths.length - 1) doc.line(gridX, headerY, gridX, bottom);
+    });
+    doc.setDrawColor(130, 140, 155);
+    doc.rect(margin, headerY, tableWidth, bottom - headerY);
+    doc.setLineWidth(0.2);
+  }
+
+  function drawCheckbox(x: number, y: number, size: number, checked: boolean) {
+    doc.setDrawColor(90, 100, 115);
+    doc.setLineWidth(0.35);
+    if (checked) {
+      doc.setFillColor(219, 234, 254);
+      doc.roundedRect(x, y, size, size, 0.8, 0.8, "FD");
+      doc.setDrawColor(37, 99, 235);
+      doc.setLineWidth(0.6);
+      doc.line(x + size * 0.2, y + size * 0.55, x + size * 0.42, y + size * 0.78);
+      doc.line(x + size * 0.42, y + size * 0.78, x + size * 0.82, y + size * 0.22);
+    } else {
+      doc.roundedRect(x, y, size, size, 0.8, 0.8);
+    }
+    doc.setLineWidth(0.2);
+  }
+
+  header();
+  let y = bodyStart;
+
+  pdfRows.forEach((row, rowIndex) => {
+    const values = rowValues(row);
+    doc.setFontSize(fontSize);
+    const lines: string[][] = values.map((value, index) => {
+      if (checkColIndexes.has(index)) return [];
+      doc.setFont("helvetica", index === 1 ? "bold" : "normal");
+      const text = String(value ?? "").trim().replace(/\r\n?/g, "\n");
+      return doc.splitTextToSize(text || "-", widths[index] - padding * 2);
+    });
+    const maxLines = Math.max(1, ...lines.map((cell) => cell.length));
+    const rowH = Math.max(minRowHeight, maxLines * lineHeight + padding * 2);
+
+    if (y + rowH > bottom) {
+      doc.addPage();
+      header();
+      y = bodyStart;
+    }
+
+    if (rowIndex % 2 === 1) {
+      doc.setFillColor(248, 249, 251);
+      doc.rect(margin, y, tableWidth, rowH, "F");
+    }
+
+    doc.setTextColor(36, 44, 55);
+    doc.setFontSize(fontSize);
+    columns.forEach((col, index) => {
+      if (checkColIndexes.has(index)) {
+        const checked = values[index] === "1";
+        const boxY = y + (rowH - checkboxSize) / 2;
+        const boxX = col.x + (col.w - checkboxSize) / 2;
+        drawCheckbox(boxX, boxY, checkboxSize, checked);
+        return;
+      }
+      doc.setFont("helvetica", index === 1 ? "bold" : "normal");
+      lines[index].forEach((line, lineIndex) =>
+        doc.text(line, col.x + padding, y + padding + baselineOffset + lineIndex * lineHeight)
+      );
+    });
+
+    doc.setDrawColor(160, 169, 182);
+    doc.setLineWidth(0.25);
+    doc.line(margin, y + rowH, margin + tableWidth, y + rowH);
+    doc.setLineWidth(0.2);
+
     y += rowH;
+  });
+
+  const total = doc.getNumberOfPages();
+  for (let page = 1; total > 1 && page <= total; page++) {
+    doc.setPage(page);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(110, 120, 133);
+    doc.text(`Pagina ${page} di ${total}`, pageWidth - margin, 201, { align: "right" });
   }
 
   const safeName = departmentName.replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
-  const rangeSuffix =
-    fromNumber !== null || toNumber !== null
-      ? `_prog_${fromNumber ?? "inizio"}-${toNumber ?? "fine"}`
-      : "";
-
-  const filename = `Produzione_${safeName}${rangeSuffix}_${today.replace(/\//g, "-")}.pdf`;
+  const filename = `Produzione_${safeName}_${pdfRows.length}battelli_${today.replace(/\//g, "-")}.pdf`;
 
   return { doc, filename };
 }

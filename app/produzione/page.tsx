@@ -108,10 +108,11 @@ export default function ProductionPage() {
   const [upholsteryPdfError, setUpholsteryPdfError] = useState("");
 
   // Pannello "stampa programma reparto": stessa logica gia' usata dentro
-  // Verniciatura/Tubolari, richiamabile pero' direttamente da qui.
+  // Verniciatura/Tubolari, richiamabile pero' direttamente da qui. Il
+  // battello per il PDF si spunta uno per uno (mai un intervallo di
+  // progressivi: in pratica servono sempre numeri sparsi tipo 30/35/38).
   const [printPanel, setPrintPanel] = useState<"verniciatura" | "tubolari" | null>(null);
-  const [printFromProg, setPrintFromProg] = useState("");
-  const [printToProg, setPrintToProg] = useState("");
+  const [printSelected, setPrintSelected] = useState<Record<string, boolean>>({});
   const [printBusy, setPrintBusy] = useState(false);
   const [printError, setPrintError] = useState("");
 
@@ -548,10 +549,41 @@ export default function ProductionPage() {
     [departments]
   );
 
+  // Battelli selezionabili per il pannello di stampa aperto (Tubolari o
+  // Verniciatura). Stessa logica di filtro gia' usata per costruire il
+  // PDF, ma calcolata qui cosi' la lista si puo' spuntare a mano.
+  const printCandidateRows = useMemo(() => {
+    if (!printPanel) return [];
+    const dept = printPanel === "tubolari" ? tubolariDept : verniciaturaDept;
+    if (!dept) return [];
+
+    if (printPanel === "tubolari") {
+      return activeBoats.map((boat) => ({
+        boat,
+        step: steps.find((s) => s.boat_id === boat.id && s.department_id === dept.id) || null,
+      }));
+    }
+
+    return steps
+      .filter((s) => s.department_id === dept.id && s.status !== "completed")
+      .map((s) => {
+        const boat = boats.find((b) => b.id === s.boat_id);
+        return boat ? { boat, step: s } : null;
+      })
+      .filter((row): row is { boat: Boat; step: Step } => Boolean(row));
+  }, [printPanel, tubolariDept, verniciaturaDept, activeBoats, steps, boats]);
+
+  // Ogni apertura del pannello riparte con tutti spuntati (cosi' "tutti i
+  // battelli" resta a zero click), poi l'utente toglie la spunta a chi
+  // non gli serve.
+  useEffect(() => {
+    setPrintSelected(
+      Object.fromEntries(printCandidateRows.map((row) => [row.boat.id, true]))
+    );
+  }, [printCandidateRows]);
+
   function openPrintPanel(kind: "verniciatura" | "tubolari") {
     setPrintError("");
-    setPrintFromProg("");
-    setPrintToProg("");
     setPrintPanel((current) => (current === kind ? null : kind));
   }
 
@@ -566,6 +598,13 @@ export default function ProductionPage() {
       setPrintError(
         `Reparto ${printPanel === "tubolari" ? "Tubolari" : "Verniciatura"} non trovato. Crealo da "Gestisci reparti".`
       );
+      return;
+    }
+
+    const rows = printCandidateRows.filter((row) => printSelected[row.boat.id]);
+
+    if (rows.length === 0) {
+      setPrintError("Seleziona almeno un battello prima di generare il PDF.");
       return;
     }
 
@@ -595,31 +634,6 @@ export default function ProductionPage() {
         );
       }
 
-      const rows = isTub
-        ? activeBoats.map((boat) => {
-            const step = steps.find(
-              (s) => s.boat_id === boat.id && s.department_id === dept.id
-            );
-            return {
-              boat,
-              step: step ? { current_note: step.current_note } : null,
-            };
-          })
-        : steps
-            .filter(
-              (s) => s.department_id === dept.id && s.status !== "completed"
-            )
-            .map((s) => {
-              const boat = boats.find((b) => b.id === s.boat_id);
-              return boat
-                ? { boat, step: { current_note: s.current_note } }
-                : null;
-            })
-            .filter(
-              (row): row is { boat: Boat; step: { current_note: string | null } } =>
-                Boolean(row)
-            );
-
       const companyLogo = await fetchCompanyLogo();
       const operator =
         localStorage.getItem("magazzino_display_name") ||
@@ -635,8 +649,6 @@ export default function ProductionPage() {
         tubolariMap: tubMap,
         companyLogo,
         operator,
-        fromProg: printFromProg,
-        toProg: printToProg,
       });
 
       await doc.save(filename, { returnPromise: true });
@@ -1279,32 +1291,65 @@ export default function ProductionPage() {
               Programma {printPanel === "tubolari" ? "Tubolari" : "Verniciatura"}
             </strong>
             <p>
-              Lascia vuoto per stampare tutti i battelli, oppure scegli un
-              intervallo di numeri progressivi (colonna “Prog.”).
+              Spunta i battelli da mettere nel PDF (in qualsiasi combinazione,
+              non serve che siano di fila).
             </p>
+
+            {printCandidateRows.length === 0 ? (
+              <p className="prod-print-empty">
+                Nessun battello disponibile per questo reparto.
+              </p>
+            ) : (
+              <div className="prod-print-boatlist">
+                {printCandidateRows.map((row) => (
+                  <label key={row.boat.id} className="prod-print-boat-row">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(printSelected[row.boat.id])}
+                      onChange={(e) =>
+                        setPrintSelected((current) => ({
+                          ...current,
+                          [row.boat.id]: e.target.checked,
+                        }))
+                      }
+                    />
+                    <span className="prod-print-boat-prog">
+                      {row.boat.progressive_no ?? "—"}
+                    </span>
+                    <span className="prod-print-boat-order">{row.boat.order_number}</span>
+                    <span className="prod-print-boat-model">{row.boat.model_boat}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+
             <div className="prod-print-panel-controls">
-              <label>
-                Da progressivo
-                <input
-                  type="number"
-                  min="1"
-                  step="1"
-                  placeholder="Es. 1900"
-                  value={printFromProg}
-                  onChange={(e) => setPrintFromProg(e.target.value)}
-                />
-              </label>
-              <label>
-                A progressivo
-                <input
-                  type="number"
-                  min="1"
-                  step="1"
-                  placeholder="Es. 1920"
-                  value={printToProg}
-                  onChange={(e) => setPrintToProg(e.target.value)}
-                />
-              </label>
+              <span className="prod-print-count">
+                {printCandidateRows.filter((row) => printSelected[row.boat.id]).length} di{" "}
+                {printCandidateRows.length} selezionati
+              </span>
+              <button
+                type="button"
+                className="prod-btn secondary"
+                onClick={() =>
+                  setPrintSelected(
+                    Object.fromEntries(printCandidateRows.map((row) => [row.boat.id, true]))
+                  )
+                }
+              >
+                Seleziona tutti
+              </button>
+              <button
+                type="button"
+                className="prod-btn secondary"
+                onClick={() =>
+                  setPrintSelected(
+                    Object.fromEntries(printCandidateRows.map((row) => [row.boat.id, false]))
+                  )
+                }
+              >
+                Deseleziona tutti
+              </button>
               <button
                 type="button"
                 className="prod-btn secondary"
@@ -1526,32 +1571,79 @@ function Styles() {
         gap: 10px;
       }
 
-      .prod-print-panel-controls label {
-        display: flex;
-        flex-direction: column;
-        gap: 5px;
-        color: #8ea2ba;
-        font-size: 8px;
-        font-weight: 900;
-        text-transform: uppercase;
-        letter-spacing: .6px;
+      .prod-print-count {
+        margin-right: 4px;
+        padding: 8px 12px;
+        border: 1px solid rgba(148,163,184,.20);
+        border-radius: 8px;
+        background: rgba(51,224,234,.08);
+        color: #dbeafe;
+        font-size: 11px;
+        font-weight: 850;
+        white-space: nowrap;
       }
 
-      .prod-print-panel-controls input {
-        width: 118px;
-        min-height: 36px;
-        box-sizing: border-box;
-        padding: 0 10px;
-        border: 1px solid rgba(148,163,184,.22);
-        border-radius: 8px;
-        outline: none;
-        background: #081524;
-        color: #fff;
+      .prod-print-empty {
+        margin: 12px 0 0;
+        color: #8ea2ba;
         font-size: 11px;
       }
 
-      .prod-print-panel-controls input:focus {
-        border-color: rgba(51,224,234,.55);
+      .prod-print-boatlist {
+        margin-top: 12px;
+        max-height: 240px;
+        overflow-y: auto;
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+        gap: 4px;
+        padding: 10px;
+        border: 1px solid rgba(148,163,184,.16);
+        border-radius: 10px;
+        background: rgba(4,20,32,.4);
+      }
+
+      .prod-print-boat-row {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        padding: 6px 8px;
+        border-radius: 7px;
+        cursor: pointer;
+        font-size: 11px;
+      }
+
+      .prod-print-boat-row:hover {
+        background: rgba(51,224,234,.08);
+      }
+
+      .prod-print-boat-row input[type="checkbox"] {
+        width: 14px;
+        height: 14px;
+        flex-shrink: 0;
+        cursor: pointer;
+        accent-color: #33e0ea;
+      }
+
+      .prod-print-boat-prog {
+        flex-shrink: 0;
+        min-width: 24px;
+        font-family: var(--font-geist-mono), ui-monospace, monospace;
+        color: #7cf2c4;
+        font-weight: 800;
+      }
+
+      .prod-print-boat-order {
+        flex-shrink: 0;
+        color: #dbeafe;
+        font-weight: 750;
+      }
+
+      .prod-print-boat-model {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: #8ea2ba;
       }
 
       .prod-prog-cell {

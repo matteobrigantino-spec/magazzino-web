@@ -1437,16 +1437,31 @@ export default function ProductionPage() {
 
             {printCandidateRows.length === 0 ? (
               <p className="prod-print-empty">
-                {(printPanel === "tubolari"
-                  ? activeBoats.some((boat) => tubolariPrinted[boat.id])
-                  : steps.some(
-                      (s) =>
-                        s.department_id === verniciaturaDept?.id &&
-                        s.status !== "completed" &&
-                        stepsPrinted[s.id]
-                    ))
-                  ? "Tutti i battelli sono gia' stati stampati."
-                  : "Nessun battello disponibile per questo reparto."}
+                {(() => {
+                  if (printPanel === "tubolari") {
+                    return activeBoats.some((boat) => tubolariPrinted[boat.id])
+                      ? "Tutti i battelli sono gia' stati stampati."
+                      : "Nessun battello disponibile per questo reparto.";
+                  }
+                  // Verniciatura (o altro reparto col pannello rapido): qui
+                  // serve capire SE il motivo e' "tutti gia' stampati" o
+                  // "non c'e' proprio nessun passaggio aperto in reparto" -
+                  // sono due situazioni diverse e senza distinguerle sembra
+                  // sempre un bug anche quando e' normale.
+                  if (!verniciaturaDept) {
+                    return 'Reparto "Verniciatura" non trovato tra i reparti configurati.';
+                  }
+                  const deptSteps = steps.filter(
+                    (s) => s.department_id === verniciaturaDept.id
+                  );
+                  const openSteps = deptSteps.filter((s) => s.status !== "completed");
+                  if (openSteps.length === 0) {
+                    return deptSteps.length === 0
+                      ? "Nessun battello e' mai passato da questo reparto finora."
+                      : "Nessun battello attualmente in questo reparto: tutti i passaggi aperti sono stati completati.";
+                  }
+                  return "Tutti i battelli sono gia' stati stampati.";
+                })()}
               </p>
             ) : (
               <div className="prod-print-boatlist">

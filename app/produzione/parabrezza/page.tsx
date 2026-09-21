@@ -250,10 +250,27 @@ export default function ParabrezzaPage() {
     [modelOptions, mappedModels]
   );
 
+  // Il fornitore dei parabrezza e' solo Paris Plast: i selettori di
+  // articolo mostrano solo il suo catalogo, non tutto il magazzino.
+  const parisPlastSupplierId = useMemo(
+    () =>
+      suppliers.find((supplier) => supplier.name.toUpperCase().includes("PARIS PLAST"))?.id ||
+      "",
+    [suppliers]
+  );
+
+  const parisPlastItems = useMemo(
+    () =>
+      parisPlastSupplierId
+        ? items.filter((item) => item.supplier_id === parisPlastSupplierId)
+        : items,
+    [items, parisPlastSupplierId]
+  );
+
   const filteredItemsForKit = useMemo(() => {
     const term = kitFilter.trim().toLowerCase();
-    if (!term) return items;
-    return items.filter((item) => {
+    if (!term) return parisPlastItems;
+    return parisPlastItems.filter((item) => {
       const supplierName = (supplierMap.get(item.supplier_id) || "").toLowerCase();
       return (
         item.description.toLowerCase().includes(term) ||
@@ -262,7 +279,7 @@ export default function ParabrezzaPage() {
         supplierName.includes(term)
       );
     });
-  }, [items, kitFilter, supplierMap]);
+  }, [parisPlastItems, kitFilter, supplierMap]);
 
   async function addMapping() {
     setMessage("");
@@ -526,7 +543,7 @@ export default function ParabrezzaPage() {
                   value={row.item_id}
                   onChange={(e) => updateMappingItem(row.id, e.target.value)}
                 >
-                  {items.map((item) => (
+                  {parisPlastItems.map((item) => (
                     <option key={item.id} value={item.id}>
                       {itemLabel(item.id)}
                     </option>
@@ -551,7 +568,7 @@ export default function ParabrezzaPage() {
           </select>
           <select value={newMappingItemId} onChange={(e) => setNewMappingItemId(e.target.value)}>
             <option value="">Articolo parabrezza...</option>
-            {items.map((item) => (
+            {parisPlastItems.map((item) => (
               <option key={item.id} value={item.id}>
                 {itemLabel(item.id)}
               </option>

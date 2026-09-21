@@ -56,6 +56,15 @@ function todayInputValue() {
   return `${year}-${month}-${day}`;
 }
 
+function monthLabel(month: string) {
+  const [y, m] = month.split("-").map((v) => Number(v));
+  if (!y || !m) return month;
+  const label = new Intl.DateTimeFormat("it-IT", { month: "long", year: "numeric" }).format(
+    new Date(y, m - 1, 1)
+  );
+  return label;
+}
+
 export default function ProductionDeliveriesPage() {
   const [month, setMonth] = useState(() => todayInputValue().slice(0, 7));
   const [boats, setBoats] = useState<Boat[]>([]);
@@ -65,6 +74,9 @@ export default function ProductionDeliveriesPage() {
   const [savingId, setSavingId] = useState("");
   const [message, setMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+
+  const [extraMonths, setExtraMonths] = useState<string[]>([]);
+  const [newExtraMonth, setNewExtraMonth] = useState("");
 
   const [showNew, setShowNew] = useState(false);
   const [formDate, setFormDate] = useState(todayInputValue());
@@ -176,6 +188,25 @@ export default function ProductionDeliveriesPage() {
     [boats, draftItems]
   );
 
+  const selectedMonths = useMemo(() => {
+    const set = new Set<string>([month, ...extraMonths]);
+    return Array.from(set).sort();
+  }, [month, extraMonths]);
+
+  function addExtraMonth() {
+    if (!newExtraMonth) return;
+    if (newExtraMonth === month || extraMonths.includes(newExtraMonth)) {
+      setNewExtraMonth("");
+      return;
+    }
+    setExtraMonths((current) => [...current, newExtraMonth]);
+    setNewExtraMonth("");
+  }
+
+  function removeExtraMonth(value: string) {
+    setExtraMonths((current) => current.filter((m) => m !== value));
+  }
+
   function addDraftItem() {
     if (!pickerBoatId) return;
     setDraftItems((current) => [...current, { boatId: pickerBoatId, note: pickerNote.trim() }]);
@@ -283,14 +314,84 @@ export default function ProductionDeliveriesPage() {
     await loadData();
   }
 
-  function tripRows(delivery: Delivery) {
-    return (itemsByDelivery[delivery.id] || [])
+  function tripRowsFrom(items: Record<string, DeliveryItem[]>, delivery: Delivery) {
+    return (items[delivery.id] || [])
       .map((item) => ({ item, boat: boatMap.get(item.boat_id) }))
       .filter((row) => row.boat);
   }
 
-  function drawTripTable(doc: jsPDF, delivery: Delivery, startY: number): number {
-    const rows = tripRows(delivery);
+  function tripRows(delivery: Delivery) {
+    return tripRowsFrom(itemsByDelivery, delivery);
+  }
+
+  async function fetchDeliveriesForMonths(
+    months: string[]
+  ): Promise<{ deliveries: Delivery[]; itemsByDelivery: Record<string, DeliveryItem[]> }> {
+    if (months.length === 0) return { deliveries: [], itemsByDelivery: {} };
+
+    const bounds = months.map((m) => monthBounds(m));
+    const globalStart = bounds.reduce((a, b) => (a < b.start ? a : b.start), bounds[0].start);
+    const globalEnd = bounds.reduce((a, b) => (a > b.end ? a : b.end), bounds[0].end);
+    const monthSet = new Set(months);
+
+    const delRes = await supabase
+      .from("production_deliveries")
+      .select("id,trip_date,title,note")
+      .gte("trip_date", globalStart)
+      .lte("trip_date", globalEnd)
+      .order("trip_date", { ascending: true });
+
+    if (delRes.error) {
+      throw new Error(delRes.error.message);
+    }
+
+    const filtered: Delivery[] = (delRes.data || [])
+      .map((row: any) => ({
+        id: String(row.id),
+        trip_date: String(row.trip_date || ""),
+        title: String(row.title || ""),
+        note: row.note ? String(row.note) : null,
+      }))
+      .filter((d) => monthSet.has(d.trip_date.slice(0, 7)));
+
+    const deliveryIds = filtered.map((d) => d.id);
+    if (deliveryIds.length === 0) {
+      return { deliveries: filtered, itemsByDelivery: {} };
+    }
+
+    const itemRes = await supabase
+      .from("production_delivery_items")
+      .select("id,delivery_id,boat_id,note,sort_order")
+      .in("delivery_id", deliveryIds)
+      .order("sort_order", { ascending: true });
+
+    if (itemRes.error) {
+      throw new Error(itemRes.error.message);
+    }
+
+    const grouped: Record<string, DeliveryItem[]> = {};
+    for (const row of itemRes.data || []) {
+      const item: DeliveryItem = {
+        id: String((row as any).id),
+        delivery_id: String((row as any).delivery_id),
+        boat_id: String((row as any).boat_id),
+        note: (row as any).note ? String((row as any).note) : null,
+        sort_order: Number((row as any).sort_order || 0),
+      };
+      if (!grouped[item.delivery_id]) grouped[item.delivery_id] = [];
+      grouped[item.delivery_id].push(item);
+    }
+
+    return { deliveries: filtered, itemsByDelivery: grouped };
+  }
+
+  function drawTripTable(
+    doc: jsPDF,
+    delivery: Delivery,
+    startY: number,
+    items: Record<string, DeliveryItem[]>
+  ): number {
+    const rows = tripRowsFrom(items, delivery);
     let y = startY;
 
     doc.setFont("helvetica", "bold");
@@ -376,7 +477,7 @@ export default function ProductionDeliveriesPage() {
     doc.setFontSize(13);
     doc.text("PROGRAMMA DI CONSEGNA", 12, 16);
 
-    drawTripTable(doc, delivery, 26);
+    drawTripTable(doc, delivery, 26, itemsByDelivery);
 
     const safeDate = delivery.trip_date.replace(/-/g, "");
     const safeTitle = delivery.title.replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
@@ -384,8 +485,25 @@ export default function ProductionDeliveriesPage() {
   }
 
   async function generateMonthPdf() {
-    if (deliveries.length === 0) {
-      setErrorMessage("Non ci sono viaggi da stampare in questo mese.");
+    setErrorMessage("");
+    setMessage("");
+
+    const months = selectedMonths;
+
+    let combined: { deliveries: Delivery[]; itemsByDelivery: Record<string, DeliveryItem[]> };
+    try {
+      combined = await fetchDeliveriesForMonths(months);
+    } catch (err: any) {
+      setErrorMessage("Errore caricamento viaggi: " + (err?.message || ""));
+      return;
+    }
+
+    if (combined.deliveries.length === 0) {
+      setErrorMessage(
+        months.length > 1
+          ? "Non ci sono viaggi da stampare nei mesi selezionati."
+          : "Non ci sono viaggi da stampare in questo mese."
+      );
       return;
     }
 
@@ -395,23 +513,20 @@ export default function ProductionDeliveriesPage() {
     doc.setFont("helvetica", "bold");
     doc.setFontSize(13);
 
-    const [y, m] = month.split("-");
-    const monthLabel = new Intl.DateTimeFormat("it-IT", { month: "long", year: "numeric" }).format(
-      new Date(Number(y), Number(m) - 1, 1)
-    );
+    const titleLabel = months.map((m) => monthLabel(m)).join(" + ").toUpperCase();
 
-    doc.text(`PROGRAMMA CONSEGNE - ${monthLabel.toUpperCase()}`, 12, 16);
+    doc.text(`PROGRAMMA CONSEGNE - ${titleLabel}`, 12, 16);
 
     let y2 = 26;
-    for (const delivery of deliveries) {
+    for (const delivery of combined.deliveries) {
       if (y2 > 250) {
         doc.addPage();
         y2 = 16;
       }
-      y2 = drawTripTable(doc, delivery, y2);
+      y2 = drawTripTable(doc, delivery, y2, combined.itemsByDelivery);
     }
 
-    doc.save(`Programma_Consegne_${month}.pdf`);
+    doc.save(`Programma_Consegne_${months.join("_")}.pdf`);
   }
 
   return (
@@ -431,7 +546,7 @@ export default function ProductionDeliveriesPage() {
             ← Produzione
           </Link>
           <button type="button" className="pcg-btn secondary" onClick={generateMonthPdf}>
-            Genera PDF mese
+            {selectedMonths.length > 1 ? "Genera PDF mesi selezionati" : "Genera PDF mese"}
           </button>
           <button
             type="button"
@@ -454,6 +569,37 @@ export default function ProductionDeliveriesPage() {
           <span>Mese</span>
           <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
         </label>
+
+        <div className="pcg-extra-months">
+          <span>Aggiungi altri mesi al PDF (facoltativo)</span>
+          <div className="pcg-extra-months-row">
+            <input
+              type="month"
+              value={newExtraMonth}
+              onChange={(e) => setNewExtraMonth(e.target.value)}
+            />
+            <button type="button" onClick={addExtraMonth} disabled={!newExtraMonth}>
+              + Aggiungi mese
+            </button>
+          </div>
+          {extraMonths.length > 0 && (
+            <div className="pcg-extra-months-chips">
+              {extraMonths.map((m) => (
+                <span className="pcg-chip" key={m}>
+                  {monthLabel(m)}
+                  <button type="button" onClick={() => removeExtraMonth(m)}>
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          {selectedMonths.length > 1 && (
+            <p className="pcg-extra-months-hint">
+              Il PDF includerà: {selectedMonths.map((m) => monthLabel(m)).join(", ")}.
+            </p>
+          )}
+        </div>
       </section>
 
       {showNew && (
@@ -633,6 +779,16 @@ function Styles() {
       .pcg-month-field { display:flex; align-items:center; gap:10px; }
       .pcg-month-field span { color:#8ea2ba; font-size:8px; font-weight:900; text-transform:uppercase; letter-spacing:.6px; }
       .pcg-month-field input { min-height:38px; padding:0 10px; border:1px solid rgba(148,163,184,.19); border-radius:8px; outline:none; background:#081524; color:#fff; font-size:11px; }
+      .pcg-extra-months { margin-top:14px; padding-top:14px; border-top:1px solid rgba(148,163,184,.12); }
+      .pcg-extra-months > span { display:block; margin-bottom:8px; color:#8ea2ba; font-size:8px; font-weight:900; text-transform:uppercase; letter-spacing:.6px; }
+      .pcg-extra-months-row { display:flex; gap:8px; }
+      .pcg-extra-months-row input { min-height:38px; padding:0 10px; border:1px solid rgba(148,163,184,.19); border-radius:8px; outline:none; background:#081524; color:#fff; font-size:11px; }
+      .pcg-extra-months-row button { min-height:38px; padding:0 12px; border:1px solid rgba(96,165,250,.32); border-radius:8px; background:rgba(59,130,246,.14); color:#bfdbfe; cursor:pointer; font-size:9px; font-weight:900; white-space:nowrap; }
+      .pcg-extra-months-row button:disabled { opacity:.5; cursor:default; }
+      .pcg-extra-months-chips { margin-top:10px; display:flex; flex-wrap:wrap; gap:7px; }
+      .pcg-chip { display:inline-flex; align-items:center; gap:6px; padding:5px 6px 5px 10px; border:1px solid rgba(96,165,250,.25); border-radius:999px; background:rgba(59,130,246,.08); color:#bfdbfe; font-size:9px; font-weight:800; }
+      .pcg-chip button { min-width:16px; min-height:16px; display:grid; place-items:center; border:0; border-radius:999px; background:rgba(191,219,254,.14); color:#bfdbfe; cursor:pointer; font-size:10px; line-height:1; padding:0; }
+      .pcg-extra-months-hint { margin:10px 0 0; color:#8ea2ba; font-size:9px; }
       .pcg-form-grid { margin-top:12px; display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
       .pcg-field { min-width:0; }
       .pcg-field.wide { grid-column:span 1; }

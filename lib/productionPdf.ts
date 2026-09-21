@@ -567,6 +567,11 @@ export function buildDepartmentProgramPdf(params: {
   });
 
   const checkColIndexes = isTubolari ? new Set([4, 5]) : new Set<number>();
+  // Reparti "normali" (non Tubolari): stesso trattamento della vecchia stampa
+  // generale di produzione - un quadratino accanto al valore di Carena/
+  // Ragno-Longheroni/Coperta/Accessori, da spuntare a mano una volta fatto.
+  // Non e' uno stato salvato, solo un aiuto visivo su carta.
+  const paperCheckboxCols = isTubolari ? new Set<number>() : new Set([3, 4, 5, 6]);
 
   function rowValues(row: DeptPdfRow) {
     const boat = row.boat;
@@ -603,6 +608,7 @@ export function buildDepartmentProgramPdf(params: {
   function measureTotalHeight(scale: number) {
     const pad = BASE_PADDING * scale;
     const lh = BASE_LINE_HEIGHT * scale;
+    const reserve = BASE_CHECKBOX_RESERVE * scale;
     const checkboxFloor = BASE_CHECKBOX_SIZE * scale + 2 * scale;
     doc.setFontSize(BASE_FONT_SIZE * scale);
     let total = 0;
@@ -613,7 +619,8 @@ export function buildDepartmentProgramPdf(params: {
         if (checkColIndexes.has(index)) return;
         doc.setFont("helvetica", index === 1 ? "bold" : "normal");
         const text = String(value ?? "").trim().replace(/\r\n?/g, "\n");
-        const cellLines = doc.splitTextToSize(text || "-", widths[index] - pad * 2);
+        const res = paperCheckboxCols.has(index) ? reserve : 0;
+        const cellLines = doc.splitTextToSize(text || "-", widths[index] - pad * 2 - res);
         maxLines = Math.max(maxLines, cellLines.length);
       });
       total += Math.max(checkboxFloor, maxLines * lh + pad * 2);
@@ -645,6 +652,9 @@ export function buildDepartmentProgramPdf(params: {
   const checkboxSize = BASE_CHECKBOX_SIZE * scale;
   const minRowHeight = checkboxSize + 2 * scale;
   const baselineOffset = 3.2 * scale;
+  const CHECKBOX_RESERVE = BASE_CHECKBOX_RESERVE * scale;
+  const checkboxGap = 2 * scale;
+  const checkboxRightMargin = 1.5 * scale;
 
   const today = new Intl.DateTimeFormat("it-IT").format(new Date());
 
@@ -725,7 +735,8 @@ export function buildDepartmentProgramPdf(params: {
       if (checkColIndexes.has(index)) return [];
       doc.setFont("helvetica", index === 1 ? "bold" : "normal");
       const text = String(value ?? "").trim().replace(/\r\n?/g, "\n");
-      return doc.splitTextToSize(text || "-", widths[index] - padding * 2);
+      const reserve = paperCheckboxCols.has(index) ? CHECKBOX_RESERVE : 0;
+      return doc.splitTextToSize(text || "-", widths[index] - padding * 2 - reserve);
     });
     const maxLines = Math.max(1, ...lines.map((cell) => cell.length));
     const rowH = Math.max(minRowHeight, maxLines * lineHeight + padding * 2);
@@ -755,6 +766,21 @@ export function buildDepartmentProgramPdf(params: {
       lines[index].forEach((line, lineIndex) =>
         doc.text(line, col.x + padding, y + padding + baselineOffset + lineIndex * lineHeight)
       );
+      // Quadratino da spuntare a mano, appoggiato subito dopo il valore
+      // ("Bianco [ ]" si legge come un'unica cosa) - stesso trattamento
+      // della vecchia stampa generale di produzione.
+      if (paperCheckboxCols.has(index)) {
+        const firstLine = lines[index][0] || "-";
+        doc.setFont("helvetica", "normal");
+        const textWidth = doc.getTextWidth(firstLine);
+        const maxBoxX = col.x + col.w - checkboxSize - checkboxRightMargin;
+        const boxX = Math.min(col.x + padding + textWidth + checkboxGap, maxBoxX);
+        const boxY = y + (rowH - checkboxSize) / 2;
+        doc.setDrawColor(90, 100, 115);
+        doc.setLineWidth(0.35);
+        doc.roundedRect(boxX, boxY, checkboxSize, checkboxSize, 0.7, 0.7);
+        doc.setLineWidth(0.2);
+      }
     });
 
     doc.setDrawColor(160, 169, 182);

@@ -323,19 +323,23 @@ export default function ProductionDepartmentPage({
   // (il passaggio reparto, se esiste già, è opzionale); per gli altri
   // reparti resta un battello per ogni passaggio ancora aperto qui.
   const rows = useMemo(() => {
-    if (isTubolariDept) {
-      return boats.map((boat) => ({
-        key: `boat-${boat.id}`,
-        boat,
-        step: steps.find((s) => s.boat_id === boat.id) || null,
-      }));
-    }
+    const list = isTubolariDept
+      ? boats.map((boat) => ({
+          key: `boat-${boat.id}`,
+          boat,
+          step: steps.find((s) => s.boat_id === boat.id) || null,
+        }))
+      : steps
+          .map((step) => ({ key: `step-${step.id}`, step, boat: boatMap.get(step.boat_id) }))
+          .filter(
+            (row): row is { key: string; step: Step; boat: Boat } => Boolean(row.boat)
+          );
 
-    return steps
-      .map((step) => ({ key: `step-${step.id}`, step, boat: boatMap.get(step.boat_id) }))
-      .filter(
-        (row): row is { key: string; step: Step; boat: Boat } => Boolean(row.boat)
-      );
+    // Ordinati per progressivo (come nel PDF), cosi' si trova al volo il
+    // battello giusto invece di doverlo cercare in ordine sparso.
+    return [...list].sort(
+      (a, b) => (a.boat.progressive_no ?? Infinity) - (b.boat.progressive_no ?? Infinity)
+    );
   }, [isTubolariDept, boats, steps, boatMap]);
 
   // Nuovo battello arrivato in reparto -> selezionato di default. Un

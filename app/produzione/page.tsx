@@ -557,20 +557,24 @@ export default function ProductionPage() {
     const dept = printPanel === "tubolari" ? tubolariDept : verniciaturaDept;
     if (!dept) return [];
 
-    if (printPanel === "tubolari") {
-      return activeBoats.map((boat) => ({
-        boat,
-        step: steps.find((s) => s.boat_id === boat.id && s.department_id === dept.id) || null,
-      }));
-    }
+    const list = printPanel === "tubolari"
+      ? activeBoats.map((boat) => ({
+          boat,
+          step: steps.find((s) => s.boat_id === boat.id && s.department_id === dept.id) || null,
+        }))
+      : steps
+          .filter((s) => s.department_id === dept.id && s.status !== "completed")
+          .map((s) => {
+            const boat = boats.find((b) => b.id === s.boat_id);
+            return boat ? { boat, step: s } : null;
+          })
+          .filter((row): row is { boat: Boat; step: Step } => Boolean(row));
 
-    return steps
-      .filter((s) => s.department_id === dept.id && s.status !== "completed")
-      .map((s) => {
-        const boat = boats.find((b) => b.id === s.boat_id);
-        return boat ? { boat, step: s } : null;
-      })
-      .filter((row): row is { boat: Boat; step: Step } => Boolean(row));
+    // Ordinati per progressivo (come nel PDF), cosi' si trova al volo il
+    // battello giusto invece di doverlo cercare in ordine sparso.
+    return [...list].sort(
+      (a, b) => (a.boat.progressive_no ?? Infinity) - (b.boat.progressive_no ?? Infinity)
+    );
   }, [printPanel, tubolariDept, verniciaturaDept, activeBoats, steps, boats]);
 
   // Ogni apertura del pannello riparte con tutti spuntati (cosi' "tutti i

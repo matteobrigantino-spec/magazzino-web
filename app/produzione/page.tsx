@@ -573,11 +573,19 @@ export default function ProductionPage() {
           })
           .filter((row): row is { boat: Boat; step: Step } => Boolean(row));
 
-    // Ordinati per progressivo (come nel PDF), cosi' si trova al volo il
-    // battello giusto invece di doverlo cercare in ordine sparso.
-    return [...list].sort(
-      (a, b) => (a.boat.progressive_no ?? Infinity) - (b.boat.progressive_no ?? Infinity)
-    );
+    // Ordinati per data di consegna richiesta (come nel PDF): prima le
+    // consegne piu' vicine, chi non ha una data va in fondo; a parita'
+    // di data (o assenza), per progressivo.
+    return [...list].sort((a, b) => {
+      const ad = a.boat.requested_delivery_date;
+      const bd = b.boat.requested_delivery_date;
+      if (ad && bd) {
+        if (ad !== bd) return ad < bd ? -1 : 1;
+      } else if (ad || bd) {
+        return ad ? -1 : 1;
+      }
+      return (a.boat.progressive_no ?? Infinity) - (b.boat.progressive_no ?? Infinity);
+    });
   }, [printPanel, tubolariDept, verniciaturaDept, activeBoats, steps, boats]);
 
   // Ogni apertura del pannello riparte con tutti spuntati (cosi' "tutti i

@@ -23,6 +23,7 @@ type Boat = {
   deck: string;
   accessories: string;
   note: string | null;
+  requested_delivery_date: string | null;
 };
 
 type Step = {
@@ -127,7 +128,7 @@ export default function ProductionDepartmentPage({
       // davvero oggi il battello nel percorso produttivo.
       const boatRes = await supabase
         .from("production_boats")
-        .select("id,progressive_no,order_number,model_boat,hull,stringers,deck,accessories,note")
+        .select("id,progressive_no,order_number,model_boat,hull,stringers,deck,accessories,note,requested_delivery_date")
         .eq("status", "active")
         .order("progressive_no", { ascending: true });
 
@@ -150,6 +151,9 @@ export default function ProductionDepartmentPage({
         deck: String(row.deck || ""),
         accessories: String(row.accessories || ""),
         note: row.note ? String(row.note) : null,
+        requested_delivery_date: row.requested_delivery_date
+          ? String(row.requested_delivery_date)
+          : null,
       }));
 
       setBoats(cleanBoats);
@@ -282,7 +286,9 @@ export default function ProductionDepartmentPage({
 
     const boatRes = await supabase
       .from("production_boats")
-      .select("id,progressive_no,order_number,model_boat,hull,stringers,deck,accessories,note")
+      .select(
+        "id,progressive_no,order_number,model_boat,hull,stringers,deck,accessories,note,requested_delivery_date"
+      )
       .in("id", boatIds)
       .order("progressive_no", { ascending: true });
 
@@ -306,6 +312,9 @@ export default function ProductionDepartmentPage({
         deck: String(row.deck || ""),
         accessories: String(row.accessories || ""),
         note: row.note ? String(row.note) : null,
+        requested_delivery_date: row.requested_delivery_date
+          ? String(row.requested_delivery_date)
+          : null,
       }))
     );
 
@@ -335,11 +344,19 @@ export default function ProductionDepartmentPage({
             (row): row is { key: string; step: Step; boat: Boat } => Boolean(row.boat)
           );
 
-    // Ordinati per progressivo (come nel PDF), cosi' si trova al volo il
-    // battello giusto invece di doverlo cercare in ordine sparso.
-    return [...list].sort(
-      (a, b) => (a.boat.progressive_no ?? Infinity) - (b.boat.progressive_no ?? Infinity)
-    );
+    // Ordinati per data di consegna richiesta (come nel PDF): prima le
+    // consegne piu' vicine, chi non ha una data va in fondo; a parita'
+    // di data (o assenza), per progressivo.
+    return [...list].sort((a, b) => {
+      const ad = a.boat.requested_delivery_date;
+      const bd = b.boat.requested_delivery_date;
+      if (ad && bd) {
+        if (ad !== bd) return ad < bd ? -1 : 1;
+      } else if (ad || bd) {
+        return ad ? -1 : 1;
+      }
+      return (a.boat.progressive_no ?? Infinity) - (b.boat.progressive_no ?? Infinity);
+    });
   }, [isTubolariDept, boats, steps, boatMap]);
 
   // Nuovo battello arrivato in reparto -> selezionato di default. Un

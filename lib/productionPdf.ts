@@ -493,6 +493,7 @@ export type DeptPdfBoat = {
   deck: string;
   accessories: string;
   note: string | null;
+  requested_delivery_date: string | null;
 };
 
 export type DeptPdfStep = {
@@ -524,9 +525,18 @@ export function buildDepartmentProgramPdf(params: {
     throw new Error("Seleziona almeno un battello prima di generare il PDF.");
   }
 
-  const pdfRows = [...rows].sort(
-    (a, b) => (a.boat.progressive_no ?? Infinity) - (b.boat.progressive_no ?? Infinity)
-  );
+  // Ordine di stampa: prima le consegne piu' vicine (chi non ha una data
+  // di consegna richiesta va in fondo), poi per progressivo.
+  const pdfRows = [...rows].sort((a, b) => {
+    const ad = a.boat.requested_delivery_date;
+    const bd = b.boat.requested_delivery_date;
+    if (ad && bd) {
+      if (ad !== bd) return ad < bd ? -1 : 1;
+    } else if (ad || bd) {
+      return ad ? -1 : 1;
+    }
+    return (a.boat.progressive_no ?? Infinity) - (b.boat.progressive_no ?? Infinity);
+  });
 
   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
   doc.setProperties({
@@ -629,8 +639,11 @@ export function buildDepartmentProgramPdf(params: {
   const fontSize = BASE_FONT_SIZE * scale;
   const lineHeight = BASE_LINE_HEIGHT * scale;
   const padding = BASE_PADDING * scale;
-  const checkboxSize = Math.min(BASE_CHECKBOX_SIZE * scale * 1.3, 6.5);
-  const minRowHeight = Math.max(checkboxSize + 2 * scale, 6);
+  // Stessa formula usata da measureTotalHeight() sopra: se le due divergono,
+  // l'auto-fit calcola una scala che poi, in disegno, non basta piu' a
+  // stare in una pagina sola (e' quello che succedeva prima di questo fix).
+  const checkboxSize = BASE_CHECKBOX_SIZE * scale;
+  const minRowHeight = checkboxSize + 2 * scale;
   const baselineOffset = 3.2 * scale;
 
   const today = new Intl.DateTimeFormat("it-IT").format(new Date());

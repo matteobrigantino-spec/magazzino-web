@@ -334,6 +334,7 @@ export default function ParabrezzaPage() {
     setErrorMessage("");
 
     const mapping = matrix.find((row) => row.id === mappingId);
+    const oldItemId = mapping?.item_id;
 
     const { error } = await supabase
       .from("production_windshield_matrix")
@@ -346,8 +347,8 @@ export default function ParabrezzaPage() {
     }
 
     // Aggancia anche eventuali battelli di questo modello che per
-    // qualche motivo fossero rimasti senza richiesta parabrezza
-    // (non tocca quelli che ne hanno gia' una con l'articolo vecchio).
+    // qualche motivo fossero rimasti senza richiesta parabrezza.
+    let cleanedCount = 0;
     if (mapping) {
       const { error: backfillError } = await supabase.rpc(
         "backfill_windshield_requirements_for_model",
@@ -356,12 +357,32 @@ export default function ParabrezzaPage() {
       if (backfillError) {
         console.error("Errore aggancio battelli esistenti:", backfillError);
       }
+
+      // Toglie ai battelli di questo modello l'eventuale richiesta
+      // rimasta con l'articolo VECCHIO (altrimenti resterebbe per
+      // sempre insieme a quella nuova, anche se non e' piu' in mappa).
+      if (oldItemId && oldItemId !== itemId) {
+        const { data: removed, error: cleanupError } = await supabase.rpc(
+          "remove_stale_windshield_requirements",
+          { p_model_boat: mapping.model_boat, p_item_id: oldItemId }
+        );
+        if (cleanupError) {
+          console.error("Errore pulizia richieste vecchie:", cleanupError);
+        } else {
+          cleanedCount = Number(removed || 0);
+        }
+      }
     }
 
+    setMessage(
+      cleanedCount > 0
+        ? `Mappatura aggiornata. Tolta anche la vecchia richiesta da ${cleanedCount} battelli.`
+        : "Mappatura aggiornata."
+    );
     await loadData();
   }
 
-  async function deleteMapping(mappingId: string, modelBoat: string) {
+  async function deleteMapping(mappingId: string, modelBoat: string, itemId: string) {
     const ok = window.confirm(`Togliere la mappatura per "${modelBoat}"?`);
     if (!ok) return;
 
@@ -378,7 +399,22 @@ export default function ParabrezzaPage() {
       return;
     }
 
-    setMessage("Mappatura rimossa.");
+    // Toglie anche la richiesta rimasta sui battelli di questo
+    // modello per l'articolo appena tolto dalla mappa.
+    const { data: removed, error: cleanupError } = await supabase.rpc(
+      "remove_stale_windshield_requirements",
+      { p_model_boat: modelBoat, p_item_id: itemId }
+    );
+    if (cleanupError) {
+      console.error("Errore pulizia richieste vecchie:", cleanupError);
+    }
+
+    const cleanedCount = Number(removed || 0);
+    setMessage(
+      cleanedCount > 0
+        ? `Mappatura rimossa. Tolta anche la richiesta da ${cleanedCount} battelli.`
+        : "Mappatura rimossa."
+    );
     await loadData();
   }
 
@@ -725,7 +761,11 @@ export default function ParabrezzaPage() {
                     </option>
                   ))}
                 </select>
-                <button type="button" className="danger" onClick={() => deleteMapping(row.id, row.model_boat)}>
+                <button
+                  type="button"
+                  className="danger"
+                  onClick={() => deleteMapping(row.id, row.model_boat, row.item_id)}
+                >
                   Rimuovi
                 </button>
               </div>

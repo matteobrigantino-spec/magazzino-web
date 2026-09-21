@@ -794,41 +794,41 @@ function Styles() {
   return (
     <style jsx global>{`
       .pbz-page { width:100%; max-width:1200px; margin:0 auto; color:#f8fafc; }
-      .pbz-loading { padding:60px; text-align:center; color:#7388a3; font-size:11px; }
-      .pbz-hero { padding:21px 22px; display:flex; align-items:center; justify-content:space-between; gap:18px; flex-wrap:wrap; border:1px solid rgba(59,130,246,.24); border-radius:16px; background:linear-gradient(135deg,#0d1d31,#071321); }
-      .pbz-eyebrow { color:#60a5fa; font-size:9px; font-weight:950; letter-spacing:1.45px; }
-      .pbz-hero h1 { margin:5px 0 0; font-size:27px; font-weight:950; letter-spacing:-.6px; }
-      .pbz-hero p { max-width:640px; margin:6px 0 0; color:#91a4bc; font-size:10px; line-height:1.55; }
-      .pbz-actions { display:flex; align-items:center; gap:7px; }
-      .pbz-btn { min-height:38px; padding:0 12px; display:inline-flex; align-items:center; border-radius:8px; text-decoration:none; font-size:9px; font-weight:900; cursor:pointer; border:0; }
+      .pbz-loading { padding:60px; text-align:center; color:#7388a3; font-size:16px; }
+      .pbz-hero { padding:26px 28px; display:flex; align-items:center; justify-content:space-between; gap:18px; flex-wrap:wrap; border:1px solid rgba(59,130,246,.24); border-radius:16px; background:linear-gradient(135deg,#0d1d31,#071321); }
+      .pbz-eyebrow { color:#60a5fa; font-size:13px; font-weight:950; letter-spacing:1.6px; }
+      .pbz-hero h1 { margin:7px 0 0; font-size:36px; font-weight:950; letter-spacing:-.6px; }
+      .pbz-hero p { max-width:760px; margin:9px 0 0; color:#91a4bc; font-size:15px; line-height:1.6; }
+      .pbz-actions { display:flex; align-items:center; gap:9px; }
+      .pbz-btn { min-height:46px; padding:0 16px; display:inline-flex; align-items:center; border-radius:9px; text-decoration:none; font-size:13px; font-weight:900; cursor:pointer; border:0; }
       .pbz-btn.secondary { border:1px solid rgba(148,163,184,.22); background:rgba(255,255,255,.035); color:#e2e8f0; }
-      .pbz-message { margin-top:11px; padding:11px 13px; border-radius:9px; font-size:10px; font-weight:800; }
+      .pbz-message { margin-top:14px; padding:14px 17px; border-radius:10px; font-size:14px; font-weight:800; }
       .pbz-message.success { border:1px solid rgba(34,197,94,.28); background:rgba(34,197,94,.08); color:#86efac; }
       .pbz-message.error { border:1px solid rgba(239,68,68,.28); background:rgba(239,68,68,.08); color:#fca5a5; }
-      .pbz-card { margin-top:11px; padding:16px; border:1px solid rgba(148,163,184,.15); border-radius:13px; background:#0b1828; }
-      .pbz-card h2 { margin:4px 0 0; font-size:15px; }
-      .pbz-hint { margin-top:10px; color:#7388a3; font-size:9px; }
-      .pbz-matrix-list { margin-top:12px; display:flex; flex-direction:column; gap:6px; }
-      .pbz-matrix-row { padding:8px 10px; display:grid; grid-template-columns:140px 1fr auto; align-items:center; gap:8px; border:1px solid rgba(148,163,184,.13); border-radius:8px; background:rgba(255,255,255,.02); }
-      .pbz-matrix-row strong { color:#93c5fd; font-size:10px; }
-      .pbz-matrix-add { margin-top:12px; display:grid; grid-template-columns:1fr 1.6fr auto; gap:8px; }
-      .pbz-kit-form { margin-top:12px; display:grid; grid-template-columns:1fr 1.6fr 0.8fr 0.6fr 1fr auto; gap:8px; }
+      .pbz-card { margin-top:14px; padding:22px; border:1px solid rgba(148,163,184,.15); border-radius:14px; background:#0b1828; }
+      .pbz-card h2 { margin:6px 0 0; font-size:21px; }
+      .pbz-hint { margin-top:13px; color:#7388a3; font-size:13px; }
+      .pbz-matrix-list { margin-top:16px; display:flex; flex-direction:column; gap:9px; }
+      .pbz-matrix-row { padding:11px 14px; display:grid; grid-template-columns:190px 1fr auto; align-items:center; gap:11px; border:1px solid rgba(148,163,184,.13); border-radius:9px; background:rgba(255,255,255,.02); }
+      .pbz-matrix-row strong { color:#93c5fd; font-size:14px; }
+      .pbz-matrix-add { margin-top:16px; display:grid; grid-template-columns:1fr 1.6fr auto; gap:11px; }
+      .pbz-kit-form { margin-top:16px; display:grid; grid-template-columns:1fr 1.6fr 0.8fr 0.6fr 1fr auto; gap:11px; }
       .pbz-kit-filter { grid-column:1; }
       .pbz-page select, .pbz-page input {
-        min-height:38px; box-sizing:border-box; padding:0 10px; border:1px solid rgba(148,163,184,.19);
-        border-radius:8px; outline:none; background:#081524; color:#fff; font-size:10px;
+        min-height:46px; box-sizing:border-box; padding:0 13px; border:1px solid rgba(148,163,184,.19);
+        border-radius:9px; outline:none; background:#081524; color:#fff; font-size:14px;
       }
       .pbz-matrix-add button, .pbz-kit-form button {
-        min-height:38px; padding:0 12px; border:1px solid rgba(96,165,250,.32); border-radius:8px;
-        background:rgba(59,130,246,.14); color:#bfdbfe; cursor:pointer; font-size:9px; font-weight:900; white-space:nowrap;
+        min-height:46px; padding:0 16px; border:1px solid rgba(96,165,250,.32); border-radius:9px;
+        background:rgba(59,130,246,.14); color:#bfdbfe; cursor:pointer; font-size:13px; font-weight:900; white-space:nowrap;
       }
       .pbz-matrix-add button:disabled, .pbz-kit-form button:disabled { opacity:.5; cursor:default; }
-      button.danger { border:1px solid rgba(239,68,68,.28); background:rgba(239,68,68,.08); color:#fca5a5; padding:5px 9px; border-radius:6px; cursor:pointer; font-size:8px; font-weight:900; }
+      button.danger { border:1px solid rgba(239,68,68,.28); background:rgba(239,68,68,.08); color:#fca5a5; padding:8px 14px; border-radius:7px; cursor:pointer; font-size:12px; font-weight:900; }
       button.danger:disabled { opacity:.5; cursor:wait; }
-      .pbz-table { margin-top:12px; width:100%; border-collapse:collapse; font-size:9px; }
-      .pbz-table th { padding:6px 8px; background:rgba(255,255,255,.03); color:#86a0bf; text-align:left; font-size:7px; font-weight:950; letter-spacing:.5px; text-transform:uppercase; }
-      .pbz-table td { padding:7px 8px; border-top:1px solid rgba(148,163,184,.09); }
-      .pbz-status { padding:3px 7px; border-radius:999px; font-size:8px; font-weight:900; }
+      .pbz-table { margin-top:16px; width:100%; border-collapse:collapse; font-size:13px; }
+      .pbz-table th { padding:9px 10px; background:rgba(255,255,255,.03); color:#86a0bf; text-align:left; font-size:11px; font-weight:950; letter-spacing:.5px; text-transform:uppercase; }
+      .pbz-table td { padding:10px 10px; border-top:1px solid rgba(148,163,184,.09); }
+      .pbz-status { padding:5px 10px; border-radius:999px; font-size:12px; font-weight:900; }
       .pbz-status.assegnato { background:rgba(34,197,94,.12); color:#86efac; }
       .pbz-status.ordine { background:rgba(59,130,246,.14); color:#93c5fd; }
       .pbz-status.da_ordinare { background:rgba(249,115,22,.14); color:#fdba74; }

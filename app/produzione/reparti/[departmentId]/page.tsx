@@ -33,6 +33,7 @@ type Step = {
   status: string;
   current_note: string | null;
   entered_at: string;
+  printed_at: string | null;
 };
 
 type ProductionOption = {
@@ -209,6 +210,7 @@ export default function ProductionDepartmentPage({
         status: String(row.status || "queued"),
         current_note: row.current_note ? String(row.current_note) : null,
         entered_at: String(row.entered_at || ""),
+        printed_at: null,
       }));
 
       setSteps(cleanSteps);
@@ -270,6 +272,25 @@ export default function ProductionDepartmentPage({
       return;
     }
 
+    // Query separata e "silenziosa" come per Tubolari: finche' printed_at
+    // non esiste ancora su production_department_steps, fallisce da sola
+    // senza intaccare il resto (nessuno step risultera' gia' stampato).
+    const stepIds = (stepRes.data || []).map((row: any) => String(row.id));
+    let stepPrintedMap: Record<string, string> = {};
+    if (stepIds.length > 0) {
+      const stepPrintedRes = await supabase
+        .from("production_department_steps")
+        .select("id,printed_at")
+        .in("id", stepIds);
+      if (!stepPrintedRes.error) {
+        stepPrintedMap = Object.fromEntries(
+          (stepPrintedRes.data || [])
+            .filter((row: any) => row.printed_at)
+            .map((row: any) => [String(row.id), String(row.printed_at)])
+        );
+      }
+    }
+
     const cleanSteps: Step[] = (stepRes.data || []).map((row: any) => ({
       id: String(row.id),
       boat_id: String(row.boat_id),
@@ -277,6 +298,7 @@ export default function ProductionDepartmentPage({
       status: String(row.status || "queued"),
       current_note: row.current_note ? String(row.current_note) : null,
       entered_at: String(row.entered_at || ""),
+      printed_at: stepPrintedMap[String(row.id)] || null,
     }));
 
     setSteps(cleanSteps);
@@ -381,11 +403,13 @@ export default function ProductionDepartmentPage({
       let changed = false;
       for (const row of rows) {
         const id = row.boat.id;
-        // Un battello Tubolari gia' stampato parte deselezionato (cosi' non
-        // finisce per sbaglio nel prossimo PDF), ma resta comunque in
-        // tabella per poter spuntare Tubo/Montaggio a mano; l'operatore puo'
-        // comunque rispuntarlo se vuole ristamparlo apposta.
-        const defaultChecked = isTubolariDept ? !tubolariMap[id]?.printed_at : true;
+        // Un battello/passaggio gia' stampato parte deselezionato (cosi'
+        // non finisce per sbaglio nel prossimo PDF), ma resta comunque in
+        // tabella per poter lavorarci sopra; l'operatore puo' comunque
+        // rispuntarlo se vuole ristamparlo apposta.
+        const defaultChecked = isTubolariDept
+          ? !tubolariMap[id]?.printed_at
+          : !row.step?.printed_at;
         next[id] = id in current ? current[id] : defaultChecked;
         if (next[id] !== current[id]) changed = true;
       }
@@ -617,6 +641,26 @@ export default function ProductionDepartmentPage({
             });
             return next;
           });
+        }
+      } else {
+        // Reparti normali (es. Verniciatura): stesso segno, ma sullo step
+        // in reparto - se printed_at non esiste ancora su Supabase l'update
+        // fallisce da solo, senza intaccare il PDF gia' generato.
+        const now = new Date().toISOString();
+        const stepIds = selectedRows.map((row) => row.step?.id).filter(Boolean) as string[];
+        if (stepIds.length > 0) {
+          const { error: markError } = await supabase
+            .from("production_department_steps")
+            .update({ printed_at: now })
+            .in("id", stepIds);
+
+          if (!markError) {
+            setSteps((current) =>
+              current.map((step) =>
+                stepIds.includes(step.id) ? { ...step, printed_at: now } : step
+              )
+            );
+          }
         }
       }
     } catch (pdfError) {

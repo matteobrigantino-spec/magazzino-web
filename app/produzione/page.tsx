@@ -123,6 +123,12 @@ export default function ProductionPage() {
   // colonna printed_at non esiste ancora su production_tubolari.
   const [tubolariPrinted, setTubolariPrinted] = useState<Record<string, string>>({});
 
+  // Stessa cosa ma per Verniciatura (e in generale qualunque reparto che
+  // usi il pannello rapido): qui il "passaggio" e' il singolo step in
+  // production_department_steps, quindi la mappa e' step_id -> data/ora
+  // di stampa, non boat_id (un battello puo' rifare lo stesso reparto).
+  const [stepsPrinted, setStepsPrinted] = useState<Record<string, string>>({});
+
   useEffect(() => {
     async function loadPdfLogo() {
       const { data, error } = await supabase
@@ -428,13 +434,14 @@ export default function ProductionPage() {
       supabase.from("production_boat_upholstery").select("boat_id"),
     ]);
 
-    // Separata dalle altre: finche' su Supabase non esiste ancora la
-    // colonna printed_at (va aggiunta a mano una volta sola), questa
-    // query fallisce da sola senza bloccare il resto della pagina - la
-    // lista "gia' stampati" resta semplicemente vuota fino ad allora.
-    const tubPrintedRes = await supabase
-      .from("production_tubolari")
-      .select("boat_id,printed_at");
+    // Separate dalle altre: finche' su Supabase non esistono ancora le
+    // colonne printed_at (vanno aggiunte a mano una volta sola), queste
+    // query falliscono da sole senza bloccare il resto della pagina - le
+    // liste "gia' stampati" restano semplicemente vuote fino ad allora.
+    const [tubPrintedRes, stepPrintedRes] = await Promise.all([
+      supabase.from("production_tubolari").select("boat_id,printed_at"),
+      supabase.from("production_department_steps").select("id,printed_at"),
+    ]);
     setTubolariPrinted(
       tubPrintedRes.error
         ? {}
@@ -442,6 +449,15 @@ export default function ProductionPage() {
             (tubPrintedRes.data || [])
               .filter((row: any) => row.printed_at)
               .map((row: any) => [String(row.boat_id), String(row.printed_at)])
+          )
+    );
+    setStepsPrinted(
+      stepPrintedRes.error
+        ? {}
+        : Object.fromEntries(
+            (stepPrintedRes.data || [])
+              .filter((row: any) => row.printed_at)
+              .map((row: any) => [String(row.id), String(row.printed_at)])
           )
     );
 
@@ -592,7 +608,12 @@ export default function ProductionPage() {
             step: steps.find((s) => s.boat_id === boat.id && s.department_id === dept.id) || null,
           }))
       : steps
-          .filter((s) => s.department_id === dept.id && s.status !== "completed")
+          .filter(
+            (s) =>
+              s.department_id === dept.id &&
+              s.status !== "completed" &&
+              !stepsPrinted[s.id]
+          )
           .map((s) => {
             const boat = boats.find((b) => b.id === s.boat_id);
             return boat ? { boat, step: s } : null;
@@ -612,7 +633,16 @@ export default function ProductionPage() {
       }
       return (a.boat.progressive_no ?? Infinity) - (b.boat.progressive_no ?? Infinity);
     });
-  }, [printPanel, tubolariDept, verniciaturaDept, activeBoats, steps, boats, tubolariPrinted]);
+  }, [
+    printPanel,
+    tubolariDept,
+    verniciaturaDept,
+    activeBoats,
+    steps,
+    boats,
+    tubolariPrinted,
+    stepsPrinted,
+  ]);
 
   // Ogni apertura del pannello riparte con tutti spuntati (cosi' "tutti i
   // battelli" resta a zero click), poi l'utente toglie la spunta a chi
@@ -719,6 +749,28 @@ export default function ProductionPage() {
             });
             return next;
           });
+        }
+      } else {
+        // Verniciatura (e in generale gli altri reparti col pannello
+        // rapido): stessa idea, ma la spunta va sullo step in reparto, non
+        // sul battello - un passaggio gia' stampato non si ripropone.
+        const now = new Date().toISOString();
+        const stepIds = rows.map((row) => row.step?.id).filter(Boolean) as string[];
+        if (stepIds.length > 0) {
+          const { error: markError } = await supabase
+            .from("production_department_steps")
+            .update({ printed_at: now })
+            .in("id", stepIds);
+
+          if (!markError) {
+            setStepsPrinted((current) => {
+              const next = { ...current };
+              stepIds.forEach((id) => {
+                next[id] = now;
+              });
+              return next;
+            });
+          }
         }
       }
 
@@ -1363,26 +1415,37 @@ export default function ProductionPage() {
             <p>
               Spunta i battelli da mettere nel PDF (in qualsiasi combinazione,
               non serve che siano di fila).
-              {printPanel === "tubolari" &&
-                (() => {
-                  const printedCount = activeBoats.filter(
-                    (boat) => tubolariPrinted[boat.id]
-                  ).length;
-                  return printedCount > 0 ? (
-                    <>
-                      {" "}
-                      {printedCount} gia' stampat{printedCount === 1 ? "o" : "i"} non
-                      compaiono piu' qui.
-                    </>
-                  ) : null;
-                })()}
+              {(() => {
+                const printedCount =
+                  printPanel === "tubolari"
+                    ? activeBoats.filter((boat) => tubolariPrinted[boat.id]).length
+                    : steps.filter(
+                        (s) =>
+                          s.department_id === verniciaturaDept?.id &&
+                          s.status !== "completed" &&
+                          stepsPrinted[s.id]
+                      ).length;
+                return printedCount > 0 ? (
+                  <>
+                    {" "}
+                    {printedCount} gia' stampat{printedCount === 1 ? "o" : "i"} non
+                    compaiono piu' qui.
+                  </>
+                ) : null;
+              })()}
             </p>
 
             {printCandidateRows.length === 0 ? (
               <p className="prod-print-empty">
-                {printPanel === "tubolari" &&
-                activeBoats.some((boat) => tubolariPrinted[boat.id])
-                  ? "Tutti i battelli attivi sono gia' stati stampati."
+                {(printPanel === "tubolari"
+                  ? activeBoats.some((boat) => tubolariPrinted[boat.id])
+                  : steps.some(
+                      (s) =>
+                        s.department_id === verniciaturaDept?.id &&
+                        s.status !== "completed" &&
+                        stepsPrinted[s.id]
+                    ))
+                  ? "Tutti i battelli sono gia' stati stampati."
                   : "Nessun battello disponibile per questo reparto."}
               </p>
             ) : (

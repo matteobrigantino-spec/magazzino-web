@@ -1,8 +1,22 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabaseClient";
+import {
+  getExistingPushSubscription,
+  isPushSupported,
+  subscribeToPush,
+  unsubscribeFromPush,
+} from "../../lib/pushClient";
+
+type PushStatus =
+  | "checking"
+  | "non_supportate"
+  | "da_attivare"
+  | "attive"
+  | "in_corso"
+  | "errore";
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -10,6 +24,123 @@ export default function SettingsPage() {
   const [newPassword, setNewPassword] = useState("");
   const [msg, setMsg] = useState("");
   const [saving, setSaving] = useState(false);
+
+  const [pushStatus, setPushStatus] =
+    useState<PushStatus>("checking");
+
+  const [pushMsg, setPushMsg] =
+    useState("");
+
+  useEffect(() => {
+    if (!isPushSupported()) {
+      setPushStatus("non_supportate");
+      return;
+    }
+
+    getExistingPushSubscription()
+      .then((existing) => {
+        setPushStatus(
+          existing
+            ? "attive"
+            : "da_attivare"
+        );
+      })
+      .catch(() => {
+        setPushStatus("da_attivare");
+      });
+  }, []);
+
+  async function activatePush() {
+    setPushMsg("");
+    setPushStatus("in_corso");
+
+    const userId = localStorage.getItem(
+      "magazzino_user_id"
+    );
+
+    if (!userId) {
+      setPushMsg(
+        "Utente non trovato."
+      );
+      setPushStatus("da_attivare");
+      return;
+    }
+
+    try {
+      const subscription =
+        await subscribeToPush();
+
+      const { error } = await supabase
+        .from("push_subscriptions")
+        .upsert(
+          {
+            user_id: userId,
+            endpoint:
+              subscription.endpoint,
+            p256dh:
+              subscription.p256dh,
+            auth: subscription.auth,
+          },
+          { onConflict: "endpoint" }
+        );
+
+      if (error) {
+        throw new Error(
+          error.message
+        );
+      }
+
+      setPushStatus("attive");
+
+      setPushMsg(
+        "Notifiche attivate su questo dispositivo."
+      );
+    } catch (error) {
+      setPushStatus("errore");
+
+      setPushMsg(
+        error instanceof Error
+          ? error.message
+          : "Errore attivazione notifiche."
+      );
+    }
+  }
+
+  async function deactivatePush() {
+    setPushMsg("");
+    setPushStatus("in_corso");
+
+    try {
+      const existing =
+        await getExistingPushSubscription();
+
+      await unsubscribeFromPush();
+
+      if (existing) {
+        await supabase
+          .from("push_subscriptions")
+          .delete()
+          .eq(
+            "endpoint",
+            existing.endpoint
+          );
+      }
+
+      setPushStatus("da_attivare");
+
+      setPushMsg(
+        "Notifiche disattivate su questo dispositivo."
+      );
+    } catch (error) {
+      setPushStatus("errore");
+
+      setPushMsg(
+        error instanceof Error
+          ? error.message
+          : "Errore disattivazione notifiche."
+      );
+    }
+  }
 
   async function changePassword() {
     setMsg("");
@@ -338,6 +469,193 @@ export default function SettingsPage() {
             >
               {msg}
             </div>
+          )}
+        </div>
+      </div>
+
+      {/* NOTIFICHE PUSH */}
+
+      <div
+        style={{
+          marginTop: 20,
+
+          border:
+            "1px solid var(--border-color)",
+
+          borderRadius: 14,
+
+          overflow: "hidden",
+
+          background:
+            "var(--card)",
+        }}
+      >
+        <div
+          style={{
+            padding: "17px 19px",
+
+            borderBottom:
+              "1px solid var(--border-color)",
+
+            background:
+              "var(--table-head)",
+          }}
+        >
+          <div
+            style={{
+              fontSize: 18,
+              fontWeight: 850,
+            }}
+          >
+            Notifiche
+          </div>
+
+          <div
+            style={{
+              marginTop: 4,
+              fontSize: 12,
+              opacity: 0.55,
+            }}
+          >
+            Avvisi automatici su questo dispositivo per battelli a rischio consegna e scorte sotto minimo.
+          </div>
+        </div>
+
+        <div
+          style={{
+            padding: 20,
+          }}
+        >
+          {pushStatus ===
+          "non_supportate" ? (
+            <div
+              style={{
+                fontSize: 13,
+                opacity: 0.7,
+              }}
+            >
+              Questo dispositivo/browser non supporta le notifiche push. Su iPhone serve installare il gestionale come app (Condividi → Aggiungi alla schermata Home) e poi aprirlo da lì.
+            </div>
+          ) : (
+            <>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                  flexWrap: "wrap",
+                }}
+              >
+                <span
+                  style={{
+                    display:
+                      "inline-flex",
+                    alignItems:
+                      "center",
+                    gap: 7,
+
+                    padding:
+                      "6px 11px",
+
+                    borderRadius: 20,
+
+                    border:
+                      "1px solid var(--border-color)",
+
+                    background:
+                      "var(--input-bg)",
+
+                    fontSize: 12,
+
+                    fontWeight: 800,
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: "50%",
+                      background:
+                        pushStatus ===
+                        "attive"
+                          ? "#22c55e"
+                          : "#94a3b8",
+                    }}
+                  />
+                  {pushStatus === "attive"
+                    ? "Attive su questo dispositivo"
+                    : pushStatus ===
+                      "checking"
+                    ? "Verifica in corso..."
+                    : pushStatus ===
+                      "in_corso"
+                    ? "Aggiornamento..."
+                    : "Non attive su questo dispositivo"}
+                </span>
+
+                {pushStatus ===
+                "attive" ? (
+                  <button
+                    type="button"
+                    onClick={
+                      deactivatePush
+                    }
+                    disabled={false}
+                    style={
+                      secondaryButtonStyle
+                    }
+                  >
+                    Disattiva
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={
+                      activatePush
+                    }
+                    disabled={
+                      pushStatus ===
+                        "checking" ||
+                      pushStatus ===
+                        "in_corso"
+                    }
+                    style={primaryButtonStyle(
+                      pushStatus ===
+                        "checking" ||
+                        pushStatus ===
+                          "in_corso"
+                    )}
+                  >
+                    Attiva notifiche su questo dispositivo
+                  </button>
+                )}
+              </div>
+
+              {pushMsg && (
+                <div
+                  style={{
+                    marginTop: 14,
+
+                    padding:
+                      "12px 14px",
+
+                    border:
+                      "1px solid var(--border-color)",
+
+                    borderRadius: 8,
+
+                    background:
+                      "var(--input-bg)",
+
+                    fontSize: 13,
+
+                    fontWeight: 700,
+                  }}
+                >
+                  {pushMsg}
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>

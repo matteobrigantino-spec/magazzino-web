@@ -222,6 +222,13 @@ export default function MovementsPage() {
   const [rows, setRows] =
     useState<MovementRow[]>([]);
 
+  const [
+    stockByCode,
+    setStockByCode,
+  ] = useState<
+    Map<string, number>
+  >(new Map());
+
   const [message, setMessage] =
     useState("");
 
@@ -289,6 +296,114 @@ export default function MovementsPage() {
   useEffect(() => {
     loadMovementBatches();
   }, []);
+
+  /*
+    GIACENZA ATTUALE PER ANTEPRIMA
+    (carica la giacenza live degli
+    articoli presenti nelle righe
+    incollate, per mostrare in
+    anteprima "giacenza attuale" e
+    "dopo il movimento" prima del
+    salvataggio)
+  */
+  useEffect(() => {
+    const codes = Array.from(
+      new Set(
+        rows.map(
+          (row) => row.code
+        )
+      )
+    ).filter(Boolean);
+
+    if (codes.length === 0) {
+      setStockByCode(new Map());
+      return;
+    }
+
+    let cancelled = false;
+
+    (async () => {
+      const { data, error } =
+        await supabase
+          .from("items")
+          .select("code, stock")
+          .in("code", codes);
+
+      if (
+        cancelled ||
+        error ||
+        !data
+      ) {
+        return;
+      }
+
+      const map = new Map<
+        string,
+        number
+      >();
+
+      data.forEach(
+        (item: {
+          code: string;
+          stock: number | null;
+        }) => {
+          map.set(
+            item.code,
+            item.stock ?? 0
+          );
+        }
+      );
+
+      setStockByCode(map);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [rows]);
+
+  /*
+    ANTEPRIMA: GIACENZA PRIMA/DOPO
+    RIGA PER RIGA (calcolo a
+    cascata: piu' righe con lo
+    stesso codice nello stesso
+    incolla si sommano/sottraggono
+    in ordine, non ripartono ogni
+    volta dalla stessa giacenza)
+  */
+  const rowStockPreview = useMemo(() => {
+    const running = new Map(
+      stockByCode
+    );
+
+    return rows.map((row) => {
+      const before = running.get(
+        row.code
+      );
+
+      if (
+        typeof before !== "number"
+      ) {
+        return {
+          before: null as
+            | number
+            | null,
+          after: null as
+            | number
+            | null,
+        };
+      }
+
+      const after: number =
+        row.movement === "CARICO"
+          ? before + row.qty
+          : before - row.qty;
+
+      running.set(row.code, after);
+
+      return { before, after };
+    });
+  }, [rows, stockByCode]);
 
   /*
     RIEPILOGO ANTEPRIMA
@@ -2792,7 +2907,7 @@ export default function MovementsPage() {
               borderCollapse:
                 "collapse",
 
-              minWidth: 760,
+              minWidth: 980,
             }}
           >
             <thead>
@@ -2812,6 +2927,14 @@ export default function MovementsPage() {
                 <th style={headerRightStyle}>
                   Quantità
                 </th>
+
+                <th style={headerRightStyle}>
+                  Giacenza attuale
+                </th>
+
+                <th style={headerRightStyle}>
+                  Dopo il movimento
+                </th>
               </tr>
             </thead>
 
@@ -2819,7 +2942,7 @@ export default function MovementsPage() {
               {rows.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={4}
+                    colSpan={6}
                     style={
                       emptyStyle
                     }
@@ -2901,6 +3024,68 @@ export default function MovementsPage() {
                         <strong>
                           {row.qty}
                         </strong>
+                      </td>
+
+                      <td
+                        style={
+                          rightCellStyle
+                        }
+                      >
+                        {rowStockPreview[
+                          index
+                        ]
+                          ?.before ===
+                        null ? (
+                          <span
+                            style={{
+                              opacity: 0.4,
+                            }}
+                          >
+                            —
+                          </span>
+                        ) : (
+                          rowStockPreview[
+                            index
+                          ]?.before
+                        )}
+                      </td>
+
+                      <td
+                        style={
+                          rightCellStyle
+                        }
+                      >
+                        {rowStockPreview[
+                          index
+                        ]
+                          ?.after ===
+                        null ? (
+                          <span
+                            style={{
+                              opacity: 0.4,
+                            }}
+                          >
+                            —
+                          </span>
+                        ) : (
+                          <strong
+                            style={{
+                              color:
+                                (rowStockPreview[
+                                  index
+                                ]?.after ??
+                                  0) < 0
+                                  ? "#ef4444"
+                                  : "inherit",
+                            }}
+                          >
+                            {
+                              rowStockPreview[
+                                index
+                              ]?.after
+                            }
+                          </strong>
+                        )}
                       </td>
                     </tr>
                   )

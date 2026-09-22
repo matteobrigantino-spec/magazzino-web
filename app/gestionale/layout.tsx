@@ -11,6 +11,10 @@ export const metadata: Metadata = {
     "Gestionale personale completo del magazzino",
   manifest:
     "/manifest-gestionale.webmanifest",
+  icons: {
+    icon: "/gestionale-icon.png",
+    apple: "/gestionale-icon.png",
+  },
   appleWebApp: {
     capable: true,
     title: "Gestionale Matteo",

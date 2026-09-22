@@ -184,9 +184,9 @@ self.addEventListener(
 
     const options = {
       body: payload.body || "",
-      icon: "/catalogo-icon.svg",
+      icon: "/gestionale-icon.png",
       badge:
-        "/catalogo-icon.svg",
+        "/gestionale-icon.png",
       data: {
         url: payload.url || "/",
       },

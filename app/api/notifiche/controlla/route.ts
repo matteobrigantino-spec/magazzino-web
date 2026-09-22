@@ -244,6 +244,21 @@ export async function POST(request: NextRequest) {
     .from("push_subscriptions")
     .select("id, endpoint, p256dh, auth");
 
+  if (!subscriptions || subscriptions.length === 0) {
+    /*
+      Nessun dispositivo iscritto: non segniamo questi avvisi come
+      "gia' notificati oggi", altrimenti quando qualcuno attiva le
+      notifiche piu' tardi nella stessa giornata non riceverebbe
+      comunque nulla fino al giorno dopo.
+    */
+    return NextResponse.json({
+      sent: 0,
+      newRiskBoats: newRiskBoats.length,
+      newLowStockItems: newLowStockItems.length,
+      note: "nessun dispositivo iscritto alle notifiche",
+    });
+  }
+
   let sent = 0;
   const staleIds: string[] = [];
 

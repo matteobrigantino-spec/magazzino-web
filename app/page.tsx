@@ -69,6 +69,23 @@ type SharedNoteRecipient = {
   display_name: string | null;
 };
 
+type UnreadNote = {
+  id: string;
+  sender_name: string;
+  title: string;
+  message: string;
+  created_at: string;
+};
+
+type BoatAtRisk = {
+  id: string;
+  order_number: string;
+  model_boat: string;
+  requested_delivery_date: string;
+  missingWindshield: boolean;
+  missingUpholstery: boolean;
+};
+
 type Permissions = {
   dashboard?: boolean;
   view_prices?: boolean;
@@ -227,6 +244,16 @@ export default function Home() {
     sendingSharedNote,
     setSendingSharedNote,
   ] = useState(false);
+
+  const [
+    unreadNotes,
+    setUnreadNotes,
+  ] = useState<UnreadNote[]>([]);
+
+  const [
+    boatsAtRisk,
+    setBoatsAtRisk,
+  ] = useState<BoatAtRisk[]>([]);
 
   const canViewInventoryValue =
     permissions.view_inventory_value === true;
@@ -456,6 +483,117 @@ export default function Home() {
         (data || []) as Reminder[];
     }
 
+    /*
+      Note condivise non lette: non blocca mai la dashboard,
+      è solo un'informazione in più.
+    */
+    let unreadNotesData: UnreadNote[] = [];
+
+    if (currentUserId) {
+      const { data: unreadData, error: unreadError } =
+        await supabase
+          .from("shared_notes")
+          .select(
+            "id,sender_name,title,message,created_at"
+          )
+          .eq("recipient_user_id", currentUserId)
+          .eq("status", "new")
+          .order("created_at", { ascending: false })
+          .limit(50);
+
+      if (!unreadError) {
+        unreadNotesData =
+          (unreadData || []) as UnreadNote[];
+      }
+    }
+
+    /*
+      Battelli a rischio consegna: battelli attivi con una data di
+      consegna richiesta ancora senza parabrezza o tappezzeria
+      assegnati. Anche questo non blocca mai la dashboard: se la
+      produzione non è configurata semplicemente non mostra nulla.
+    */
+    let boatsAtRiskData: BoatAtRisk[] = [];
+
+    try {
+      const { data: riskBoatsData, error: riskBoatsError } =
+        await supabase
+          .from("production_boats")
+          .select(
+            "id,order_number,model_boat,requested_delivery_date"
+          )
+          .eq("status", "active")
+          .not("requested_delivery_date", "is", null)
+          .order("requested_delivery_date", {
+            ascending: true,
+          })
+          .limit(40);
+
+      if (
+        !riskBoatsError &&
+        riskBoatsData &&
+        riskBoatsData.length > 0
+      ) {
+        const boatIds = riskBoatsData.map((row) =>
+          String(row.id)
+        );
+
+        const [windshieldResult, upholsteryResult] =
+          await Promise.all([
+            supabase
+              .from("production_boat_windshield")
+              .select("boat_id")
+              .in("boat_id", boatIds)
+              .is("kit_id", null),
+            supabase
+              .from("production_boat_upholstery")
+              .select("boat_id")
+              .in("boat_id", boatIds)
+              .is("kit_id", null),
+          ]);
+
+        const missingWindshieldSet = new Set(
+          (
+            (windshieldResult.data || []) as {
+              boat_id: string;
+            }[]
+          ).map((row) => String(row.boat_id))
+        );
+
+        const missingUpholsterySet = new Set(
+          (
+            (upholsteryResult.data || []) as {
+              boat_id: string;
+            }[]
+          ).map((row) => String(row.boat_id))
+        );
+
+        boatsAtRiskData = riskBoatsData
+          .filter(
+            (row) =>
+              missingWindshieldSet.has(String(row.id)) ||
+              missingUpholsterySet.has(String(row.id))
+          )
+          .map((row) => ({
+            id: String(row.id),
+            order_number: String(
+              row.order_number || ""
+            ),
+            model_boat: String(row.model_boat || ""),
+            requested_delivery_date: String(
+              row.requested_delivery_date || ""
+            ),
+            missingWindshield:
+              missingWindshieldSet.has(String(row.id)),
+            missingUpholstery:
+              missingUpholsterySet.has(String(row.id)),
+          }))
+          .slice(0, 8);
+      }
+    } catch {
+      // Non blocca mai la dashboard.
+    }
+
     const cleanSuppliers: Supplier[] =
       (suppliersData || []).map(
         (row) => ({
@@ -601,6 +739,8 @@ export default function Home() {
     setItems(cleanItems);
     setOrders(cleanOrders);
     setReminders(cleanReminders);
+    setUnreadNotes(unreadNotesData);
+    setBoatsAtRisk(boatsAtRiskData);
 
     setLoading(false);
   }
@@ -1403,6 +1543,116 @@ export default function Home() {
         )}
       </section>
 
+      {/* BATTELLI A RISCHIO CONSEGNA */}
+
+      <section className="home-panel home-risk-panel">
+        <PanelTitle
+          title="Battelli a rischio consegna"
+          subtitle={
+            boatsAtRisk.length === 0
+              ? "Tutti i battelli in produzione sono coperti"
+              : `${boatsAtRisk.length} battelli con parabrezza o tappezzeria mancante`
+          }
+          badge={
+            boatsAtRisk.length > 0
+              ? boatsAtRisk.length
+              : undefined
+          }
+          actionText="Vedi produzione"
+          onAction={() =>
+            router.push("/produzione")
+          }
+        />
+
+        <div className="home-risk-list">
+          {boatsAtRisk.length === 0 ? (
+            <div className="home-success-empty">
+              <div className="home-success-icon">
+                ✓
+              </div>
+
+              <div>
+                <strong>
+                  Nessun battello a rischio
+                </strong>
+
+                <span>
+                  Parabrezza e tappezzeria coperti
+                  per tutte le consegne in vista.
+                </span>
+              </div>
+            </div>
+          ) : (
+            boatsAtRisk.map((boat) => {
+              const state = reminderState(
+                boat.requested_delivery_date
+              );
+
+              return (
+                <button
+                  type="button"
+                  key={boat.id}
+                  className="home-risk-row"
+                  onClick={() =>
+                    router.push(
+                      `/produzione/${boat.id}`
+                    )
+                  }
+                >
+                  <div
+                    className="home-date-badge"
+                    style={{
+                      color: state.color,
+
+                      borderColor: `${state.color}55`,
+
+                      background: `${state.color}12`,
+                    }}
+                  >
+                    <strong>
+                      {formatReminderDay(
+                        boat.requested_delivery_date
+                      )}
+                    </strong>
+
+                    <span>
+                      {formatReminderMonth(
+                        boat.requested_delivery_date
+                      )}
+                    </span>
+                  </div>
+
+                  <div className="home-risk-copy">
+                    <strong>
+                      {boat.order_number ||
+                        boat.model_boat}
+                    </strong>
+
+                    <span>
+                      {boat.model_boat}
+                    </span>
+                  </div>
+
+                  <div className="home-risk-tags">
+                    {boat.missingWindshield && (
+                      <span className="home-risk-tag home-risk-tag-blue">
+                        Parabrezza
+                      </span>
+                    )}
+
+                    {boat.missingUpholstery && (
+                      <span className="home-risk-tag home-risk-tag-purple">
+                        Tappezzeria
+                      </span>
+                    )}
+                  </div>
+                </button>
+              );
+            })
+          )}
+        </div>
+      </section>
+
       {/* AZIONI RAPIDE */}
 
       <section className="home-panel home-actions-panel">
@@ -1746,7 +1996,16 @@ export default function Home() {
         <div className="home-panel">
           <PanelTitle
             title="Note condivise"
-            subtitle="Comunicazioni tra gli account del magazzino"
+            subtitle={
+              unreadNotes.length === 0
+                ? "Comunicazioni tra gli account del magazzino"
+                : `${unreadNotes.length} da leggere`
+            }
+            badge={
+              unreadNotes.length > 0
+                ? unreadNotes.length
+                : undefined
+            }
             secondaryActionText="Vedi note"
             onSecondaryAction={() =>
               router.push(
@@ -1759,25 +2018,61 @@ export default function Home() {
             }
           />
 
-          <div className="home-shared-note-body">
-            <div className="home-shared-note-icon">
-              <NoteIcon />
-            </div>
+          {unreadNotes.length === 0 ? (
+            <div className="home-shared-note-body">
+              <div className="home-shared-note-icon">
+                <NoteIcon />
+              </div>
 
-            <div className="home-shared-note-copy">
-              <strong>
-                Scrivi a un altro account
-              </strong>
+              <div className="home-shared-note-copy">
+                <strong>
+                  Scrivi a un altro account
+                </strong>
 
-              <span>
-                Scegli il destinatario e invia
-                una comunicazione interna.
-                {isMainAccount
-                  ? " Dal tuo account puoi anche vedere tutte le note scambiate tra gli utenti."
-                  : " Nella pagina Note condivise trovi le tue ricevute e inviate."}
-              </span>
+                <span>
+                  Scegli il destinatario e invia
+                  una comunicazione interna.
+                  {isMainAccount
+                    ? " Dal tuo account puoi anche vedere tutte le note scambiate tra gli utenti."
+                    : " Nella pagina Note condivise trovi le tue ricevute e inviate."}
+                </span>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="home-notes-list">
+              {unreadNotes
+                .slice(0, 4)
+                .map((note) => (
+                  <button
+                    type="button"
+                    key={note.id}
+                    className="home-notes-row"
+                    onClick={() =>
+                      router.push(
+                        "/note-condivise"
+                      )
+                    }
+                  >
+                    <div className="home-shared-note-icon">
+                      <NoteIcon />
+                    </div>
+
+                    <div className="home-notes-copy">
+                      <strong>
+                        {note.sender_name ||
+                          "Utente"}
+                        {" · "}
+                        {note.title}
+                      </strong>
+
+                      <span>
+                        {note.message}
+                      </span>
+                    </div>
+                  </button>
+                ))}
+            </div>
+          )}
         </div>
 
         {canViewOrders && (
@@ -2482,6 +2777,83 @@ export default function Home() {
           margin-bottom: 22px;
         }
 
+        .home-risk-panel {
+          margin-bottom: 22px;
+        }
+
+        .home-risk-list {
+          display: flex;
+          flex-direction: column;
+        }
+
+        .home-risk-row {
+          width: 100%;
+          padding: 12px 18px;
+          display: flex;
+          align-items: center;
+          gap: 14px;
+          border: none;
+          border-bottom: 1px solid rgba(255,255,255,0.06);
+          background: transparent;
+          color: #f5f7fa;
+          cursor: pointer;
+          text-align: left;
+          transition: background .15s ease;
+        }
+
+        .home-risk-row:last-child {
+          border-bottom: none;
+        }
+
+        .home-risk-row:hover {
+          background: rgba(255,255,255,0.04);
+        }
+
+        .home-risk-copy {
+          flex: 1;
+          min-width: 0;
+        }
+
+        .home-risk-copy strong {
+          display: block;
+          font-size: 11.5px;
+          font-weight: 700;
+        }
+
+        .home-risk-copy span {
+          display: block;
+          margin-top: 2px;
+          font-size: 9.5px;
+          color: rgba(255,255,255,0.42);
+        }
+
+        .home-risk-tags {
+          flex-shrink: 0;
+          display: flex;
+          gap: 6px;
+        }
+
+        .home-risk-tag {
+          padding: 5px 9px;
+          border-radius: 999px;
+          font-size: 8.5px;
+          font-weight: 800;
+          letter-spacing: 0.3px;
+          white-space: nowrap;
+        }
+
+        .home-risk-tag-blue {
+          color: #38bdf8;
+          background: rgba(56,189,248,0.12);
+          border: 1px solid rgba(56,189,248,0.32);
+        }
+
+        .home-risk-tag-purple {
+          color: #a78bfa;
+          background: rgba(167,139,250,0.12);
+          border: 1px solid rgba(167,139,250,0.32);
+        }
+
         .home-panel-title {
           padding: 19px 22px;
           display: flex;
@@ -2793,6 +3165,55 @@ export default function Home() {
           display: flex;
           align-items: center;
           gap: 16px;
+        }
+
+        .home-notes-list {
+          display: flex;
+          flex-direction: column;
+        }
+
+        .home-notes-row {
+          width: 100%;
+          padding: 12px 18px;
+          display: flex;
+          align-items: center;
+          gap: 14px;
+          border: none;
+          border-bottom: 1px solid rgba(255,255,255,0.06);
+          background: transparent;
+          color: #f5f7fa;
+          cursor: pointer;
+          text-align: left;
+          transition: background .15s ease;
+        }
+
+        .home-notes-row:last-child {
+          border-bottom: none;
+        }
+
+        .home-notes-row:hover {
+          background: rgba(255,255,255,0.04);
+        }
+
+        .home-notes-copy {
+          flex: 1;
+          min-width: 0;
+        }
+
+        .home-notes-copy strong {
+          display: block;
+          font-size: 11.5px;
+          font-weight: 700;
+        }
+
+        .home-notes-copy span {
+          display: block;
+          margin-top: 3px;
+          font-size: 10px;
+          color: rgba(255,255,255,0.42);
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
         }
 
         .home-shared-note-icon {

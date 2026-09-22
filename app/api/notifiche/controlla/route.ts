@@ -166,8 +166,17 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  /*
+    Il "subject" VAPID deve essere un indirizzo mailto: o https:
+    valido (RFC 8292). Un dominio finto tipo ".local" viene
+    accettato dai servizi push di Google/Mozilla ma RIFIUTATO da
+    quello di Apple (Safari/iPhone) con l'errore "BadJwtToken" - per
+    questo usiamo l'indirizzo https reale del sito che sta
+    rispondendo in questo momento, cosi' funziona con qualsiasi
+    dominio Vercel venga usato.
+  */
   webPush.setVapidDetails(
-    "mailto:notifiche@magazzino-web.local",
+    request.nextUrl.origin,
     vapidPublicKey,
     vapidPrivateKey
   );

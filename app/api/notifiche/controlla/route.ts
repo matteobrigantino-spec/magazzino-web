@@ -261,6 +261,7 @@ export async function POST(request: NextRequest) {
 
   let sent = 0;
   const staleIds: string[] = [];
+  const sendErrors: string[] = [];
 
   await Promise.all(
     (subscriptions || []).map(async (sub) => {
@@ -284,6 +285,22 @@ export async function POST(request: NextRequest) {
           "statusCode" in error
             ? (error as { statusCode: number }).statusCode
             : null;
+
+        const errorBody =
+          error &&
+          typeof error === "object" &&
+          "body" in error
+            ? (error as { body: string }).body
+            : null;
+
+        const errorMessage =
+          error instanceof Error
+            ? error.message
+            : String(error);
+
+        sendErrors.push(
+          `${sub.id}: statusCode=${statusCode} body=${errorBody} message=${errorMessage}`
+        );
 
         if (statusCode === 404 || statusCode === 410) {
           staleIds.push(sub.id);
@@ -314,7 +331,13 @@ export async function POST(request: NextRequest) {
     })),
   ];
 
-  if (logRows.length > 0) {
+  /*
+    Segniamo gli avvisi come "notificati oggi" solo se almeno un
+    invio e' davvero riuscito. Se tutti gli invii falliscono (es.
+    chiavi VAPID sbagliate) non vogliamo bruciare gli avvisi di
+    oggi senza che nessuno li abbia ricevuti.
+  */
+  if (logRows.length > 0 && sent > 0) {
     await supabase
       .from("push_notification_log")
       .upsert(logRows, {
@@ -328,5 +351,6 @@ export async function POST(request: NextRequest) {
     newRiskBoats: newRiskBoats.length,
     newLowStockItems: newLowStockItems.length,
     staleRemoved: staleIds.length,
+    sendErrors,
   });
 }

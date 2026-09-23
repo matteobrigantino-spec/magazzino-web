@@ -1746,6 +1746,30 @@ export default function SupplierOrderPage() {
       }
     }
 
+    // Stessa cosa per i parabrezza: le righe d'ordine per articoli
+    // parabrezza non hanno un'assegnazione manuale "Per battello"
+    // (quella esiste solo per la tappezzeria), quindi qui si prova
+    // sempre l'abbinamento automatico alla richiesta battello con
+    // la consegna richiesta più vicina.
+    if (supplier?.windshield_enabled) {
+      const windshieldItemIds = Array.from(
+        new Set(lines.map((line) => line.item.id))
+      );
+
+      for (const windshieldItemId of windshieldItemIds) {
+        try {
+          await supabase.rpc("sync_windshield_order_links", {
+            p_item_id: windshieldItemId,
+          });
+        } catch (syncError) {
+          console.error(
+            "Errore abbinamento automatico parabrezza:",
+            syncError
+          );
+        }
+      }
+    }
+
     /*
       A QUESTO PUNTO L'ORDINE È GIÀ SICURO.
 

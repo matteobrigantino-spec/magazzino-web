@@ -360,21 +360,87 @@ export default function SupplierOrderPage() {
     */
     const openRequestCounts = new Map<string, number>();
 
+    /*
+      Colore/dettagli/cucitura/trapuntatura di ogni richiesta aperta,
+      raggruppati per articolo: servono per precompilare da soli i
+      "colori" della riga d'ordine (quelli che oggi si aggiungono a
+      mano con "+ Colore"), così il fornitore vede subito quanti pezzi
+      per ciascun colore senza doverli riselezionare uno per uno.
+    */
+    const openRequestVariantsByItem = new Map<
+      string,
+      { color: string; details_logos: string; stitching: string; quilting: string }[]
+    >();
+
     if (supplierData.upholstery_enabled) {
       const { data: openReqData } = await supabase
         .from("production_boat_upholstery")
-        .select("item_id")
+        .select("item_id,color,details_logos,stitching,quilting")
         .eq("supplier_id", supplierId)
         .is("kit_id", null)
         .is("order_item_id", null);
 
       for (const row of openReqData || []) {
         const itemId = String((row as any).item_id);
+
         openRequestCounts.set(
           itemId,
           (openRequestCounts.get(itemId) || 0) + 1
         );
+
+        const list = openRequestVariantsByItem.get(itemId) || [];
+
+        list.push({
+          color: String((row as any).color || ""),
+          details_logos: String((row as any).details_logos || ""),
+          stitching: String((row as any).stitching || ""),
+          quilting: String((row as any).quilting || ""),
+        });
+
+        openRequestVariantsByItem.set(itemId, list);
       }
+    }
+
+    /*
+      Raggruppa le richieste aperte di un articolo per combinazione
+      colore/dettagli/cucitura/trapuntatura, contando quanti pezzi
+      servono per ciascuna: diventa la lista "colori" già pronta
+      sulla riga d'ordine.
+    */
+    function buildVariantsFromRequests(itemId: string): LineVariant[] {
+      const requests = openRequestVariantsByItem.get(itemId) || [];
+
+      const groups = new Map<
+        string,
+        { qty: number } & Omit<LineVariant, "id" | "qty" | "note">
+      >();
+
+      for (const request of requests) {
+        const key = [
+          request.color,
+          request.details_logos,
+          request.stitching,
+          request.quilting,
+        ].join("||");
+
+        const existing = groups.get(key);
+
+        if (existing) {
+          existing.qty += 1;
+        } else {
+          groups.set(key, { qty: 1, ...request });
+        }
+      }
+
+      return Array.from(groups.values()).map((group, index) => ({
+        id: `auto-${itemId}-${index}-${Date.now()}`,
+        qty: group.qty,
+        color: group.color,
+        details_logos: group.details_logos,
+        stitching: group.stitching,
+        quilting: group.quilting,
+        note: "",
+      }));
     }
 
     /*
@@ -438,7 +504,7 @@ export default function SupplierOrderPage() {
         return {
           item,
           qty: suggestedQty,
-          variants: [],
+          variants: buildVariantsFromRequests(item.id),
           requestedDelivery: "",
           boatUpholsteryId: "",
         };

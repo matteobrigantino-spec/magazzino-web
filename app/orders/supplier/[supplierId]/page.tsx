@@ -347,16 +347,54 @@ export default function SupplierOrderPage() {
     }));
 
     /*
+      RICHIESTE TAPPEZZERIA "DA ORDINARE"
+
+      Un articolo con almeno una richiesta battello ancora senza
+      kit assegnato E senza riga d'ordine aperta (production_
+      boat_upholstery.kit_id e .order_item_id entrambi null) deve
+      entrare comunque nella proposta, anche se la giacenza
+      generale dell'articolo è già sopra la scorta minima: colori
+      diversi dello stesso kit condividono l'articolo ma non la
+      giacenza fisica del colore specifico richiesto, quindi il
+      solo calcolo su scorta minima non le vede.
+    */
+    const openRequestCounts = new Map<string, number>();
+
+    if (supplierData.upholstery_enabled) {
+      const { data: openReqData } = await supabase
+        .from("production_boat_upholstery")
+        .select("item_id")
+        .eq("supplier_id", supplierId)
+        .is("kit_id", null)
+        .is("order_item_id", null);
+
+      for (const row of openReqData || []) {
+        const itemId = String((row as any).item_id);
+        openRequestCounts.set(
+          itemId,
+          (openRequestCounts.get(itemId) || 0) + 1
+        );
+      }
+    }
+
+    /*
       BOZZA AUTOMATICA A BOX INTERI
 
       1. Calcoliamo quanti pezzi mancano per arrivare
          almeno alla scorta minima, considerando anche
          la merce già in ordine.
 
-      2. Dividiamo i pezzi mancanti per la quantità
+      2. Confrontiamo questo valore con il numero di
+         richieste battello ancora "da ordinare" per lo
+         stesso articolo: prendiamo il più alto dei due,
+         così l'ordine copre sempre almeno tutte le
+         richieste aperte, anche quando la scorta minima
+         da sola non le farebbe emergere.
+
+      3. Dividiamo i pezzi mancanti per la quantità
          contenuta in un box.
 
-      3. Arrotondiamo SEMPRE per eccesso al box intero.
+      4. Arrotondiamo SEMPRE per eccesso al box intero.
 
       Esempio:
       stock 1200
@@ -369,11 +407,19 @@ export default function SupplierOrderPage() {
     */
     const automaticLines: OrderLine[] = cleanItems
       .map((item) => {
-        const missingQty = Math.max(
+        const missingQtyStock = Math.max(
           0,
           Number(item.min_stock || 0) -
             Number(item.stock || 0) -
             Number(item.on_order || 0)
+        );
+
+        const openRequestsQty =
+          openRequestCounts.get(item.id) || 0;
+
+        const missingQty = Math.max(
+          missingQtyStock,
+          openRequestsQty
         );
 
         const boxQty = Math.max(
@@ -1810,9 +1856,10 @@ export default function SupplierOrderPage() {
               }}
             >
               La proposta automatica considera
-              giacenza, scorta minima, merce già in ordine
-              e quantità per box. Gli ordini vengono
-              arrotondati sempre a confezioni intere.
+              giacenza, scorta minima, merce già in ordine,
+              quantità per box e le richieste battello ancora
+              "da ordinare". Gli ordini vengono arrotondati
+              sempre a confezioni intere.
             </div>
           </div>
 

@@ -4,7 +4,34 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "../../../../lib/supabaseClient";
 import jsPDF from "jspdf";
-import { fetchCompanyLogo, drawCompanyLogoTopRight } from "../../../../lib/pdfLogo";
+import { fetchCompanyLogo, drawCompanyLogoTopLeft } from "../../../../lib/pdfLogo";
+
+/*
+  DATI LEGALI ITALBOATS - USATI NELL'INTESTAZIONE DEL PDF ORDINE
+
+  Gli stessi dati del vecchio modulo d'ordine cartaceo (ragione
+  sociale, indirizzo, contatti, dati fiscali), cosi' il PDF generato
+  dal gestionale ha lo stesso valore formale di una lettera d'ordine.
+*/
+const COMPANY_INFO = {
+  name: "Italboats S.r.l.",
+  address: [
+    "Zona Industriale, 14",
+    "73054 Presicce-Acquarica (LE) · Italy",
+  ],
+  contacts: [
+    "Tel. +39 (0)833 722 553",
+    "WhatsApp +39 351 534 5854",
+    "info@italboats.com",
+    "www.italboats.com",
+  ],
+  fiscal: [
+    "P.IVA IT 11642820150",
+    "SDI KRRH6B9",
+    "REA di Lecce n. LE 293728",
+    "Cap. Sociale EUR 100.000,00 i.v.",
+  ],
+};
 
 type Supplier = {
   id: string;
@@ -716,186 +743,306 @@ export default function SupplierOrderPage() {
     });
 
     const companyLogo = await fetchCompanyLogo();
-    drawCompanyLogoTopRight(doc, companyLogo);
 
-    const pageWidth =
-      doc.internal.pageSize.getWidth();
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
 
-    const pageHeight =
-      doc.internal.pageSize.getHeight();
-
-    const marginLeft = 14;
-    const marginRight = 14;
-
-    let y = 17;
+    const marginLeft = 18;
+    const marginRight = 18;
+    const contentWidth = pageWidth - marginLeft - marginRight;
 
     /*
-      TITOLO
+      PALETTE - stesso tono "lettera d'ordine formale" del vecchio
+      modulo cartaceo: inchiostro quasi nero, grigio caldo per i
+      dettagli secondari, oro per gli accenti di marchio.
     */
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(18);
+    const INK: [number, number, number] = [28, 26, 22];
+    const MUTED: [number, number, number] = [122, 116, 104];
+    const GOLD: [number, number, number] = [169, 130, 42];
+    const GOLD_SOFT: [number, number, number] = [244, 238, 221];
+    const BORDER: [number, number, number] = [221, 215, 199];
+    const ROW_ALT: [number, number, number] = [250, 248, 242];
 
-    doc.text(
-      orderNumber
-        ? `ORDINE FORNITORE N. ${orderNumber}`
-        : "ORDINE FORNITORE",
-      marginLeft,
-      y
-    );
-
-    y += 9;
-
-    doc.setFontSize(12);
-
-    doc.text(
-      supplier.name,
-      marginLeft,
-      y
-    );
-
-    y += 7;
-
-    doc.setFont(
-      "helvetica",
-      "normal"
-    );
-
-    doc.setFontSize(9);
-    doc.setTextColor(120, 120, 120);
-
-    doc.text(
-      `Data: ${formatDateForPdf(new Date())}`,
-      marginLeft,
-      y
-    );
-
-    doc.setTextColor(0, 0, 0);
-
-    y += 5;
-
-    if (!orderNumber) {
-      doc.setTextColor(120, 120, 120);
-
-      doc.text(
-        `ID ordine: ${orderId}`,
-        marginLeft,
-        y
-      );
-
-      doc.setTextColor(0, 0, 0);
-
-      y += 5;
+    function setInk(c: [number, number, number]) {
+      doc.setTextColor(c[0], c[1], c[2]);
     }
 
-    y += 3;
+    function setDraw(c: [number, number, number]) {
+      doc.setDrawColor(c[0], c[1], c[2]);
+    }
 
-    doc.setDrawColor(225);
-    doc.setLineWidth(0.3);
+    function setFill(c: [number, number, number]) {
+      doc.setFillColor(c[0], c[1], c[2]);
+    }
 
-    doc.line(
-      marginLeft,
-      y,
-      pageWidth - marginRight,
-      y
-    );
+    function fitFontSize(
+      text: string,
+      maxSize: number,
+      minSize: number,
+      maxWidth: number
+    ) {
+      let size = maxSize;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(size);
 
-    doc.setLineWidth(0.2);
+      while (size > minSize && doc.getTextWidth(text) > maxWidth) {
+        size -= 0.3;
+        doc.setFontSize(size);
+      }
 
-    y += 7;
+      return Math.max(size, minSize);
+    }
 
     /*
-      INTESTAZIONE TABELLA
+      COLONNE TABELLA
 
-      La consegna richiesta e' per singolo articolo (kit
-      diversi possono arrivare in mesi diversi), quindi non
-      c'e' piu' un'unica data in cima al PDF: ogni riga ha
-      la sua colonna CONSEGNA, valorizzata solo se impostata.
+      La consegna richiesta e' per singolo articolo (kit diversi
+      possono arrivare in mesi diversi), quindi ogni riga ha la sua
+      colonna CONSEGNA, valorizzata solo se impostata.
     */
-    const columns = {
-      code: marginLeft,
-      description: 43,
-      consegna: 108,
-      qty: 152,
-      price: 172,
-      total: 196,
-    };
+    const colDefs = [
+      { key: "riga", label: "Riga", frac: 0.06, align: "center" as const },
+      {
+        key: "code",
+        label: "Cod. articolo",
+        frac: 0.19,
+        align: "left" as const,
+      },
+      {
+        key: "description",
+        label: "Descrizione",
+        frac: 0.33,
+        align: "left" as const,
+      },
+      {
+        key: "consegna",
+        label: "Consegna",
+        frac: 0.11,
+        align: "center" as const,
+      },
+      { key: "qty", label: "Q.tà", frac: 0.09, align: "right" as const },
+      {
+        key: "price",
+        label: "Prezzo unit.",
+        frac: 0.11,
+        align: "right" as const,
+      },
+      { key: "total", label: "Totale", frac: 0.11, align: "right" as const },
+    ];
 
-    function drawTableHeader() {
-      doc.setFont(
-        "helvetica",
-        "bold"
-      );
+    const colX: Record<string, number> = {};
+    const colW: Record<string, number> = {};
 
-      doc.setFontSize(7.5);
-      doc.setTextColor(110, 110, 110);
+    {
+      let x = marginLeft;
 
-      doc.text(
-        "CODICE",
-        columns.code,
-        y
-      );
+      colDefs.forEach((col) => {
+        const w = contentWidth * col.frac;
+        colX[col.key] = x;
+        colW[col.key] = w;
+        x += w;
+      });
+    }
 
-      doc.text(
-        "DESCRIZIONE",
-        columns.description,
-        y
-      );
+    const cellPad = 2.6;
 
-      doc.text(
-        "CONSEGNA",
-        columns.consegna,
-        y
-      );
+    /*
+      INTESTAZIONE (logo, ragione sociale, indirizzo/contatti/dati
+      fiscali su 3 colonne allineate, riga oro di chiusura)
+    */
+    function drawLetterhead() {
+      const logoTop = 16;
+      drawCompanyLogoTopLeft(doc, companyLogo, {
+        top: logoTop,
+        left: marginLeft,
+        maxHeight: 13,
+      });
 
-      doc.text(
-        "QTA",
-        columns.qty,
-        y,
-        {
-          align: "right",
-        }
-      );
+      const nameY = logoTop + 13 + 6;
 
-      doc.text(
-        "PREZZO",
-        columns.price,
-        y,
-        {
-          align: "right",
-        }
-      );
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11.5);
+      setInk(INK);
+      doc.text(COMPANY_INFO.name, marginLeft, nameY);
 
-      doc.text(
-        "TOTALE",
-        columns.total,
-        y,
-        {
-          align: "right",
-        }
-      );
+      const gridTop = nameY + 6;
+      const colWidth = contentWidth / 3;
 
-      doc.setTextColor(0, 0, 0);
+      const infoCols: { label: string; lines: string[] }[] = [
+        { label: "Indirizzo", lines: COMPANY_INFO.address },
+        { label: "Contatti", lines: COMPANY_INFO.contacts },
+        { label: "Dati fiscali", lines: COMPANY_INFO.fiscal },
+      ];
 
-      y += 3;
+      infoCols.forEach((col, i) => {
+        const x = marginLeft + i * colWidth;
 
-      doc.setDrawColor(225);
-      doc.setLineWidth(0.25);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(7);
+        setInk(GOLD);
+        doc.text(col.label.toUpperCase(), x, gridTop);
 
-      doc.line(
-        marginLeft,
-        y,
-        pageWidth - marginRight,
-        y
-      );
+        doc.setFontSize(8);
+        setInk(MUTED);
 
+        let lineY = gridTop + 4.3;
+
+        col.lines.forEach((line) => {
+          doc.text(line, x, lineY);
+          lineY += 3.9;
+        });
+      });
+
+      const ruleY = gridTop + 4.3 + 4.2 * 4 + 2.5;
+
+      setDraw(GOLD);
+      doc.setLineWidth(0.6);
+      doc.line(marginLeft, ruleY, pageWidth - marginRight, ruleY);
       doc.setLineWidth(0.2);
 
-      y += 5;
+      setInk(INK);
 
-      doc.setFont(
-        "helvetica",
-        "normal"
+      return ruleY;
+    }
+
+    function drawDocTitle(ruleY: number) {
+      const y = ruleY + 10;
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(15);
+      setInk(INK);
+
+      doc.text("ORDINE DI ACQUISTO", pageWidth / 2, y, {
+        align: "center",
+      });
+
+      return y + 9;
+    }
+
+    function drawRecipientAndMeta(topY: number) {
+      const leftX = marginLeft;
+      const rightX = marginLeft + contentWidth * 0.58;
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8.4);
+      setInk(MUTED);
+      doc.text("Spett.le", leftX, topY);
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10.5);
+      setInk(INK);
+      doc.text(supplier!.name, leftX, topY + 5);
+
+      const deliveryDates = Array.from(
+        new Set(
+          orderLines.map((line) => line.requestedDelivery).filter(Boolean)
+        )
       );
+
+      const headerDelivery =
+        deliveryDates.length === 0
+          ? "-"
+          : deliveryDates.length === 1
+          ? formatDateForPdf(parseDateInputValue(deliveryDates[0]))
+          : "vedi righe sotto";
+
+      function metaLine(yPos: number, label: string, value: string) {
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(8.4);
+        setInk(MUTED);
+        doc.text(label, rightX, yPos);
+
+        const labelWidth = doc.getTextWidth(label);
+
+        doc.setFont("helvetica", "bold");
+        setInk(INK);
+        doc.text(value, rightX + labelWidth + 1.5, yPos);
+      }
+
+      metaLine(topY, "Ordine n.", orderNumber ? String(orderNumber) : "-");
+      metaLine(topY + 5, "Data", formatDateForPdf(new Date()));
+      metaLine(topY + 10, "Consegna richiesta", headerDelivery);
+
+      let y2 = topY + 18;
+
+      if (!orderNumber) {
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(7);
+        setInk(MUTED);
+        doc.text(`ID ordine: ${orderId}`, leftX, y2);
+        y2 += 5;
+      }
+
+      doc.setFont("helvetica", "italic");
+      doc.setFontSize(8.6);
+      setInk(INK);
+
+      doc.text(
+        "Con la presente Vi inviamo il nostro ordine per gli articoli indicati di seguito.",
+        leftX,
+        y2
+      );
+
+      setInk(INK);
+
+      return y2 + 8;
+    }
+
+    function drawTableHeader(topY: number) {
+      const headerH = 8;
+
+      setFill(GOLD_SOFT);
+      doc.rect(marginLeft, topY, contentWidth, headerH, "F");
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(7.2);
+      setInk(INK);
+
+      const textY = topY + headerH - 2.9;
+
+      colDefs.forEach((col) => {
+        const x = colX[col.key];
+        const w = colW[col.key];
+        const label = col.label.toUpperCase();
+
+        if (col.align === "left") {
+          doc.text(label, x + cellPad, textY);
+        } else if (col.align === "right") {
+          doc.text(label, x + w - cellPad, textY, { align: "right" });
+        } else {
+          doc.text(label, x + w / 2, textY, { align: "center" });
+        }
+      });
+
+      setDraw(GOLD);
+      doc.setLineWidth(0.45);
+      doc.line(marginLeft, topY + headerH, pageWidth - marginRight, topY + headerH);
+      doc.setLineWidth(0.2);
+
+      doc.setFont("helvetica", "normal");
+      setInk(INK);
+
+      return topY + headerH;
+    }
+
+    function drawContinuationHeader() {
+      let y = 20;
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      setInk(INK);
+
+      doc.text(
+        orderNumber
+          ? `Ordine di acquisto n. ${orderNumber} - ${supplier!.name} (segue)`
+          : `Ordine di acquisto - ${supplier!.name} (segue)`,
+        marginLeft,
+        y
+      );
+
+      y += 8;
+
+      return drawTableHeader(y);
     }
 
     /*
@@ -905,11 +1052,12 @@ export default function SupplierOrderPage() {
       colore/dettaglio/cucitura/trapuntatura usare, senza dover
       decifrare una riga fitta di barre - ma senza nemmeno un
       riquadro pesante che appesantisce il PDF. Una sottile riga
-      verticale a sinistra basta a segnalare "questo è un dettaglio
-      della riga sopra"; le etichette restano in grigio discreto,
-      i valori in nero.
+      verticale dorata a sinistra basta a segnalare "questo è un
+      dettaglio della riga sopra"; le etichette restano in grigio
+      caldo discreto, i valori in inchiostro.
     */
-    const VARIANT_CARD_WIDTH = 80;
+    const VARIANT_CARD_WIDTH =
+      colX.qty + colW.qty - colX.description - 2;
     const VARIANT_INDENT = 4;
     const VARIANT_LABEL_WIDTH = 30;
     const VARIANT_FONT_SIZE = 8;
@@ -987,7 +1135,7 @@ export default function SupplierOrderPage() {
       index: number,
       total: number
     ) {
-      doc.setDrawColor(210, 215, 224);
+      setDraw(GOLD);
       doc.setLineWidth(0.4);
       doc.line(x, yTop + 0.5, x, yTop + layout.height - 0.5);
       doc.setLineWidth(0.2);
@@ -997,7 +1145,7 @@ export default function SupplierOrderPage() {
 
       doc.setFont("helvetica", "italic");
       doc.setFontSize(7.2);
-      doc.setTextColor(140, 146, 156);
+      setInk(MUTED);
 
       doc.text(
         total > 1
@@ -1006,6 +1154,8 @@ export default function SupplierOrderPage() {
         contentX,
         headerBaseline
       );
+
+      setInk(INK);
 
       doc.text(
         `${variant.qty} pz`,
@@ -1021,12 +1171,12 @@ export default function SupplierOrderPage() {
       layout.fields.forEach((field) => {
         doc.setFont("helvetica", "normal");
         doc.setFontSize(7.5);
-        doc.setTextColor(115, 122, 132);
+        setInk(MUTED);
         doc.text(`${field.label}`, labelX, cy);
 
         doc.setFont("helvetica", "normal");
         doc.setFontSize(VARIANT_FONT_SIZE);
-        doc.setTextColor(30, 32, 38);
+        setInk(INK);
         doc.text(field.lines, valueX, cy, {
           lineHeightFactor: VARIANT_LINE_HEIGHT_FACTOR,
         });
@@ -1034,224 +1184,206 @@ export default function SupplierOrderPage() {
         cy += field.lines.length * VARIANT_LINE_HEIGHT;
       });
 
-      doc.setTextColor(0, 0, 0);
+      setInk(INK);
       doc.setFont("helvetica", "normal");
       doc.setFontSize(8);
     }
 
-    drawTableHeader();
+    const rowVPad = 3.3;
+    const rowMinH = rowVPad * 2 + 3.6;
+    const descLineH = 3.9;
 
-    doc.setFontSize(8);
+    const ruleY = drawLetterhead();
+    let y = drawDocTitle(ruleY);
+    y = drawRecipientAndMeta(y);
+    y = drawTableHeader(y);
 
     let totalOrder = 0;
 
-    orderLines.forEach((line) => {
-      const lineTotal =
-        Number(line.qty || 0) *
-        Number(line.item.price || 0);
-
+    orderLines.forEach((line, index) => {
+      const lineTotal = Number(line.qty || 0) * Number(line.item.price || 0);
       totalOrder += lineTotal;
 
-      const descriptionLines =
-        doc.splitTextToSize(
-          line.item.description || "-",
-          58
-        );
+      const descMaxWidth = colW.description - 2 * cellPad;
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8.6);
+
+      const descriptionLines = doc.splitTextToSize(
+        line.item.description || "-",
+        descMaxWidth
+      );
 
       const variantLayouts = line.variants.map((variant) =>
         layoutVariantCard(variant)
       );
 
-      const variantsTopGap =
-        variantLayouts.length > 0 ? 3 : 0;
+      const variantsTopGap = variantLayouts.length > 0 ? 3 : 0;
 
       const variantsHeight = variantLayouts.reduce(
-        (sum, layout, index) =>
-          sum + layout.height + (index > 0 ? VARIANT_CARD_GAP : 0),
+        (sum, layout, i) =>
+          sum + layout.height + (i > 0 ? VARIANT_CARD_GAP : 0),
         0
       );
 
-      const lineBoxQty = Math.max(
-        1,
-        Number(line.item.box_qty || 1)
-      );
-
+      const lineBoxQty = Math.max(1, Number(line.item.box_qty || 1));
       const hasBoxQty = lineBoxQty > 1;
+      const lineBoxes = Math.ceil(Number(line.qty || 0) / lineBoxQty);
 
-      const lineBoxes = Math.ceil(
-        Number(line.qty || 0) / lineBoxQty
+      const rowHeight = Math.max(
+        rowMinH,
+        rowVPad +
+          descriptionLines.length * descLineH +
+          (variantsHeight > 0 ? variantsTopGap + variantsHeight : 0) +
+          rowVPad
       );
-
-      const rowHeight =
-        Math.max(
-          hasBoxQty ? 9 : 6,
-          descriptionLines.length * 4 +
-            (variantsHeight > 0
-              ? variantsTopGap + variantsHeight
-              : 0)
-        );
 
       /*
         NUOVA PAGINA SE SERVE
       */
-      if (
-        y + rowHeight >
-        pageHeight - 25
-      ) {
+      if (y + rowHeight > pageHeight - 25) {
         doc.addPage();
-
-        y = 18;
-
-        doc.setFont(
-          "helvetica",
-          "bold"
-        );
-
-        doc.setFontSize(12);
-
-        doc.text(
-          `ORDINE - ${supplier.name}`,
-          marginLeft,
-          y
-        );
-
-        y += 9;
-
-        drawTableHeader();
+        y = drawContinuationHeader();
       }
 
-      doc.setFontSize(8);
-      doc.setFont(
-        "helvetica",
-        "normal"
+      const rowTop = y;
+
+      if (index % 2 === 1) {
+        setFill(ROW_ALT);
+        doc.rect(marginLeft, rowTop, contentWidth, rowHeight, "F");
+      }
+
+      const rowTextTop = rowTop + rowVPad + 2.4;
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8.2);
+      setInk(MUTED);
+
+      doc.text(String(index + 1), colX.riga + colW.riga / 2, rowTextTop, {
+        align: "center",
+      });
+
+      const code = line.item.supplier_code || "-";
+      const codeSize = fitFontSize(
+        code,
+        8.2,
+        6,
+        colW.code - 2 * cellPad
       );
 
-      doc.setTextColor(130, 130, 130);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(codeSize);
+      setInk(INK);
+      doc.text(code, colX.code + cellPad, rowTextTop);
 
-      doc.text(
-        line.item.supplier_code || "-",
-        columns.code,
-        y
-      );
-
-      doc.setTextColor(0, 0, 0);
-
-      doc.text(
-        descriptionLines,
-        columns.description,
-        y
-      );
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8.6);
+      setInk(INK);
+      doc.text(descriptionLines, colX.description + cellPad, rowTextTop);
 
       if (line.requestedDelivery) {
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(8.2);
+        setInk(MUTED);
+
         doc.text(
-          formatDateForPdf(
-            parseDateInputValue(line.requestedDelivery)
-          ),
-          columns.consegna,
-          y
+          formatDateForPdf(parseDateInputValue(line.requestedDelivery)),
+          colX.consegna + colW.consegna / 2,
+          rowTextTop,
+          { align: "center" }
         );
       }
 
       if (variantLayouts.length > 0) {
-        let cardY =
-          y + descriptionLines.length * 4 + variantsTopGap;
+        let cardY = rowTop + rowVPad + descriptionLines.length * descLineH + variantsTopGap;
 
-        line.variants.forEach((variant, index) => {
-          const layout = variantLayouts[index];
+        line.variants.forEach((variant, i) => {
+          const layout = variantLayouts[i];
 
           drawVariantCard(
-            columns.description,
+            colX.description,
             cardY,
             variant,
             layout,
-            index,
+            i,
             line.variants.length
           );
 
           cardY += layout.height + VARIANT_CARD_GAP;
         });
-
-        doc.setTextColor(0, 0, 0);
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(8);
       }
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8.6);
+      setInk(INK);
 
       doc.text(
         String(line.qty),
-        columns.qty,
-        y,
-        {
-          align: "right",
-        }
+        colX.qty + colW.qty - cellPad,
+        rowTextTop,
+        { align: "right" }
       );
 
       if (hasBoxQty) {
-        doc.setFontSize(6.5);
-        doc.setTextColor(150, 150, 150);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(6.4);
+        setInk(MUTED);
 
         doc.text(
           `${lineBoxes} box`,
-          columns.qty,
-          y + 3.4,
-          {
-            align: "right",
-          }
+          colX.qty + colW.qty - cellPad,
+          rowTextTop + 3.4,
+          { align: "right" }
         );
-
-        doc.setTextColor(0, 0, 0);
-        doc.setFontSize(8);
       }
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8.2);
+      setInk(MUTED);
 
       doc.text(
         formatPdfEuro(line.item.price),
-        columns.price,
-        y,
-        {
-          align: "right",
-        }
+        colX.price + colW.price - cellPad,
+        rowTextTop,
+        { align: "right" }
       );
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8.6);
+      setInk(INK);
 
       doc.text(
         formatPdfEuro(lineTotal),
-        columns.total,
-        y,
-        {
-          align: "right",
-        }
+        colX.total + colW.total - cellPad,
+        rowTextTop,
+        { align: "right" }
       );
 
-      y += rowHeight + 3;
+      y = rowTop + rowHeight;
 
-      doc.setDrawColor(240);
-      doc.setLineWidth(0.15);
-
-      doc.line(
-        marginLeft,
-        y,
-        pageWidth - marginRight,
-        y
-      );
-
+      setDraw(BORDER);
+      doc.setLineWidth(0.25);
+      doc.line(marginLeft, y, pageWidth - marginRight, y);
       doc.setLineWidth(0.2);
-
-      y += 3;
     });
 
     /*
-      TOTALE
+      TOTALE E CHIUSURA LETTERA
     */
-    if (y > pageHeight - 30) {
+    if (y + 45 > pageHeight - 20) {
       doc.addPage();
       y = 20;
     }
 
-    y += 4;
+    y += 8;
 
-    doc.setDrawColor(200);
-    doc.setLineWidth(0.3);
+    setDraw(INK);
+    doc.setLineWidth(0.45);
+
+    const totalLineWidth = 78;
 
     doc.line(
-      120,
+      pageWidth - marginRight - totalLineWidth,
       y,
       pageWidth - marginRight,
       y
@@ -1259,30 +1391,80 @@ export default function SupplierOrderPage() {
 
     doc.setLineWidth(0.2);
 
-    y += 7;
+    y += 6;
 
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.setTextColor(120, 120, 120);
+    doc.setFontSize(8.6);
+    setInk(MUTED);
 
     doc.text(
-      "TOTALE ORDINE",
-      120,
+      "Importo totale ordine, IVA escl.",
+      pageWidth - marginRight - totalLineWidth,
       y
     );
 
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(13);
-    doc.setTextColor(0, 0, 0);
+    doc.setFontSize(12);
+    setInk(INK);
 
     doc.text(
-      formatPdfEuro(totalOrder),
+      formatPdfEuro(totalOrder, true),
       pageWidth - marginRight,
       y,
-      {
-        align: "right",
-      }
+      { align: "right" }
     );
+
+    y += 12;
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.6);
+    setInk(INK);
+
+    doc.text(
+      "In attesa di una Vostra cortese conferma d'ordine, porgiamo distinti saluti.",
+      marginLeft,
+      y
+    );
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9.5);
+    doc.text(COMPANY_INFO.name, marginLeft, y + 10);
+
+    /*
+      PIE' DI PAGINA SU TUTTE LE PAGINE
+    */
+    const totalPages = doc.getNumberOfPages();
+
+    for (let page = 1; page <= totalPages; page++) {
+      doc.setPage(page);
+
+      const footerTextY = pageHeight - 14;
+      const footerRuleY = footerTextY - 5.5;
+
+      setDraw(BORDER);
+      doc.setLineWidth(0.25);
+      doc.line(marginLeft, footerRuleY, pageWidth - marginRight, footerRuleY);
+      doc.setLineWidth(0.2);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(6.8);
+      setInk(MUTED);
+
+      doc.text(
+        "Documento generato automaticamente dal gestionale Italboats.",
+        marginLeft,
+        footerTextY
+      );
+
+      doc.text(
+        `Pagina ${page} di ${totalPages}`,
+        pageWidth - marginRight,
+        footerTextY,
+        { align: "right" }
+      );
+    }
+
+    setInk(INK);
 
     return doc;
   }
@@ -3014,19 +3196,22 @@ function formatEuro(
 }
 
 function formatPdfEuro(
-  value: number
+  value: number,
+  symbolFirst = false
 ) {
-  return (
-    new Intl.NumberFormat(
-      "it-IT",
-      {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      }
-    ).format(
-      Number(value || 0)
-    ) + " EUR"
+  const formatted = new Intl.NumberFormat(
+    "it-IT",
+    {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }
+  ).format(
+    Number(value || 0)
   );
+
+  return symbolFirst
+    ? `EUR ${formatted}`
+    : `${formatted} EUR`;
 }
 
 function formatDateForPdf(

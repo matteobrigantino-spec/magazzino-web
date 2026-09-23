@@ -73,3 +73,36 @@ export function drawCompanyLogoTopRight(
     // Un logo che non si riesce a disegnare non deve mai bloccare il PDF.
   }
 }
+
+/*
+  Disegna il logo in alto a sinistra, dentro un riquadro alto
+  maxHeight (proporzioni mantenute). Usato dal PDF ordine fornitore
+  (stile "lettera intestata"), che vuole il logo a sinistra invece
+  che a destra come gli altri PDF del sito. Restituisce la larghezza
+  disegnata (0 se il logo manca o il disegno fallisce), utile per
+  posizionare il testo che segue.
+*/
+export function drawCompanyLogoTopLeft(
+  doc: jsPDF,
+  logo: string,
+  opts?: { top?: number; left?: number; maxHeight?: number }
+): number {
+  if (!logo) return 0;
+
+  try {
+    const top = opts?.top ?? 16;
+    const left = opts?.left ?? 18;
+    const maxHeight = opts?.maxHeight ?? 13;
+
+    const image = doc.getImageProperties(logo);
+    const scale = maxHeight / image.height;
+    const width = image.width * scale;
+    const height = image.height * scale;
+
+    doc.addImage(logo, "PNG", left, top, width, height);
+
+    return width;
+  } catch {
+    return 0;
+  }
+}

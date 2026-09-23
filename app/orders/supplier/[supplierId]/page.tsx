@@ -2341,7 +2341,7 @@ export default function SupplierOrderPage() {
                           }}
                         >
                           <option value="">
-                            Nessuno (va in giacenza)
+                            Automatico (consegna più vicina)
                           </option>
                           {boatRequestsFor(line.item.id).map(
                             (request) => (

@@ -10,6 +10,7 @@ type Supplier = {
   id: string;
   name: string;
   upholstery_enabled?: boolean;
+  windshield_enabled?: boolean;
 };
 
 type Item = {
@@ -294,7 +295,7 @@ export default function SupplierOrderPage() {
     const { data: supplierData, error: supplierError } =
       await supabase
         .from("suppliers")
-        .select("id,name,upholstery_enabled")
+        .select("id,name,upholstery_enabled,windshield_enabled")
         .eq("id", supplierId)
         .single();
 
@@ -347,16 +348,18 @@ export default function SupplierOrderPage() {
     }));
 
     /*
-      RICHIESTE TAPPEZZERIA "DA ORDINARE"
+      RICHIESTE TAPPEZZERIA/PARABREZZA "DA ORDINARE"
 
       Un articolo con almeno una richiesta battello ancora senza
-      kit assegnato E senza riga d'ordine aperta (production_
-      boat_upholstery.kit_id e .order_item_id entrambi null) deve
-      entrare comunque nella proposta, anche se la giacenza
-      generale dell'articolo è già sopra la scorta minima: colori
-      diversi dello stesso kit condividono l'articolo ma non la
-      giacenza fisica del colore specifico richiesto, quindi il
-      solo calcolo su scorta minima non le vede.
+      kit assegnato E senza riga d'ordine aperta (kit_id e
+      order_item_id entrambi null, su production_boat_upholstery o
+      production_boat_windshield) deve entrare comunque nella
+      proposta, anche se la giacenza generale dell'articolo è già
+      sopra la scorta minima: per la tappezzeria, colori diversi
+      dello stesso kit condividono l'articolo ma non la giacenza
+      fisica del colore specifico richiesto; per il parabrezza la
+      giacenza può semplicemente non essere ancora arrivata. In
+      entrambi i casi il solo calcolo su scorta minima non le vede.
     */
     const openRequestCounts = new Map<string, number>();
 
@@ -398,6 +401,34 @@ export default function SupplierOrderPage() {
         });
 
         openRequestVariantsByItem.set(itemId, list);
+      }
+    }
+
+    /*
+      RICHIESTE PARABREZZA "DA ORDINARE"
+
+      Stessa logica delle tappezzerie qui sopra, ma senza colore: un
+      parabrezza e' gia' identificato dall'articolo (production_boat_
+      windshield non ha una colonna supplier_id propria, quindi
+      filtriamo per gli articoli di questo fornitore).
+    */
+    if (supplierData.windshield_enabled && cleanItems.length > 0) {
+      const { data: openWindshieldData } = await supabase
+        .from("production_boat_windshield")
+        .select("item_id")
+        .in(
+          "item_id",
+          cleanItems.map((item) => item.id)
+        )
+        .is("kit_id", null)
+        .is("order_item_id", null);
+
+      for (const row of openWindshieldData || []) {
+        const itemId = String((row as any).item_id);
+        openRequestCounts.set(
+          itemId,
+          (openRequestCounts.get(itemId) || 0) + 1
+        );
       }
     }
 

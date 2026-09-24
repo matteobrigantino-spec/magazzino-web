@@ -100,6 +100,61 @@ type AtomicOrderResult = {
   total?: number;
 };
 
+/*
+  TIPI DI KIT CHE SI ABBINANO IN AUTOMATICO ALL'ORDINE APPENA
+  CONFERMATO (tappezzeria, parabrezza, ...)
+
+  Definiti qui in un unico posto apposta: il bug di settembre 2026
+  (ordini parabrezza confermati ma richieste battello rimaste "da
+  ordinare") è nato perché il parabrezza è stato aggiunto copiando
+  la tappezzeria, ma la chiamata di abbinamento automatico dopo la
+  conferma ordine è stata scritta due volte a mano - una per tipo -
+  e la seconda copia è stata semplicemente dimenticata.
+
+  Finché un nuovo tipo di kit si aggiunge come voce di questa lista
+  invece che con un blocco di codice copiato a mano, lo stesso tipo
+  di dimenticanza non può più succedere: il loop unico in
+  confirmOrder() copre automaticamente ogni voce qui elencata.
+*/
+type KitLinkType = {
+  key: string;
+  label: string;
+  isEnabled: (supplier: Supplier) => boolean;
+  // Quali righe d'ordine provare ad abbinare in automatico. La
+  // tappezzeria esclude quelle già assegnate a mano con "Per
+  // battello"; il parabrezza non ha un'assegnazione manuale, quindi
+  // le prova sempre tutte.
+  includeLine: (line: OrderLine) => boolean;
+  runLink: (
+    itemId: string,
+    currentSupplierId: string
+  ) => Promise<{ error: unknown } | void>;
+};
+
+const KIT_LINK_TYPES: KitLinkType[] = [
+  {
+    key: "upholstery",
+    label: "tappezzeria",
+    isEnabled: (supplier) => !!supplier.upholstery_enabled,
+    includeLine: (line) => !line.boatUpholsteryId,
+    runLink: (itemId, currentSupplierId) =>
+      supabase.rpc("sync_upholstery_order_links", {
+        p_supplier_id: currentSupplierId,
+        p_item_id: itemId,
+      }),
+  },
+  {
+    key: "windshield",
+    label: "parabrezza",
+    isEnabled: (supplier) => !!supplier.windshield_enabled,
+    includeLine: () => true,
+    runLink: (itemId) =>
+      supabase.rpc("sync_windshield_order_links", {
+        p_item_id: itemId,
+      }),
+  },
+];
+
 export default function SupplierOrderPage() {
   const params = useParams();
   const router = useRouter();
@@ -1719,53 +1774,33 @@ export default function SupplierOrderPage() {
       }
     }
 
-    // Per le righe tappezzeria NON assegnate a mano con "Per battello",
-    // prova ad abbinarle in automatico alla richiesta del battello con
-    // la consegna richiesta più vicina (stesso fornitore + articolo).
-    if (supplier?.upholstery_enabled) {
-      const autoLinkItemIds = Array.from(
-        new Set(
-          lines
-            .filter((line) => !line.boatUpholsteryId)
-            .map((line) => line.item.id)
-        )
-      );
+    // Per ogni tipo di kit attivo su questo fornitore (tappezzeria,
+    // parabrezza, ...) prova ad abbinare in automatico le righe non
+    // già assegnate a mano alla richiesta battello con la consegna
+    // richiesta più vicina. Vedi KIT_LINK_TYPES in cima al file: un
+    // solo loop invece di un blocco copiato per ogni tipo, apposta
+    // per non ripetere il bug del parabrezza dimenticato.
+    if (supplier) {
+      for (const kitType of KIT_LINK_TYPES) {
+        if (!kitType.isEnabled(supplier)) continue;
 
-      for (const autoItemId of autoLinkItemIds) {
-        try {
-          await supabase.rpc("sync_upholstery_order_links", {
-            p_supplier_id: supplierId,
-            p_item_id: autoItemId,
-          });
-        } catch (syncError) {
-          console.error(
-            "Errore abbinamento automatico tappezzeria:",
-            syncError
-          );
-        }
-      }
-    }
+        const kitItemIds = Array.from(
+          new Set(
+            lines
+              .filter(kitType.includeLine)
+              .map((line) => line.item.id)
+          )
+        );
 
-    // Stessa cosa per i parabrezza: le righe d'ordine per articoli
-    // parabrezza non hanno un'assegnazione manuale "Per battello"
-    // (quella esiste solo per la tappezzeria), quindi qui si prova
-    // sempre l'abbinamento automatico alla richiesta battello con
-    // la consegna richiesta più vicina.
-    if (supplier?.windshield_enabled) {
-      const windshieldItemIds = Array.from(
-        new Set(lines.map((line) => line.item.id))
-      );
-
-      for (const windshieldItemId of windshieldItemIds) {
-        try {
-          await supabase.rpc("sync_windshield_order_links", {
-            p_item_id: windshieldItemId,
-          });
-        } catch (syncError) {
-          console.error(
-            "Errore abbinamento automatico parabrezza:",
-            syncError
-          );
+        for (const kitItemId of kitItemIds) {
+          try {
+            await kitType.runLink(kitItemId, supplierId);
+          } catch (syncError) {
+            console.error(
+              `Errore abbinamento automatico ${kitType.label}:`,
+              syncError
+            );
+          }
         }
       }
     }

@@ -139,6 +139,9 @@ export default function SupplierDetail({
 
   const [companyLogo, setCompanyLogo] = useState("");
 
+  const [leadTimeStats, setLeadTimeStats] =
+    useState<{ avgDays: number; count: number } | null>(null);
+
   useEffect(() => {
     fetchCompanyLogo().then(setCompanyLogo);
   }, []);
@@ -223,6 +226,58 @@ export default function SupplierDetail({
         !windshieldError &&
           windshieldRow?.windshield_enabled === true
       );
+
+      /*
+        TEMPI DI CONSEGNA (STEP 36)
+
+        Query separata e isolata come quella sopra per
+        windshield_enabled: se received_at non esiste ancora
+        (STEP36 non ancora eseguito su Supabase) fallisce da sola
+        senza bloccare il resto della pagina, e il pannello con i
+        tempi di consegna semplicemente non compare.
+      */
+      const { data: deliveredOrders, error: deliveredOrdersError } =
+        await supabase
+          .from("orders")
+          .select("order_date,received_at")
+          .eq("supplier_id", supplierId)
+          .eq("status", "received");
+
+      if (!deliveredOrdersError && deliveredOrders) {
+        const leadTimes = deliveredOrders
+          .map((row: any) => {
+            if (!row.order_date || !row.received_at) {
+              return null;
+            }
+
+            const orderDate = new Date(row.order_date).getTime();
+            const receivedDate = new Date(row.received_at).getTime();
+
+            if (
+              !Number.isFinite(orderDate) ||
+              !Number.isFinite(receivedDate) ||
+              receivedDate < orderDate
+            ) {
+              return null;
+            }
+
+            return (receivedDate - orderDate) / 86400000;
+          })
+          .filter((value): value is number => value !== null);
+
+        setLeadTimeStats(
+          leadTimes.length > 0
+            ? {
+                avgDays:
+                  leadTimes.reduce((sum, value) => sum + value, 0) /
+                  leadTimes.length,
+                count: leadTimes.length,
+              }
+            : null
+        );
+      } else {
+        setLeadTimeStats(null);
+      }
 
       const shouldLoadPrice =
         canViewPrices ||
@@ -1428,6 +1483,15 @@ export default function SupplierDetail({
             }}
           >
             {totals.totalItems} articoli presenti
+            {leadTimeStats && (
+              <>
+                {" "}
+                · consegna media {leadTimeStats.avgDays.toFixed(1)} giorni
+                {" "}
+                (su {leadTimeStats.count}{" "}
+                {leadTimeStats.count === 1 ? "ordine" : "ordini"})
+              </>
+            )}
           </div>
         </div>
 

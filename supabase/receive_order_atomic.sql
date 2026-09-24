@@ -226,8 +226,19 @@ begin
     v_new_status := 'partial';
   end if;
 
+  /*
+    Quando l'ordine risulta completamente ricevuto, registriamo
+    anche QUANDO è successo (received_at), per calcolare i tempi
+    di consegna fornitore (STEP 36). Un arrivo parziale non tocca
+    received_at.
+  */
   update public.orders
-  set status = v_new_status
+  set
+    status = v_new_status,
+    received_at = case
+      when v_new_status = 'received' then now()
+      else received_at
+    end
   where id = p_order_id;
 
   return jsonb_build_object(

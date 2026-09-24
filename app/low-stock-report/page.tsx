@@ -24,8 +24,14 @@ type Supplier = {
   name: string;
 };
 
+type SlowMoverItem = LowStockItem & {
+  daysSinceOrder: number | null;
+  stockValue: number;
+};
+
 export default function LowStockReportPage() {
   const [items, setItems] = useState<LowStockItem[]>([]);
+  const [slowMovers, setSlowMovers] = useState<SlowMoverItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
 
@@ -90,6 +96,91 @@ export default function LowStockReportPage() {
       }));
 
     setItems(report);
+
+    /*
+      ARTICOLI FERMI
+
+      Non è un vero calcolo di "giacenza morta" (non abbiamo dati di
+      consumo/vendita per articolo): è un segnale più semplice ma
+      concreto, "quanto e da quanto non lo ordiniamo", su articoli
+      che hanno comunque qualcosa a magazzino. Non blocca mai il
+      resto della pagina se la query fallisce.
+    */
+    try {
+      const { data: allOrderItems } = await supabase
+        .from("order_items")
+        .select("item_id,order_id");
+
+      const { data: allOrders } = await supabase
+        .from("orders")
+        .select("id,order_date");
+
+      const orderDateById = new Map(
+        (allOrders || []).map((row: any) => [
+          String(row.id),
+          row.order_date ? String(row.order_date) : "",
+        ])
+      );
+
+      const lastOrderDateByItem = new Map<string, string>();
+
+      (allOrderItems || []).forEach((row: any) => {
+        const itemId = String(row.item_id);
+        const orderDate = orderDateById.get(String(row.order_id));
+
+        if (!orderDate) return;
+
+        const current = lastOrderDateByItem.get(itemId);
+
+        if (!current || orderDate > current) {
+          lastOrderDateByItem.set(itemId, orderDate);
+        }
+      });
+
+      const today = new Date();
+
+      const movers = (itemData || [])
+        .map((item) => {
+          const stock = Number(item.stock ?? 0);
+          const onOrder = Number(item.on_order ?? 0);
+          const price = Number(item.price ?? 0);
+          const lastOrderDate = lastOrderDateByItem.get(String(item.id));
+
+          const daysSinceOrder = lastOrderDate
+            ? Math.floor(
+                (today.getTime() - new Date(lastOrderDate).getTime()) /
+                  86400000
+              )
+            : null;
+
+          return {
+            ...item,
+            stock,
+            min_stock: Number(item.min_stock ?? 0),
+            on_order: onOrder,
+            price,
+            supplier_name: item.supplier_id
+              ? supplierMap.get(item.supplier_id) || "Fornitore sconosciuto"
+              : "Fornitore sconosciuto",
+            daysSinceOrder,
+            stockValue: stock * price,
+          };
+        })
+        .filter((item) => {
+          return (
+            item.stock > 0 &&
+            item.on_order === 0 &&
+            (item.daysSinceOrder === null || item.daysSinceOrder >= 180)
+          );
+        })
+        .sort((a, b) => b.stockValue - a.stockValue)
+        .slice(0, 50);
+
+      setSlowMovers(movers);
+    } catch {
+      setSlowMovers([]);
+    }
+
     setLoading(false);
   }
 
@@ -738,6 +829,122 @@ export default function LowStockReportPage() {
         }}
       >
         Quantità suggerita = Scorta minima − Giacenza − Quantità già in ordine.
+      </div>
+
+      {/* ARTICOLI FERMI */}
+
+      <div
+        style={{
+          marginTop: 32,
+        }}
+      >
+        <div
+          style={{
+            fontSize: 13,
+            opacity: 0.55,
+            marginBottom: 4,
+            textTransform: "uppercase",
+            letterSpacing: 1.2,
+            fontWeight: 700,
+          }}
+        >
+          Magazzino
+        </div>
+
+        <h2
+          style={{
+            margin: 0,
+            fontSize: 22,
+            fontWeight: 800,
+          }}
+        >
+          Articoli fermi
+        </h2>
+
+        <div
+          style={{
+            marginTop: 6,
+            marginBottom: 16,
+            opacity: 0.6,
+            fontSize: 14,
+            maxWidth: 720,
+          }}
+        >
+          Articoli con giacenza, senza niente in ordine, che non
+          vengono ordinati da almeno 6 mesi (o mai). Non è un calcolo
+          preciso di consumo, ma un modo rapido per individuare
+          capitale fermo a magazzino.
+        </div>
+
+        {slowMovers.length === 0 ? (
+          <div
+            style={{
+              padding: 24,
+              textAlign: "center",
+              opacity: 0.55,
+              fontSize: 14,
+              border: "1px solid var(--border-color)",
+              borderRadius: 12,
+              background: "var(--card)",
+            }}
+          >
+            Nessun articolo fermo trovato con questi criteri.
+          </div>
+        ) : (
+          <div
+            style={{
+              border: "1px solid var(--border-color)",
+              borderRadius: 12,
+              background: "var(--card)",
+              overflow: "auto",
+            }}
+          >
+            <table
+              style={{
+                width: "100%",
+                borderCollapse: "collapse",
+              }}
+            >
+              <thead>
+                <tr>
+                  <th style={headerStyle}>Fornitore</th>
+                  <th style={headerStyle}>Cod. articolo</th>
+                  <th style={headerStyle}>Descrizione</th>
+                  <th style={headerCenterStyle}>Giacenza</th>
+                  <th style={headerCenterStyle}>Da quanto fermo</th>
+                  <th style={headerRightStyle}>Valore fermo</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {slowMovers.map((item) => (
+                  <tr
+                    key={item.id}
+                    style={{
+                      borderTop:
+                        "1px solid var(--border-color)",
+                    }}
+                  >
+                    <td style={cellStyle}>{item.supplier_name}</td>
+                    <td style={cellStyle}>
+                      {item.supplier_code || item.code || "-"}
+                    </td>
+                    <td style={cellStyle}>{item.description || "-"}</td>
+                    <td style={centerCellStyle}>{item.stock}</td>
+                    <td style={centerCellStyle}>
+                      {item.daysSinceOrder === null
+                        ? "Mai ordinato"
+                        : `${item.daysSinceOrder} giorni`}
+                    </td>
+                    <td style={rightCellStyle}>
+                      <strong>{formatEuro(item.stockValue)}</strong>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );

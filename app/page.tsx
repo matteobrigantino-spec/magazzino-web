@@ -86,6 +86,18 @@ type BoatAtRisk = {
   missingUpholstery: boolean;
 };
 
+type OverdueOrderLine = {
+  id: string;
+  orderId: string;
+  orderNumber: string;
+  supplierId: string;
+  itemDescription: string;
+  itemCode: string;
+  qtyRemaining: number;
+  deliveryDate: string;
+  daysLate: number;
+};
+
 type Permissions = {
   dashboard?: boolean;
   view_prices?: boolean;
@@ -254,6 +266,11 @@ export default function Home() {
     boatsAtRisk,
     setBoatsAtRisk,
   ] = useState<BoatAtRisk[]>([]);
+
+  const [
+    overdueOrderLines,
+    setOverdueOrderLines,
+  ] = useState<OverdueOrderLine[]>([]);
 
   const canViewInventoryValue =
     permissions.view_inventory_value === true;
@@ -594,6 +611,99 @@ export default function Home() {
       // Non blocca mai la dashboard.
     }
 
+    /*
+      ORDINI FORNITORE IN RITARDO: righe d'ordine ancora da
+      ricevere (in tutto o in parte) la cui consegna richiesta
+      è già passata. La data si legge dalla riga se impostata,
+      altrimenti da quella generale dell'ordine. Come per i
+      battelli a rischio, non blocca mai la dashboard.
+    */
+    let overdueLinesData: OverdueOrderLine[] = [];
+
+    try {
+      if (currentPermissions.orders === true) {
+        const { data: openOrdersData, error: openOrdersError } =
+          await supabase
+            .from("orders")
+            .select(
+              "id,order_number,supplier_id,status,requested_delivery_date"
+            )
+            .in("status", ["draft", "ordered", "partial"]);
+
+        if (
+          !openOrdersError &&
+          openOrdersData &&
+          openOrdersData.length > 0
+        ) {
+          const openOrderIds = openOrdersData.map((row) =>
+            String(row.id)
+          );
+
+          const { data: openOrderItemsData, error: openOrderItemsError } =
+            await supabase
+              .from("order_items")
+              .select(
+                "id,order_id,item_id,qty,received_qty,requested_delivery_date"
+              )
+              .in("order_id", openOrderIds);
+
+          if (!openOrderItemsError && openOrderItemsData) {
+            const today = currentLocalDate();
+
+            const orderById = new Map(
+              openOrdersData.map((row) => [String(row.id), row])
+            );
+
+            const itemById = new Map(
+              itemsData.map((row) => [String(row.id), row])
+            );
+
+            overdueLinesData = openOrderItemsData
+              .map((row) => {
+                const order = orderById.get(String(row.order_id));
+                const item = itemById.get(String(row.item_id));
+
+                const qty = Number(row.qty || 0);
+                const receivedQty = Number(row.received_qty || 0);
+                const remainingQty = qty - receivedQty;
+
+                const deliveryDate =
+                  String(row.requested_delivery_date || "") ||
+                  String(order?.requested_delivery_date || "");
+
+                return {
+                  id: String(row.id),
+                  orderId: String(row.order_id),
+                  orderNumber: String(order?.order_number || ""),
+                  supplierId: String(order?.supplier_id || ""),
+                  itemDescription: String(item?.description || "-"),
+                  itemCode: String(
+                    item?.supplier_code || item?.code || "-"
+                  ),
+                  qtyRemaining: remainingQty,
+                  deliveryDate,
+                  daysLate: deliveryDate
+                    ? daysBetweenLocalDates(deliveryDate, today)
+                    : 0,
+                };
+              })
+              .filter(
+                (line) =>
+                  line.qtyRemaining > 0 &&
+                  line.deliveryDate &&
+                  line.deliveryDate < today
+              )
+              .sort((a, b) =>
+                a.deliveryDate < b.deliveryDate ? -1 : 1
+              )
+              .slice(0, 8);
+          }
+        }
+      }
+    } catch {
+      // Non blocca mai la dashboard.
+    }
+
     const cleanSuppliers: Supplier[] =
       (suppliersData || []).map(
         (row) => ({
@@ -741,6 +851,7 @@ export default function Home() {
     setReminders(cleanReminders);
     setUnreadNotes(unreadNotesData);
     setBoatsAtRisk(boatsAtRiskData);
+    setOverdueOrderLines(overdueLinesData);
 
     setLoading(false);
   }
@@ -1645,6 +1756,116 @@ export default function Home() {
                         Tappezzeria
                       </span>
                     )}
+                  </div>
+                </button>
+              );
+            })
+          )}
+        </div>
+      </section>
+
+      {/* ORDINI FORNITORE IN RITARDO */}
+
+      <section className="home-panel home-risk-panel">
+        <PanelTitle
+          title="Ordini fornitore in ritardo"
+          subtitle={
+            overdueOrderLines.length === 0
+              ? "Nessun ordine oltre la consegna richiesta"
+              : `${overdueOrderLines.length} righe oltre la data di consegna richiesta`
+          }
+          badge={
+            overdueOrderLines.length > 0
+              ? overdueOrderLines.length
+              : undefined
+          }
+          actionText="Vedi ordini"
+          onAction={() =>
+            router.push("/orders")
+          }
+        />
+
+        <div className="home-risk-list">
+          {overdueOrderLines.length === 0 ? (
+            <div className="home-success-empty">
+              <div className="home-success-icon">
+                ✓
+              </div>
+
+              <div>
+                <strong>
+                  Nessun ordine in ritardo
+                </strong>
+
+                <span>
+                  Tutti gli ordini aperti sono ancora
+                  nei tempi di consegna previsti.
+                </span>
+              </div>
+            </div>
+          ) : (
+            overdueOrderLines.map((line) => {
+              const state = reminderState(
+                line.deliveryDate
+              );
+
+              return (
+                <button
+                  type="button"
+                  key={line.id}
+                  className="home-risk-row"
+                  onClick={() =>
+                    router.push(
+                      `/orders/${line.orderId}`
+                    )
+                  }
+                >
+                  <div
+                    className="home-date-badge"
+                    style={{
+                      color: state.color,
+
+                      borderColor: `${state.color}55`,
+
+                      background: `${state.color}12`,
+                    }}
+                  >
+                    <strong>
+                      {formatReminderDay(
+                        line.deliveryDate
+                      )}
+                    </strong>
+
+                    <span>
+                      {formatReminderMonth(
+                        line.deliveryDate
+                      )}
+                    </span>
+                  </div>
+
+                  <div className="home-risk-copy">
+                    <strong>
+                      {supplierMap.get(line.supplierId) ||
+                        "Fornitore sconosciuto"}
+                      {line.orderNumber
+                        ? ` · Ordine N. ${line.orderNumber}`
+                        : ""}
+                    </strong>
+
+                    <span>
+                      {line.itemCode} · {line.itemDescription}{" "}
+                      · {line.qtyRemaining} pz mancanti
+                    </span>
+                  </div>
+
+                  <div className="home-risk-tags">
+                    <span className="home-risk-tag home-risk-tag-red">
+                      {line.daysLate === 0
+                        ? "Oggi"
+                        : line.daysLate === 1
+                        ? "1 giorno"
+                        : `${line.daysLate} giorni`}
+                    </span>
                   </div>
                 </button>
               );
@@ -2854,6 +3075,12 @@ export default function Home() {
           border: 1px solid rgba(167,139,250,0.32);
         }
 
+        .home-risk-tag-red {
+          color: #ef4444;
+          background: rgba(239,68,68,0.12);
+          border: 1px solid rgba(239,68,68,0.32);
+        }
+
         .home-panel-title {
           padding: 19px 22px;
           display: flex;
@@ -4038,6 +4265,29 @@ function currentLocalDate() {
     );
 
   return `${year}-${month}-${day}`;
+}
+
+/*
+  Giorni interi tra due date "AAAA-MM-GG" (locali, non UTC: come
+  parseDateInputValue nella pagina ordine fornitore, per evitare
+  che il fuso orario sfasi il conteggio di un giorno).
+*/
+function daysBetweenLocalDates(
+  fromDate: string,
+  toDate: string
+) {
+  const parse = (value: string) => {
+    const [year, month, day] = value
+      .split("-")
+      .map((part) => Number(part));
+
+    return new Date(year, (month || 1) - 1, day || 1);
+  };
+
+  const diffMs =
+    parse(toDate).getTime() - parse(fromDate).getTime();
+
+  return Math.max(0, Math.round(diffMs / 86400000));
 }
 
 function reminderState(

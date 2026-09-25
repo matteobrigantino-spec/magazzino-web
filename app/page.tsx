@@ -3635,7 +3635,6 @@ export default function Home() {
         }
 
         .reminder-form input,
-        .reminder-form select,
         .reminder-form textarea {
           width: 100%;
           box-sizing: border-box;
@@ -3644,6 +3643,26 @@ export default function Home() {
           border-radius: 10px;
           outline: none;
           background: rgba(255,255,255,0.025);
+          color: white;
+          font: inherit;
+          transition: border-color .15s ease;
+        }
+
+        .reminder-form select {
+          width: 100%;
+          box-sizing: border-box;
+          padding: 12px 13px;
+          border: 1px solid rgba(255,255,255,0.1);
+          border-radius: 10px;
+          outline: none;
+          /*
+            A differenza di input/textarea, il popup nativo delle opzioni
+            di una select non eredita uno sfondo semi-trasparente: va
+            usato un colore pieno, altrimenti il browser lo disegna con
+            sfondo chiaro e il testo bianco diventa illeggibile (stesso
+            bug visto in Produzione -> Distinta base).
+          */
+          background: #081524;
           color: white;
           font: inherit;
           transition: border-color .15s ease;

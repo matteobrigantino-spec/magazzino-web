@@ -1268,9 +1268,15 @@ export default function SharedNotesPage() {
                 disabled={
                   sendingNote
                 }
-                style={
-                  formControlStyle
-                }
+                style={{
+                  ...formControlStyle,
+                  // Il popup nativo delle opzioni di una select non
+                  // eredita uno sfondo semi-trasparente come quello di
+                  // formControlStyle: serve un colore pieno, altrimenti
+                  // il browser lo disegna chiaro e il testo bianco
+                  // diventa illeggibile.
+                  background: "#081524",
+                }}
               >
                 {recipients.length ===
                 0 ? (

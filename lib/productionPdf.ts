@@ -823,7 +823,14 @@ export type MissingArticleSectionRow = {
   itemCode: string;
   description: string;
   unit: string;
-  qty: number;
+  // Quantita' richiesta dalla distinta base di QUESTO battello.
+  requestedQty: number;
+  // Quantita' che manca davvero a QUESTO battello, tenendo conto della
+  // giacenza gia' impegnata da altri battelli in produzione con
+  // consegna piu' vicina (vedi lib/bomShortage.ts). E' sempre <=
+  // requestedQty ed e' quella che va effettivamente ordinata/procurata
+  // per questo battello.
+  missingQty: number;
   stock: number | null;
 };
 
@@ -865,12 +872,13 @@ export function buildMissingArticlesPdf(params: {
   const tableWidth = pageWidth - margin * 2;
 
   const columns = [
-    { key: "supplier", label: "FORNITORE", width: 38 },
-    { key: "code", label: "COD. ARTICOLO", width: 30 },
-    { key: "description", label: "DESCRIZIONE", width: tableWidth - 38 - 30 - 16 - 16 - 22 },
-    { key: "unit", label: "UM", width: 16 },
-    { key: "qty", label: "Q.TÀ", width: 16 },
-    { key: "stock", label: "GIACENZA", width: 22 },
+    { key: "supplier", label: "FORNITORE", width: 34 },
+    { key: "code", label: "COD. ARTICOLO", width: 26 },
+    { key: "description", label: "DESCRIZIONE", width: tableWidth - 34 - 26 - 14 - 17 - 17 - 20 },
+    { key: "unit", label: "UM", width: 14 },
+    { key: "requested", label: "RICHIESTA", width: 17 },
+    { key: "qty", label: "MANCANO", width: 17 },
+    { key: "stock", label: "GIACENZA", width: 20 },
   ];
 
   function drawPageHeader() {
@@ -897,13 +905,26 @@ export function buildMissingArticlesPdf(params: {
       ? `Consegna richiesta ${requestedDeliveryDate} · Generato il ${generatedDate}`
       : `Generato il ${generatedDate}`;
     doc.text(infoLine, margin, 29);
+
+    doc.setFontSize(7.5);
+    doc.setTextColor(150, 150, 150);
+    doc.text(
+      "La colonna MANCANO tiene conto degli altri battelli in produzione: se piu' battelli richiedono",
+      margin,
+      33.5
+    );
+    doc.text(
+      "lo stesso articolo, la giacenza disponibile va prima a chi ha la consegna piu' vicina.",
+      margin,
+      37
+    );
     doc.setTextColor(0, 0, 0);
 
     doc.setDrawColor(200);
     doc.setLineWidth(0.3);
-    doc.line(margin, 33, pageWidth - margin, 33);
+    doc.line(margin, 40.5, pageWidth - margin, 40.5);
 
-    return 40;
+    return 47.5;
   }
 
   function drawTableHeader(y: number) {
@@ -987,13 +1008,17 @@ export function buildMissingArticlesPdf(params: {
       doc.text(row.unit || "-", x, y + 4.5);
       x += columns[3].width;
 
-      doc.text(String(row.qty), x, y + 4.5);
+      doc.text(String(row.requestedQty), x, y + 4.5);
       x += columns[4].width;
 
       doc.setFont("helvetica", "bold");
       doc.setTextColor(217, 119, 6);
-      doc.text(row.stock === null ? "n/d" : String(row.stock), x, y + 4.5);
+      doc.text(String(row.missingQty), x, y + 4.5);
       doc.setTextColor(0, 0, 0);
+      x += columns[5].width;
+
+      doc.setFont("helvetica", "normal");
+      doc.text(row.stock === null ? "n/d" : String(row.stock), x, y + 4.5);
 
       doc.setDrawColor(240);
       doc.setLineWidth(0.15);

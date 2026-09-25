@@ -1059,119 +1059,30 @@ export default function ProductionPage() {
     let missingArticlesSuffix = "";
     if (newBoatId) {
       try {
-        const applicableSectionIds = Array.from(selectedOptionalSectionIds);
+        const { computeBoatBomShortages } = await import("../../lib/bomShortage");
+        const { sections, error: shortageError } = await computeBoatBomShortages(newBoatId);
 
-        const { data: sectionRows, error: sectionsError } = await supabase
-          .from("production_bom_sections")
-          .select("id,name,kind")
-          .eq("model_boat", modelBoat.trim());
+        if (shortageError) throw new Error(shortageError);
 
-        if (!sectionsError && sectionRows) {
-          const sections = sectionRows.filter(
-            (row: any) => row.kind === "standard" || applicableSectionIds.includes(String(row.id))
-          );
+        const totalMissing = sections.reduce((sum, section) => sum + section.rows.length, 0);
 
-          if (sections.length > 0) {
-            const sectionIds = sections.map((row: any) => String(row.id));
-
-            const { data: bomRows } = await supabase
-              .from("production_bom_items")
-              .select("id,section_id,item_id,description,unit,qty")
-              .in("section_id", sectionIds);
-
-            const itemIds = Array.from(
-              new Set(
-                (bomRows || [])
-                  .map((row: any) => (row.item_id ? String(row.item_id) : null))
-                  .filter((id: any): id is string => !!id)
-              )
-            );
-
-            let itemById = new Map<string, any>();
-            let supplierNameById = new Map<string, string>();
-
-            if (itemIds.length > 0) {
-              const { data: itemRows } = await supabase
-                .from("items")
-                .select("id,supplier_id,code,supplier_code,description,stock")
-                .in("id", itemIds);
-
-              itemById = new Map((itemRows || []).map((row: any) => [String(row.id), row]));
-
-              const supplierIds = Array.from(
-                new Set((itemRows || []).map((row: any) => String(row.supplier_id || "")).filter(Boolean))
-              );
-
-              if (supplierIds.length > 0) {
-                const { data: supplierRows } = await supabase
-                  .from("suppliers")
-                  .select("id,name")
-                  .in("id", supplierIds);
-
-                supplierNameById = new Map(
-                  (supplierRows || []).map((row: any) => [String(row.id), String(row.name || "")])
-                );
-              }
-            }
-
-            const sectionNameById = new Map(
-              sections.map((row: any) => [String(row.id), String(row.name || "")])
-            );
-
-            const missingBySection = new Map<
-              string,
-              { itemCode: string; supplierName: string; description: string; unit: string; qty: number; stock: number }[]
-            >();
-
-            (bomRows || []).forEach((row: any) => {
-              if (!row.item_id) return;
-              const item = itemById.get(String(row.item_id));
-              if (!item) return;
-
-              const stock = Number(item.stock || 0);
-              const qty = Number(row.qty || 0);
-              if (stock >= qty) return;
-
-              const sectionName = sectionNameById.get(String(row.section_id)) || "";
-              const list = missingBySection.get(sectionName) || [];
-              list.push({
-                itemCode: String(item.supplier_code || item.code || ""),
-                supplierName: supplierNameById.get(String(item.supplier_id || "")) || "",
-                description: String(row.description || item.description || ""),
-                unit: String(row.unit || "PZ"),
-                qty,
-                stock,
-              });
-              missingBySection.set(sectionName, list);
-            });
-
-            const totalMissing = Array.from(missingBySection.values()).reduce(
-              (sum, rows) => sum + rows.length,
-              0
-            );
-
-            if (totalMissing > 0) {
-              const { buildMissingArticlesPdf } = await import("../../lib/productionPdf");
-              const { doc, filename } = buildMissingArticlesPdf({
-                boatOrderNumber: orderNumber.trim(),
-                boatModel: modelBoat.trim(),
-                boatProgressiveNo: null,
-                requestedDeliveryDate: formatItDate(requestedDeliveryDate),
-                sections: Array.from(missingBySection.entries()).map(([sectionName, rows]) => ({
-                  sectionName,
-                  rows,
-                })),
-                logo: pdfLogo,
-                generatedDate: formatItDate(todayInputValue()),
-              });
-              doc.save(filename);
-              missingArticlesSuffix = ` Attenzione: ${totalMissing} articol${
-                totalMissing === 1 ? "o" : "i"
-              } della distinta base risult${
-                totalMissing === 1 ? "a" : "ano"
-              } senza giacenza sufficiente (PDF scaricato).`;
-            }
-          }
+        if (totalMissing > 0) {
+          const { buildMissingArticlesPdf } = await import("../../lib/productionPdf");
+          const { doc, filename } = buildMissingArticlesPdf({
+            boatOrderNumber: orderNumber.trim(),
+            boatModel: modelBoat.trim(),
+            boatProgressiveNo: null,
+            requestedDeliveryDate: formatItDate(requestedDeliveryDate),
+            sections,
+            logo: pdfLogo,
+            generatedDate: formatItDate(todayInputValue()),
+          });
+          doc.save(filename);
+          missingArticlesSuffix = ` Attenzione: ${totalMissing} articol${
+            totalMissing === 1 ? "o" : "i"
+          } della distinta base risult${
+            totalMissing === 1 ? "a" : "ano"
+          } senza giacenza sufficiente, tenendo conto degli altri battelli in produzione (PDF scaricato).`;
         }
       } catch (missingArticlesError) {
         console.error("Errore controllo articoli mancanti:", missingArticlesError);

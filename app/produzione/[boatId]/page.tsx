@@ -919,6 +919,15 @@ export default function ProductionBoatDetailPage({
     setSaveError("");
   }
 
+  async function boatModelHasBom(modelBoat: string) {
+    const { data } = await supabase
+      .from("production_bom_sections")
+      .select("id")
+      .eq("model_boat", modelBoat)
+      .limit(1);
+    return !!(data && data.length > 0);
+  }
+
   async function downloadMissingArticlesPdf() {
     if (!boat) return;
 
@@ -926,99 +935,22 @@ export default function ProductionBoatDetailPage({
     setMissingPdfBusy(true);
 
     try {
-      const { data: sectionRows, error: sectionsError } = await supabase
-        .from("production_bom_sections")
-        .select("id,name,kind")
-        .eq("model_boat", boat.model_boat);
+      const { computeBoatBomShortages } = await import("../../../lib/bomShortage");
+      const { sections, error: shortageError } = await computeBoatBomShortages(boat.id);
 
-      if (sectionsError) throw sectionsError;
-
-      const sections = (sectionRows || []).filter(
-        (row: any) => row.kind === "standard" || selectedBomSectionIds.has(String(row.id))
-      );
+      if (shortageError) throw new Error(shortageError);
 
       if (sections.length === 0) {
-        throw new Error(
-          "Questo modello non ha ancora una distinta base (vedi Produzione -> Distinta base)."
-        );
-      }
-
-      const sectionIds = sections.map((row: any) => String(row.id));
-
-      const { data: bomRows, error: bomError } = await supabase
-        .from("production_bom_items")
-        .select("id,section_id,item_id,description,unit,qty")
-        .in("section_id", sectionIds);
-
-      if (bomError) throw bomError;
-
-      const itemIds = Array.from(
-        new Set(
-          (bomRows || [])
-            .map((row: any) => (row.item_id ? String(row.item_id) : null))
-            .filter((id: any): id is string => !!id)
-        )
-      );
-
-      let itemById = new Map<string, any>();
-      let supplierNameById = new Map<string, string>();
-
-      if (itemIds.length > 0) {
-        const { data: itemRows, error: itemsError } = await supabase
-          .from("items")
-          .select("id,supplier_id,code,supplier_code,description,stock")
-          .in("id", itemIds);
-
-        if (itemsError) throw itemsError;
-
-        itemById = new Map((itemRows || []).map((row: any) => [String(row.id), row]));
-
-        const supplierIds = Array.from(
-          new Set((itemRows || []).map((row: any) => String(row.supplier_id || "")).filter(Boolean))
-        );
-
-        if (supplierIds.length > 0) {
-          const { data: supplierRows } = await supabase
-            .from("suppliers")
-            .select("id,name")
-            .in("id", supplierIds);
-
-          supplierNameById = new Map(
-            (supplierRows || []).map((row: any) => [String(row.id), String(row.name || "")])
+        // Puo' voler dire "nessuna distinta base per questo modello" o
+        // "tutto disponibile": lo capiamo dal PDF stesso, che mostra
+        // comunque un messaggio chiaro in entrambi i casi.
+        const hasBom = await boatModelHasBom(boat.model_boat);
+        if (!hasBom) {
+          throw new Error(
+            "Questo modello non ha ancora una distinta base (vedi Produzione -> Distinta base)."
           );
         }
       }
-
-      const sectionNameById = new Map(
-        sections.map((row: any) => [String(row.id), String(row.name || "")])
-      );
-
-      const missingBySection = new Map<
-        string,
-        { itemCode: string; supplierName: string; description: string; unit: string; qty: number; stock: number }[]
-      >();
-
-      (bomRows || []).forEach((row: any) => {
-        if (!row.item_id) return;
-        const item = itemById.get(String(row.item_id));
-        if (!item) return;
-
-        const stock = Number(item.stock || 0);
-        const qty = Number(row.qty || 0);
-        if (stock >= qty) return;
-
-        const sectionName = sectionNameById.get(String(row.section_id)) || "";
-        const list = missingBySection.get(sectionName) || [];
-        list.push({
-          itemCode: String(item.supplier_code || item.code || ""),
-          supplierName: supplierNameById.get(String(item.supplier_id || "")) || "",
-          description: String(row.description || item.description || ""),
-          unit: String(row.unit || "PZ"),
-          qty,
-          stock,
-        });
-        missingBySection.set(sectionName, list);
-      });
 
       const logo = await fetchCompanyLogo();
       const { buildMissingArticlesPdf } = await import("../../../lib/productionPdf");
@@ -1027,10 +959,7 @@ export default function ProductionBoatDetailPage({
         boatModel: boat.model_boat,
         boatProgressiveNo: boat.progressive_no,
         requestedDeliveryDate: formatItDate(boat.requested_delivery_date || ""),
-        sections: Array.from(missingBySection.entries()).map(([sectionName, rows]) => ({
-          sectionName,
-          rows,
-        })),
+        sections,
         logo,
         generatedDate: formatItDate(new Date().toISOString().slice(0, 10)),
       });

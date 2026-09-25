@@ -804,21 +804,32 @@ export function buildDepartmentProgramPdf(params: {
   return { doc, filename };
 }
 
+
 // ============================================================
-// ARTICOLI MANCANTI PER BATTELLO (STEP 37)
+// ARTICOLI MANCANTI PER BATTELLO (STEP 38 - distinta base)
 //
-// Elenco, per UN battello, degli articoli richiesti dal suo modello
-// (mappa gestita in "Produzione -> Articoli richiesti") che al
-// momento risultano senza giacenza. E' un controllo di sola
-// lettura su items.stock: non crea richieste, non assegna kit, non
-// tocca la giacenza in nessun modo - a differenza del sistema
-// parabrezza (STEP 25/29), qui non c'e' nessuno scarico automatico.
+// Elenco, per UN battello, degli articoli della sua distinta base
+// (sezioni standard del modello + sezioni optional scelte per quel
+// battello) la cui giacenza attuale (items.stock) e' inferiore alla
+// quantita' richiesta. Un articolo non a catalogo (stock null) non
+// puo' essere valutato e non compare mai come "mancante".
+//
+// E' un controllo di sola lettura: non crea richieste, non assegna
+// kit, non aggancia ordini, non tocca mai la giacenza.
 // ============================================================
 
-export type MissingArticleRow = {
+export type MissingArticleSectionRow = {
+  supplierName: string;
   itemCode: string;
-  itemDescription: string;
-  stock: number;
+  description: string;
+  unit: string;
+  qty: number;
+  stock: number | null;
+};
+
+export type MissingArticleSection = {
+  sectionName: string;
+  rows: MissingArticleSectionRow[];
 };
 
 export function buildMissingArticlesPdf(params: {
@@ -826,7 +837,7 @@ export function buildMissingArticlesPdf(params: {
   boatModel: string;
   boatProgressiveNo: number | null;
   requestedDeliveryDate: string;
-  missingItems: MissingArticleRow[];
+  sections: MissingArticleSection[];
   logo: string;
   generatedDate: string;
 }) {
@@ -835,10 +846,12 @@ export function buildMissingArticlesPdf(params: {
     boatModel,
     boatProgressiveNo,
     requestedDeliveryDate,
-    missingItems,
+    sections,
     logo,
     generatedDate,
   } = params;
+
+  const nonEmptySections = sections.filter((section) => section.rows.length > 0);
 
   const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
   doc.setProperties({
@@ -852,12 +865,15 @@ export function buildMissingArticlesPdf(params: {
   const tableWidth = pageWidth - margin * 2;
 
   const columns = [
-    { key: "code", label: "COD. ARTICOLO", width: 42 },
-    { key: "description", label: "DESCRIZIONE", width: tableWidth - 42 - 30 },
-    { key: "stock", label: "GIACENZA", width: 30 },
+    { key: "supplier", label: "FORNITORE", width: 38 },
+    { key: "code", label: "COD. ARTICOLO", width: 30 },
+    { key: "description", label: "DESCRIZIONE", width: tableWidth - 38 - 30 - 16 - 16 - 22 },
+    { key: "unit", label: "UM", width: 16 },
+    { key: "qty", label: "Q.TÀ", width: 16 },
+    { key: "stock", label: "GIACENZA", width: 22 },
   ];
 
-  function drawHeader() {
+  function drawPageHeader() {
     drawCompanyLogoTopRight(doc, logo);
 
     doc.setTextColor(0, 0, 0);
@@ -887,72 +903,107 @@ export function buildMissingArticlesPdf(params: {
     doc.setLineWidth(0.3);
     doc.line(margin, 33, pageWidth - margin, 33);
 
-    const headingY = 40;
+    return 40;
+  }
+
+  function drawTableHeader(y: number) {
     doc.setFont("helvetica", "bold");
     doc.setFontSize(7.5);
     doc.setTextColor(110, 110, 110);
     let x = margin;
     columns.forEach((column) => {
-      doc.text(column.label, x, headingY);
+      doc.text(column.label, x, y);
       x += column.width;
     });
     doc.setTextColor(0, 0, 0);
     doc.setDrawColor(225);
     doc.setLineWidth(0.25);
-    doc.line(margin, headingY + 2.5, pageWidth - margin, headingY + 2.5);
-
-    return headingY + 8;
+    doc.line(margin, y + 2.5, pageWidth - margin, y + 2.5);
+    return y + 8;
   }
 
-  let y = drawHeader();
+  let y = drawPageHeader();
 
-  if (missingItems.length === 0) {
+  if (nonEmptySections.length === 0) {
     doc.setFont("helvetica", "italic");
     doc.setFontSize(10);
     doc.setTextColor(90, 90, 90);
     doc.text(
-      "Nessun articolo mancante: tutto quanto richiesto dal modello risulta in giacenza.",
+      "Nessun articolo mancante: tutto quanto richiesto dalla distinta base risulta in giacenza.",
       margin,
       y + 2
     );
     doc.setTextColor(0, 0, 0);
   }
 
-  missingItems.forEach((item) => {
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9.5);
-
-    const descLines = doc.splitTextToSize(item.itemDescription || "-", columns[1].width - 4);
-    const rowHeight = Math.max(8, descLines.length * 4.2 + 3);
-
-    if (y + rowHeight > pageHeight - 16) {
+  nonEmptySections.forEach((section) => {
+    // Titolo sezione: se non ci sta nella pagina corrente (titolo +
+    // almeno una riga), si passa alla pagina successiva.
+    if (y + 8 + 10 > pageHeight - 16) {
       doc.addPage();
-      y = drawHeader();
+      y = drawPageHeader();
     }
 
-    let x = margin;
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9.5);
-    doc.setTextColor(0, 0, 0);
-    doc.text(item.itemCode || "-", x, y + 4.7);
-    x += columns[0].width;
-
-    doc.text(descLines, x, y + 4.7);
-    x += columns[1].width;
-
     doc.setFont("helvetica", "bold");
-    doc.setTextColor(217, 119, 6);
-    doc.text(String(item.stock), x, y + 4.7);
+    doc.setFontSize(11);
     doc.setTextColor(0, 0, 0);
-    doc.setFont("helvetica", "normal");
+    doc.text(section.sectionName, margin, y + 3);
+    y += 9;
 
-    doc.setDrawColor(240);
-    doc.setLineWidth(0.15);
-    doc.line(margin, y + rowHeight, pageWidth - margin, y + rowHeight);
-    doc.setLineWidth(0.2);
+    y = drawTableHeader(y);
 
-    y += rowHeight + 1;
+    section.rows.forEach((row) => {
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+
+      const descLines = doc.splitTextToSize(row.description || "-", columns[2].width - 4);
+      const rowHeight = Math.max(7, descLines.length * 4 + 3);
+
+      if (y + rowHeight > pageHeight - 16) {
+        doc.addPage();
+        y = drawPageHeader();
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(11);
+        doc.text(`${section.sectionName} (segue)`, margin, y + 3);
+        y += 9;
+        y = drawTableHeader(y);
+      }
+
+      let x = margin;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.setTextColor(0, 0, 0);
+
+      const supplierLines = doc.splitTextToSize(row.supplierName || "-", columns[0].width - 4);
+      doc.text(supplierLines, x, y + 4.5);
+      x += columns[0].width;
+
+      doc.text(row.itemCode || "-", x, y + 4.5);
+      x += columns[1].width;
+
+      doc.text(descLines, x, y + 4.5);
+      x += columns[2].width;
+
+      doc.text(row.unit || "-", x, y + 4.5);
+      x += columns[3].width;
+
+      doc.text(String(row.qty), x, y + 4.5);
+      x += columns[4].width;
+
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(217, 119, 6);
+      doc.text(row.stock === null ? "n/d" : String(row.stock), x, y + 4.5);
+      doc.setTextColor(0, 0, 0);
+
+      doc.setDrawColor(240);
+      doc.setLineWidth(0.15);
+      doc.line(margin, y + rowHeight, pageWidth - margin, y + rowHeight);
+      doc.setLineWidth(0.2);
+
+      y += rowHeight + 1;
+    });
+
+    y += 6;
   });
 
   const totalPages = doc.getNumberOfPages();

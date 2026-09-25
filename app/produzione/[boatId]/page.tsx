@@ -146,11 +146,24 @@ export default function ProductionBoatDetailPage({
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
 
-  // "Stampa articoli mancanti" (STEP 37): rigenera in qualsiasi momento il
-  // PDF con gli articoli richiesti dal modello che risultano senza
-  // giacenza. Sola lettura su items.stock, non tocca mai la giacenza.
+  // "Stampa articoli mancanti" (STEP 38): rigenera in qualsiasi momento il
+  // PDF con gli articoli della distinta base (sezioni standard del
+  // modello + sezioni optional scelte per questo battello) che
+  // risultano con giacenza insufficiente. Sola lettura su items.stock,
+  // non tocca mai la giacenza.
   const [missingPdfBusy, setMissingPdfBusy] = useState(false);
   const [missingPdfError, setMissingPdfError] = useState("");
+
+  // Sezioni OPTIONAL della distinta base del modello di questo
+  // battello, e quali risultano gia' scelte per lui (production_
+  // boat_bom_sections). Le sezioni STANDARD non compaiono qui: fanno
+  // sempre parte del modello, non si scelgono.
+  const [optionalBomSections, setOptionalBomSections] = useState<
+    { id: string; name: string }[]
+  >([]);
+  const [selectedBomSectionIds, setSelectedBomSectionIds] = useState<Set<string>>(new Set());
+  const [bomSectionsLoaded, setBomSectionsLoaded] = useState(false);
+  const [bomSectionBusyId, setBomSectionBusyId] = useState("");
   const [formOrderNumber, setFormOrderNumber] = useState("");
   const [formModelBoat, setFormModelBoat] = useState("");
   const [formHull, setFormHull] = useState("");
@@ -549,7 +562,82 @@ export default function ProductionBoatDetailPage({
     loadData();
     loadUpholsteryRequirements();
     loadUpholsteryCatalog();
+    loadBomSections();
   }, [boatId]);
+
+  async function loadBomSections() {
+    const { data: boatRow } = await supabase
+      .from("production_boats")
+      .select("model_boat")
+      .eq("id", boatId)
+      .maybeSingle();
+
+    const modelBoatValue = boatRow?.model_boat ? String(boatRow.model_boat) : "";
+
+    if (!modelBoatValue) {
+      setOptionalBomSections([]);
+      setSelectedBomSectionIds(new Set());
+      setBomSectionsLoaded(true);
+      return;
+    }
+
+    const [sectionsRes, boatSectionsRes] = await Promise.all([
+      supabase
+        .from("production_bom_sections")
+        .select("id,name")
+        .eq("model_boat", modelBoatValue)
+        .eq("kind", "optional")
+        .order("sort_order", { ascending: true }),
+      supabase.from("production_boat_bom_sections").select("section_id").eq("boat_id", boatId),
+    ]);
+
+    setOptionalBomSections(
+      !sectionsRes.error && sectionsRes.data
+        ? sectionsRes.data.map((row: any) => ({ id: String(row.id), name: String(row.name || "") }))
+        : []
+    );
+
+    setSelectedBomSectionIds(
+      new Set(
+        !boatSectionsRes.error && boatSectionsRes.data
+          ? boatSectionsRes.data.map((row: any) => String(row.section_id))
+          : []
+      )
+    );
+
+    setBomSectionsLoaded(true);
+  }
+
+  async function toggleBomSection(sectionId: string) {
+    setBomSectionBusyId(sectionId);
+
+    const isSelected = selectedBomSectionIds.has(sectionId);
+
+    if (isSelected) {
+      await supabase
+        .from("production_boat_bom_sections")
+        .delete()
+        .eq("boat_id", boatId)
+        .eq("section_id", sectionId);
+    } else {
+      await supabase.from("production_boat_bom_sections").insert({
+        boat_id: boatId,
+        section_id: sectionId,
+      });
+    }
+
+    setSelectedBomSectionIds((current) => {
+      const next = new Set(current);
+      if (isSelected) {
+        next.delete(sectionId);
+      } else {
+        next.add(sectionId);
+      }
+      return next;
+    });
+
+    setBomSectionBusyId("");
+  }
 
   async function loadData() {
     setLoading(true);
@@ -838,37 +926,99 @@ export default function ProductionBoatDetailPage({
     setMissingPdfBusy(true);
 
     try {
-      const { data: requiredRows, error: requiredError } = await supabase
-        .from("production_model_required_items")
-        .select("item_id")
+      const { data: sectionRows, error: sectionsError } = await supabase
+        .from("production_bom_sections")
+        .select("id,name,kind")
         .eq("model_boat", boat.model_boat);
 
-      if (requiredError) throw requiredError;
+      if (sectionsError) throw sectionsError;
 
-      if (!requiredRows || requiredRows.length === 0) {
+      const sections = (sectionRows || []).filter(
+        (row: any) => row.kind === "standard" || selectedBomSectionIds.has(String(row.id))
+      );
+
+      if (sections.length === 0) {
         throw new Error(
-          "Questo modello non ha ancora una lista di articoli richiesti (vedi Produzione -> Articoli richiesti)."
+          "Questo modello non ha ancora una distinta base (vedi Produzione -> Distinta base)."
         );
       }
 
+      const sectionIds = sections.map((row: any) => String(row.id));
+
+      const { data: bomRows, error: bomError } = await supabase
+        .from("production_bom_items")
+        .select("id,section_id,item_id,description,unit,qty")
+        .in("section_id", sectionIds);
+
+      if (bomError) throw bomError;
+
       const itemIds = Array.from(
-        new Set(requiredRows.map((row: any) => String(row.item_id)))
+        new Set(
+          (bomRows || [])
+            .map((row: any) => (row.item_id ? String(row.item_id) : null))
+            .filter((id: any): id is string => !!id)
+        )
       );
 
-      const { data: itemRows, error: itemsError } = await supabase
-        .from("items")
-        .select("id,code,supplier_code,description,stock")
-        .in("id", itemIds);
+      let itemById = new Map<string, any>();
+      let supplierNameById = new Map<string, string>();
 
-      if (itemsError) throw itemsError;
+      if (itemIds.length > 0) {
+        const { data: itemRows, error: itemsError } = await supabase
+          .from("items")
+          .select("id,supplier_id,code,supplier_code,description,stock")
+          .in("id", itemIds);
 
-      const missingItems = (itemRows || [])
-        .filter((item: any) => Number(item.stock || 0) <= 0)
-        .map((item: any) => ({
+        if (itemsError) throw itemsError;
+
+        itemById = new Map((itemRows || []).map((row: any) => [String(row.id), row]));
+
+        const supplierIds = Array.from(
+          new Set((itemRows || []).map((row: any) => String(row.supplier_id || "")).filter(Boolean))
+        );
+
+        if (supplierIds.length > 0) {
+          const { data: supplierRows } = await supabase
+            .from("suppliers")
+            .select("id,name")
+            .in("id", supplierIds);
+
+          supplierNameById = new Map(
+            (supplierRows || []).map((row: any) => [String(row.id), String(row.name || "")])
+          );
+        }
+      }
+
+      const sectionNameById = new Map(
+        sections.map((row: any) => [String(row.id), String(row.name || "")])
+      );
+
+      const missingBySection = new Map<
+        string,
+        { itemCode: string; supplierName: string; description: string; unit: string; qty: number; stock: number }[]
+      >();
+
+      (bomRows || []).forEach((row: any) => {
+        if (!row.item_id) return;
+        const item = itemById.get(String(row.item_id));
+        if (!item) return;
+
+        const stock = Number(item.stock || 0);
+        const qty = Number(row.qty || 0);
+        if (stock >= qty) return;
+
+        const sectionName = sectionNameById.get(String(row.section_id)) || "";
+        const list = missingBySection.get(sectionName) || [];
+        list.push({
           itemCode: String(item.supplier_code || item.code || ""),
-          itemDescription: String(item.description || ""),
-          stock: Number(item.stock || 0),
-        }));
+          supplierName: supplierNameById.get(String(item.supplier_id || "")) || "",
+          description: String(row.description || item.description || ""),
+          unit: String(row.unit || "PZ"),
+          qty,
+          stock,
+        });
+        missingBySection.set(sectionName, list);
+      });
 
       const logo = await fetchCompanyLogo();
       const { buildMissingArticlesPdf } = await import("../../../lib/productionPdf");
@@ -877,7 +1027,10 @@ export default function ProductionBoatDetailPage({
         boatModel: boat.model_boat,
         boatProgressiveNo: boat.progressive_no,
         requestedDeliveryDate: formatItDate(boat.requested_delivery_date || ""),
-        missingItems,
+        sections: Array.from(missingBySection.entries()).map(([sectionName, rows]) => ({
+          sectionName,
+          rows,
+        })),
         logo,
         generatedDate: formatItDate(new Date().toISOString().slice(0, 10)),
       });
@@ -1018,6 +1171,35 @@ export default function ProductionBoatDetailPage({
       </section>
 
       {missingPdfError && <div className="pbd-error">{missingPdfError}</div>}
+
+      {bomSectionsLoaded && optionalBomSections.length > 0 && (
+        <section className="pbd-card">
+          <div className="pbd-head">
+            <div>
+              <div className="pbd-eyebrow">DISTINTA BASE</div>
+              <h2>Optional di questo battello</h2>
+            </div>
+          </div>
+          <div className="pbd-bom-hint">
+            Le dotazioni di serie del modello sono sempre incluse. Spunta qui gli
+            optional che ha questo battello: cambia solo cosa conta come
+            &quot;mancante&quot; nel PDF, non tocca la giacenza.
+          </div>
+          <div className="pbd-bom-list">
+            {optionalBomSections.map((section) => (
+              <label key={section.id} className="pbd-bom-row">
+                <input
+                  type="checkbox"
+                  checked={selectedBomSectionIds.has(section.id)}
+                  disabled={bomSectionBusyId === section.id}
+                  onChange={() => toggleBomSection(section.id)}
+                />
+                {section.name}
+              </label>
+            ))}
+          </div>
+        </section>
+      )}
 
       {editing ? (
         <section className="pbd-card">
@@ -1636,6 +1818,9 @@ function Styles() {
       .pbd-save-btn.secondary { border:1px solid rgba(148,163,184,.28); background:rgba(255,255,255,.035); color:#dce8f5; }
       .pbd-save-btn:disabled,.pbd-back:disabled { opacity:.55; cursor:wait; }
       .pbd-error { margin-bottom:10px; padding:11px 13px; border:1px solid rgba(239,68,68,.28); border-radius:9px; background:rgba(239,68,68,.08); color:#fca5a5; font-size:10px; font-weight:800; }
+      .pbd-bom-hint { font-size:10.5px; opacity:.6; margin:6px 0 12px; max-width:640px; }
+      .pbd-bom-list { display:flex; flex-direction:column; gap:8px; }
+      .pbd-bom-row { display:flex; align-items:center; gap:9px; font-size:12px; cursor:pointer; }
       .pbd-specs { margin-top:11px; display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; }
       .pbd-specs > div { padding:13px; border:1px solid rgba(148,163,184,.14); border-radius:10px; background:#0b192a; }
       .pbd-specs span,.pbd-specs strong { display:block; }

@@ -137,21 +137,23 @@ const KIT_LINK_TYPES: KitLinkType[] = [
     label: "tappezzeria",
     isEnabled: (supplier) => !!supplier.upholstery_enabled,
     includeLine: (line) => !line.boatUpholsteryId,
-    runLink: (itemId, currentSupplierId) =>
-      supabase.rpc("sync_upholstery_order_links", {
+    runLink: async (itemId, currentSupplierId) => {
+      await supabase.rpc("sync_upholstery_order_links", {
         p_supplier_id: currentSupplierId,
         p_item_id: itemId,
-      }),
+      });
+    },
   },
   {
     key: "windshield",
     label: "parabrezza",
     isEnabled: (supplier) => !!supplier.windshield_enabled,
     includeLine: () => true,
-    runLink: (itemId) =>
-      supabase.rpc("sync_windshield_order_links", {
+    runLink: async (itemId) => {
+      await supabase.rpc("sync_windshield_order_links", {
         p_item_id: itemId,
-      }),
+      });
+    },
   },
 ];
 

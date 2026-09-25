@@ -728,7 +728,8 @@ function Styles() {
         padding: 9px 10px;
         border-radius: 8px;
         border: 1px solid var(--border-color);
-        background: var(--card);
+        background: #081524;
+        color: #fff;
         font-size: 14px;
         min-width: 260px;
       }
@@ -753,7 +754,8 @@ function Styles() {
         padding: 9px 10px;
         border-radius: 8px;
         border: 1px solid var(--border-color);
-        background: var(--card);
+        background: #081524;
+        color: #fff;
         font-size: 14px;
       }
       .dbb-btn {

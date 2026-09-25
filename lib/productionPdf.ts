@@ -803,3 +803,171 @@ export function buildDepartmentProgramPdf(params: {
 
   return { doc, filename };
 }
+
+// ============================================================
+// ARTICOLI MANCANTI PER BATTELLO (STEP 37)
+//
+// Elenco, per UN battello, degli articoli richiesti dal suo modello
+// (mappa gestita in "Produzione -> Articoli richiesti") che al
+// momento risultano senza giacenza. E' un controllo di sola
+// lettura su items.stock: non crea richieste, non assegna kit, non
+// tocca la giacenza in nessun modo - a differenza del sistema
+// parabrezza (STEP 25/29), qui non c'e' nessuno scarico automatico.
+// ============================================================
+
+export type MissingArticleRow = {
+  itemCode: string;
+  itemDescription: string;
+  stock: number;
+};
+
+export function buildMissingArticlesPdf(params: {
+  boatOrderNumber: string;
+  boatModel: string;
+  boatProgressiveNo: number | null;
+  requestedDeliveryDate: string;
+  missingItems: MissingArticleRow[];
+  logo: string;
+  generatedDate: string;
+}) {
+  const {
+    boatOrderNumber,
+    boatModel,
+    boatProgressiveNo,
+    requestedDeliveryDate,
+    missingItems,
+    logo,
+    generatedDate,
+  } = params;
+
+  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  doc.setProperties({
+    title: `Articoli mancanti - ${boatOrderNumber}`,
+    subject: "Articoli mancanti per battello",
+  });
+
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const margin = 14;
+  const tableWidth = pageWidth - margin * 2;
+
+  const columns = [
+    { key: "code", label: "COD. ARTICOLO", width: 42 },
+    { key: "description", label: "DESCRIZIONE", width: tableWidth - 42 - 30 },
+    { key: "stock", label: "GIACENZA", width: 30 },
+  ];
+
+  function drawHeader() {
+    drawCompanyLogoTopRight(doc, logo);
+
+    doc.setTextColor(0, 0, 0);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.text("ARTICOLI MANCANTI", margin, 16);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.setTextColor(60, 60, 60);
+    const subtitleParts = [
+      boatProgressiveNo ? `Prog. ${boatProgressiveNo}` : null,
+      boatOrderNumber,
+      boatModel,
+    ].filter(Boolean);
+    doc.text(subtitleParts.join(" · "), margin, 23);
+
+    doc.setFontSize(9.5);
+    doc.setTextColor(120, 120, 120);
+    const infoLine = requestedDeliveryDate
+      ? `Consegna richiesta ${requestedDeliveryDate} · Generato il ${generatedDate}`
+      : `Generato il ${generatedDate}`;
+    doc.text(infoLine, margin, 29);
+    doc.setTextColor(0, 0, 0);
+
+    doc.setDrawColor(200);
+    doc.setLineWidth(0.3);
+    doc.line(margin, 33, pageWidth - margin, 33);
+
+    const headingY = 40;
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.5);
+    doc.setTextColor(110, 110, 110);
+    let x = margin;
+    columns.forEach((column) => {
+      doc.text(column.label, x, headingY);
+      x += column.width;
+    });
+    doc.setTextColor(0, 0, 0);
+    doc.setDrawColor(225);
+    doc.setLineWidth(0.25);
+    doc.line(margin, headingY + 2.5, pageWidth - margin, headingY + 2.5);
+
+    return headingY + 8;
+  }
+
+  let y = drawHeader();
+
+  if (missingItems.length === 0) {
+    doc.setFont("helvetica", "italic");
+    doc.setFontSize(10);
+    doc.setTextColor(90, 90, 90);
+    doc.text(
+      "Nessun articolo mancante: tutto quanto richiesto dal modello risulta in giacenza.",
+      margin,
+      y + 2
+    );
+    doc.setTextColor(0, 0, 0);
+  }
+
+  missingItems.forEach((item) => {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9.5);
+
+    const descLines = doc.splitTextToSize(item.itemDescription || "-", columns[1].width - 4);
+    const rowHeight = Math.max(8, descLines.length * 4.2 + 3);
+
+    if (y + rowHeight > pageHeight - 16) {
+      doc.addPage();
+      y = drawHeader();
+    }
+
+    let x = margin;
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9.5);
+    doc.setTextColor(0, 0, 0);
+    doc.text(item.itemCode || "-", x, y + 4.7);
+    x += columns[0].width;
+
+    doc.text(descLines, x, y + 4.7);
+    x += columns[1].width;
+
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(217, 119, 6);
+    doc.text(String(item.stock), x, y + 4.7);
+    doc.setTextColor(0, 0, 0);
+    doc.setFont("helvetica", "normal");
+
+    doc.setDrawColor(240);
+    doc.setLineWidth(0.15);
+    doc.line(margin, y + rowHeight, pageWidth - margin, y + rowHeight);
+    doc.setLineWidth(0.2);
+
+    y += rowHeight + 1;
+  });
+
+  const totalPages = doc.getNumberOfPages();
+  for (let page = 1; page <= totalPages; page++) {
+    doc.setPage(page);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(130, 130, 130);
+    doc.text(`Pagina ${page} di ${totalPages}`, pageWidth - margin, pageHeight - 8, {
+      align: "right",
+    });
+  }
+
+  const safeOrder = boatOrderNumber.replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  const filename = `Articoli_mancanti_${safeOrder || "battello"}.pdf`;
+
+  return { doc, filename };
+}

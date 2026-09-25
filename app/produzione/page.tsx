@@ -964,8 +964,69 @@ export default function ProductionPage() {
         ? ` Tappezzeria: collegamento automatico per priorita' di consegna tentato su ${validTappezzeriaRows.length} richiest${validTappezzeriaRows.length === 1 ? "a" : "e"} (vedi scheda battello per lo stato).`
         : "";
 
+    /*
+      ARTICOLI MANCANTI (STEP 37)
+
+      Se il modello scelto ha una lista di articoli richiesti (vedi
+      "Produzione -> Articoli richiesti"), si controlla subito quali
+      risultano senza giacenza e si scarica un PDF. E' un controllo
+      di sola lettura su items.stock: non crea nessuna richiesta, non
+      assegna nulla, non tocca mai la giacenza. Se qualcosa va storto
+      qui il battello resta comunque creato regolarmente (si puo'
+      sempre ristampare lo stesso PDF dalla scheda del battello).
+    */
+    let missingArticlesSuffix = "";
+    if (newBoatId) {
+      try {
+        const { data: requiredRows, error: requiredError } = await supabase
+          .from("production_model_required_items")
+          .select("item_id")
+          .eq("model_boat", modelBoat.trim());
+
+        if (!requiredError && requiredRows && requiredRows.length > 0) {
+          const itemIds = Array.from(
+            new Set(requiredRows.map((row: any) => String(row.item_id)))
+          );
+
+          const { data: itemRows } = await supabase
+            .from("items")
+            .select("id,code,supplier_code,description,stock")
+            .in("id", itemIds);
+
+          const missingItems = (itemRows || [])
+            .filter((item: any) => Number(item.stock || 0) <= 0)
+            .map((item: any) => ({
+              itemCode: String(item.supplier_code || item.code || ""),
+              itemDescription: String(item.description || ""),
+              stock: Number(item.stock || 0),
+            }));
+
+          if (missingItems.length > 0) {
+            const { buildMissingArticlesPdf } = await import("../../lib/productionPdf");
+            const { doc, filename } = buildMissingArticlesPdf({
+              boatOrderNumber: orderNumber.trim(),
+              boatModel: modelBoat.trim(),
+              boatProgressiveNo: null,
+              requestedDeliveryDate: formatItDate(requestedDeliveryDate),
+              missingItems,
+              logo: pdfLogo,
+              generatedDate: formatItDate(todayInputValue()),
+            });
+            doc.save(filename);
+            missingArticlesSuffix = ` Attenzione: ${missingItems.length} articol${
+              missingItems.length === 1 ? "o" : "i"
+            } richiest${missingItems.length === 1 ? "o" : "i"} da questo modello risult${
+              missingItems.length === 1 ? "a" : "ano"
+            } senza giacenza (PDF scaricato).`;
+          }
+        }
+      } catch (missingArticlesError) {
+        console.error("Errore controllo articoli mancanti:", missingArticlesError);
+      }
+    }
+
     setMessage(
-      `Ordine ${orderNumber.trim()} inserito in produzione.${tappezzeriaSuffix}`
+      `Ordine ${orderNumber.trim()} inserito in produzione.${tappezzeriaSuffix}${missingArticlesSuffix}`
     );
     setOrderNumber("");
     setModelBoat("");
@@ -1010,6 +1071,9 @@ export default function ProductionPage() {
             </Link>
             <Link href="/produzione/consegne" className="prod-btn secondary">
               Consegne
+            </Link>
+            <Link href="/produzione/articoli-richiesti" className="prod-btn secondary">
+              Articoli richiesti
             </Link>
             <button
               type="button"

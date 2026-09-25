@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Fragment, use, useEffect, useMemo, useState } from "react";
 import { supabase } from "../../../lib/supabaseClient";
+import { fetchCompanyLogo } from "../../../lib/pdfLogo";
 
 type Boat = {
   id: string;
@@ -144,6 +145,12 @@ export default function ProductionBoatDetailPage({
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
+
+  // "Stampa articoli mancanti" (STEP 37): rigenera in qualsiasi momento il
+  // PDF con gli articoli richiesti dal modello che risultano senza
+  // giacenza. Sola lettura su items.stock, non tocca mai la giacenza.
+  const [missingPdfBusy, setMissingPdfBusy] = useState(false);
+  const [missingPdfError, setMissingPdfError] = useState("");
   const [formOrderNumber, setFormOrderNumber] = useState("");
   const [formModelBoat, setFormModelBoat] = useState("");
   const [formHull, setFormHull] = useState("");
@@ -824,6 +831,65 @@ export default function ProductionBoatDetailPage({
     setSaveError("");
   }
 
+  async function downloadMissingArticlesPdf() {
+    if (!boat) return;
+
+    setMissingPdfError("");
+    setMissingPdfBusy(true);
+
+    try {
+      const { data: requiredRows, error: requiredError } = await supabase
+        .from("production_model_required_items")
+        .select("item_id")
+        .eq("model_boat", boat.model_boat);
+
+      if (requiredError) throw requiredError;
+
+      if (!requiredRows || requiredRows.length === 0) {
+        throw new Error(
+          "Questo modello non ha ancora una lista di articoli richiesti (vedi Produzione -> Articoli richiesti)."
+        );
+      }
+
+      const itemIds = Array.from(
+        new Set(requiredRows.map((row: any) => String(row.item_id)))
+      );
+
+      const { data: itemRows, error: itemsError } = await supabase
+        .from("items")
+        .select("id,code,supplier_code,description,stock")
+        .in("id", itemIds);
+
+      if (itemsError) throw itemsError;
+
+      const missingItems = (itemRows || [])
+        .filter((item: any) => Number(item.stock || 0) <= 0)
+        .map((item: any) => ({
+          itemCode: String(item.supplier_code || item.code || ""),
+          itemDescription: String(item.description || ""),
+          stock: Number(item.stock || 0),
+        }));
+
+      const logo = await fetchCompanyLogo();
+      const { buildMissingArticlesPdf } = await import("../../../lib/productionPdf");
+      const { doc, filename } = buildMissingArticlesPdf({
+        boatOrderNumber: boat.order_number,
+        boatModel: boat.model_boat,
+        boatProgressiveNo: boat.progressive_no,
+        requestedDeliveryDate: formatItDate(boat.requested_delivery_date || ""),
+        missingItems,
+        logo,
+        generatedDate: formatItDate(new Date().toISOString().slice(0, 10)),
+      });
+
+      doc.save(filename);
+    } catch (err: any) {
+      setMissingPdfError(err?.message || "Errore generazione PDF.");
+    } finally {
+      setMissingPdfBusy(false);
+    }
+  }
+
   async function saveEdits() {
     setSaveError("");
 
@@ -935,6 +1001,14 @@ export default function ProductionBoatDetailPage({
               {depMap.get(currentStep.department_id)?.name || "Reparto attuale"}
             </Link>
           )}
+          <button
+            type="button"
+            className="pbd-edit-btn"
+            onClick={downloadMissingArticlesPdf}
+            disabled={missingPdfBusy}
+          >
+            {missingPdfBusy ? "Generazione..." : "Stampa articoli mancanti"}
+          </button>
           {!editing && (
             <button type="button" className="pbd-edit-btn" onClick={startEditing}>
               Modifica
@@ -942,6 +1016,8 @@ export default function ProductionBoatDetailPage({
           )}
         </div>
       </section>
+
+      {missingPdfError && <div className="pbd-error">{missingPdfError}</div>}
 
       {editing ? (
         <section className="pbd-card">

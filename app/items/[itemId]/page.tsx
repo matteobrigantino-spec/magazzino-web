@@ -62,6 +62,41 @@ export default function ItemDetailPage({
   const [onOrder, setOnOrder] = useState<number>(0);
   const [imageUrl, setImageUrl] = useState("");
 
+  // Storico prezzi (STEP 40): menu a scomparsa, caricato solo la
+  // prima volta che viene aperto.
+  const [priceHistoryOpen, setPriceHistoryOpen] = useState(false);
+  const [priceHistoryLoaded, setPriceHistoryLoaded] = useState(false);
+  const [priceHistoryLoading, setPriceHistoryLoading] = useState(false);
+  const [priceHistoryError, setPriceHistoryError] = useState("");
+  const [priceHistoryRows, setPriceHistoryRows] = useState<
+    { id: string; old_price: number | null; new_price: number; changed_at: string }[]
+  >([]);
+
+  async function togglePriceHistory() {
+    const opening = !priceHistoryOpen;
+    setPriceHistoryOpen(opening);
+
+    if (!opening || priceHistoryLoaded) return;
+
+    setPriceHistoryLoading(true);
+    setPriceHistoryError("");
+
+    const { data, error } = await supabase
+      .from("item_price_history")
+      .select("id,old_price,new_price,changed_at")
+      .eq("item_id", itemId)
+      .order("changed_at", { ascending: false });
+
+    if (error) {
+      setPriceHistoryError("Errore caricamento storico: " + error.message);
+    } else {
+      setPriceHistoryRows((data || []) as any);
+      setPriceHistoryLoaded(true);
+    }
+
+    setPriceHistoryLoading(false);
+  }
+
   useEffect(() => {
     async function loadItem() {
       setLoading(true);
@@ -555,6 +590,131 @@ export default function ItemDetailPage({
               onChange={setImageUrl}
               placeholder="https://..."
             />
+
+            {canViewPrices && (
+              <div
+                style={{
+                  marginTop: 4,
+                  marginBottom: 16,
+                  border: "1px solid var(--border-color)",
+                  borderRadius: 9,
+                  overflow: "hidden",
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={togglePriceHistory}
+                  style={{
+                    width: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 10,
+                    padding: "12px 14px",
+                    background: "var(--input-bg)",
+                    color: "var(--foreground)",
+                    border: "none",
+                    cursor: "pointer",
+                    fontSize: 13,
+                    fontWeight: 750,
+                    textAlign: "left",
+                  }}
+                >
+                  <span>
+                    Storico prezzi
+                    {priceHistoryLoaded && (
+                      <span style={{ opacity: 0.55, fontWeight: 500 }}>
+                        {" "}
+                        ({priceHistoryRows.length}{" "}
+                        {priceHistoryRows.length === 1 ? "variazione" : "variazioni"})
+                      </span>
+                    )}
+                  </span>
+                  <span
+                    style={{
+                      display: "inline-block",
+                      transition: "transform .15s ease",
+                      transform: priceHistoryOpen
+                        ? "rotate(180deg)"
+                        : "rotate(0deg)",
+                    }}
+                  >
+                    ▾
+                  </span>
+                </button>
+
+                {priceHistoryOpen && (
+                  <div style={{ padding: "12px 14px" }}>
+                    {priceHistoryLoading && (
+                      <div style={{ fontSize: 13, opacity: 0.6 }}>Caricamento...</div>
+                    )}
+
+                    {!priceHistoryLoading && priceHistoryError && (
+                      <div style={{ fontSize: 13, color: "#ef4444" }}>{priceHistoryError}</div>
+                    )}
+
+                    {!priceHistoryLoading &&
+                      !priceHistoryError &&
+                      priceHistoryLoaded &&
+                      priceHistoryRows.length === 0 && (
+                        <div style={{ fontSize: 13, opacity: 0.55 }}>
+                          Nessuna variazione di prezzo registrata finora. Lo storico si
+                          accumula da qui in avanti, ad ogni modifica del prezzo.
+                        </div>
+                      )}
+
+                    {!priceHistoryLoading && priceHistoryRows.length > 0 && (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        {priceHistoryRows.map((row) => {
+                          const oldPrice = row.old_price === null ? null : Number(row.old_price);
+                          const newPrice = Number(row.new_price);
+                          const isIncrease = oldPrice !== null && newPrice > oldPrice;
+                          const isDecrease = oldPrice !== null && newPrice < oldPrice;
+
+                          return (
+                            <div
+                              key={row.id}
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                                gap: 12,
+                                padding: "8px 0",
+                                borderBottom: "1px solid var(--border-color)",
+                                fontSize: 13,
+                              }}
+                            >
+                              <span style={{ opacity: 0.6 }}>
+                                {formatDateTimeIt(row.changed_at)}
+                              </span>
+                              <span>
+                                {oldPrice === null ? (
+                                  <span style={{ opacity: 0.55 }}>—</span>
+                                ) : (
+                                  <span style={{ opacity: 0.75 }}>{formatEuro(oldPrice)}</span>
+                                )}
+                                {"  →  "}
+                                <strong
+                                  style={{
+                                    color: isIncrease
+                                      ? "#ef4444"
+                                      : isDecrease
+                                        ? "#22c55e"
+                                        : "var(--foreground)",
+                                  }}
+                                >
+                                  {formatEuro(newPrice)}
+                                </strong>
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             {msg && (
               <div
@@ -1066,6 +1226,17 @@ function formatEuro(value: number) {
     currency: "EUR",
     minimumFractionDigits: 2,
   }).format(Number(value || 0));
+}
+
+function formatDateTimeIt(value: string) {
+  try {
+    return new Intl.DateTimeFormat("it-IT", {
+      dateStyle: "short",
+      timeStyle: "short",
+    }).format(new Date(value));
+  } catch {
+    return value;
+  }
 }
 
 const inputStyle = {

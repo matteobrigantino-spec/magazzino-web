@@ -107,6 +107,12 @@ export default function ProductionPage() {
   const [upholsteryPdfBusy, setUpholsteryPdfBusy] = useState(false);
   const [upholsteryPdfError, setUpholsteryPdfError] = useState("");
 
+  // PDF riepilogo "battelli con articoli mancanti" (STEP 39): stesso
+  // calcolo usato nella scheda del singolo battello, ma su tutta la
+  // produzione insieme.
+  const [missingSummaryPdfBusy, setMissingSummaryPdfBusy] = useState(false);
+  const [missingSummaryPdfError, setMissingSummaryPdfError] = useState("");
+
   // Pannello "stampa programma reparto": stessa logica gia' usata dentro
   // Verniciatura/Tubolari, richiamabile pero' direttamente da qui. Il
   // battello per il PDF si spunta uno per uno (mai un intervallo di
@@ -270,6 +276,47 @@ export default function ProductionPage() {
       );
     } finally {
       setUpholsteryPdfBusy(false);
+    }
+  }
+
+  async function downloadMissingArticlesSummaryPdf() {
+    setMissingSummaryPdfError("");
+    setMissingSummaryPdfBusy(true);
+
+    try {
+      if (!pdfLogo) {
+        throw new Error("Carica il logo aziendale prima di scaricare il PDF.");
+      }
+
+      const { computeProductionBomShortagesSummary } = await import("../../lib/bomShortage");
+      const { boats, error: shortageError } = await computeProductionBomShortagesSummary();
+
+      if (shortageError) throw new Error(shortageError);
+
+      const { buildMissingArticlesSummaryPdf } = await import("../../lib/productionPdf");
+      const { doc, filename } = buildMissingArticlesSummaryPdf({
+        boats: boats.map((boat) => ({
+          boatOrderNumber: boat.boatOrderNumber,
+          boatModel: boat.boatModel,
+          boatProgressiveNo: boat.boatProgressiveNo,
+          requestedDeliveryDate: boat.requestedDeliveryDate
+            ? formatItDate(boat.requestedDeliveryDate)
+            : "",
+          sections: boat.sections,
+          totalMissingLines: boat.totalMissingLines,
+          totalMissingQty: boat.totalMissingQty,
+        })),
+        logo: pdfLogo,
+        generatedDate: formatItDate(todayInputValue()),
+      });
+
+      doc.save(filename);
+    } catch (error) {
+      setMissingSummaryPdfError(
+        error instanceof Error ? error.message : "Impossibile creare il PDF. Riprova."
+      );
+    } finally {
+      setMissingSummaryPdfBusy(false);
     }
   }
 
@@ -1546,12 +1593,28 @@ export default function ProductionPage() {
             >
               {upholsteryPdfBusy ? "Creazione PDF..." : "Stato tappezzerie"}
             </button>
+            <button
+              type="button"
+              className="prod-btn primary"
+              onClick={downloadMissingArticlesSummaryPdf}
+              disabled={missingSummaryPdfBusy || pdfLogoLoading || !pdfLogo}
+            >
+              {missingSummaryPdfBusy
+                ? "Creazione PDF..."
+                : "Articoli mancanti (tutti i battelli)"}
+            </button>
           </div>
         </div>
 
         {upholsteryPdfError && (
           <div role="alert" className="prod-message error">
             {upholsteryPdfError}
+          </div>
+        )}
+
+        {missingSummaryPdfError && (
+          <div role="alert" className="prod-message error">
+            {missingSummaryPdfError}
           </div>
         )}
         {!pdfLogoLoading && !pdfLogo && (

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { supabase } from "../../../lib/supabaseClient";
 import { fetchCompanyLogo } from "../../../lib/pdfLogo";
 import { buildDistintaBasePdf, type DistintaBaseSection } from "../../../lib/productionPdf";
@@ -88,6 +88,15 @@ export default function DistintaBasePage() {
   const [savingItem, setSavingItem] = useState(false);
 
   const [busyId, setBusyId] = useState("");
+
+  // Form "collega articolo": trasforma una riga libera (senza codice,
+  // creata da uno degli import automatici) in una riga collegata al
+  // catalogo, SENZA doverla cancellare e ricreare - quantita' e unita'
+  // di misura gia' inserite restano cosi' come sono.
+  const [linkingRowId, setLinkingRowId] = useState("");
+  const [linkSearch, setLinkSearch] = useState("");
+  const [linkPickedItemId, setLinkPickedItemId] = useState("");
+  const [linkingBusy, setLinkingBusy] = useState(false);
 
   const [pdfBusy, setPdfBusy] = useState(false);
   const [pdfError, setPdfError] = useState("");
@@ -242,6 +251,17 @@ export default function DistintaBasePage() {
       .slice(0, 150);
   }, [items, itemSearch]);
 
+  const filteredItemsForLinkPicker = useMemo(() => {
+    const query = linkSearch.trim().toLowerCase();
+    if (!query) return items.slice(0, 150);
+    return items
+      .filter((item) => {
+        const haystack = `${item.code} ${item.supplier_code || ""} ${item.description}`.toLowerCase();
+        return haystack.includes(query);
+      })
+      .slice(0, 150);
+  }, [items, linkSearch]);
+
   async function addSection() {
     setMessage("");
     setErrorMessage("");
@@ -379,6 +399,58 @@ export default function DistintaBasePage() {
     }
 
     setBusyId("");
+    await loadData();
+  }
+
+  function startLinkingRow(row: BomItem) {
+    setLinkingRowId(row.id);
+    setLinkSearch("");
+    setLinkPickedItemId("");
+    setMessage("");
+    setErrorMessage("");
+  }
+
+  function cancelLinking() {
+    setLinkingRowId("");
+    setLinkSearch("");
+    setLinkPickedItemId("");
+  }
+
+  async function linkItemToRow() {
+    setMessage("");
+    setErrorMessage("");
+
+    if (!linkingRowId) return;
+
+    if (!linkPickedItemId) {
+      setErrorMessage("Seleziona un articolo dal catalogo.");
+      return;
+    }
+
+    const item = itemMap.get(linkPickedItemId);
+    if (!item) {
+      setErrorMessage("Articolo non trovato.");
+      return;
+    }
+
+    setLinkingBusy(true);
+
+    // Aggiorna la riga esistente (quantita' e unita' di misura restano
+    // quelle gia' inserite): non serve cancellarla e ricrearla.
+    const { error } = await supabase
+      .from("production_bom_items")
+      .update({ item_id: item.id, description: item.description })
+      .eq("id", linkingRowId);
+
+    if (error) {
+      setErrorMessage("Errore collegamento articolo: " + error.message);
+      setLinkingBusy(false);
+      return;
+    }
+
+    setLinkingBusy(false);
+    cancelLinking();
+    setMessage("Articolo collegato.");
     await loadData();
   }
 
@@ -587,27 +659,89 @@ export default function DistintaBasePage() {
                           const item = row.item_id ? itemMap.get(row.item_id) : undefined;
                           const stockKnown = !!item;
                           const short = stockKnown && item!.stock < row.qty;
+                          const isLinking = linkingRowId === row.id;
                           return (
-                            <tr key={row.id}>
-                              <td>{item ? supplierNameFor(item) || "-" : "-"}</td>
-                              <td>{item ? item.supplier_code || item.code || "-" : "-"}</td>
-                              <td>{row.description}</td>
-                              <td>{row.unit}</td>
-                              <td>{row.qty}</td>
-                              <td className={short ? "dbb-short" : ""}>
-                                {stockKnown ? item!.stock : "n/d"}
-                              </td>
-                              <td>
-                                <button
-                                  type="button"
-                                  className="dbb-remove-btn"
-                                  onClick={() => removeItem(row)}
-                                  disabled={busyId === row.id}
-                                >
-                                  {busyId === row.id ? "..." : "Rimuovi"}
-                                </button>
-                              </td>
-                            </tr>
+                            <Fragment key={row.id}>
+                              <tr>
+                                <td>{item ? supplierNameFor(item) || "-" : "-"}</td>
+                                <td>{item ? item.supplier_code || item.code || "-" : "-"}</td>
+                                <td>{row.description}</td>
+                                <td>{row.unit}</td>
+                                <td>{row.qty}</td>
+                                <td className={short ? "dbb-short" : ""}>
+                                  {stockKnown ? item!.stock : "n/d"}
+                                </td>
+                                <td className="dbb-row-actions">
+                                  {!item && (
+                                    <button
+                                      type="button"
+                                      className="dbb-link-btn"
+                                      onClick={() => (isLinking ? cancelLinking() : startLinkingRow(row))}
+                                    >
+                                      {isLinking ? "Annulla" : "Collega articolo"}
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    className="dbb-remove-btn"
+                                    onClick={() => removeItem(row)}
+                                    disabled={busyId === row.id}
+                                  >
+                                    {busyId === row.id ? "..." : "Rimuovi"}
+                                  </button>
+                                </td>
+                              </tr>
+                              {isLinking && (
+                                <tr>
+                                  <td colSpan={7}>
+                                    <div className="dbb-link-form">
+                                      <label style={{ flex: 2 }}>
+                                        Cerca articolo appena creato
+                                        <input
+                                          type="text"
+                                          autoFocus
+                                          placeholder="Codice o descrizione..."
+                                          value={linkSearch}
+                                          onChange={(e) => setLinkSearch(e.target.value)}
+                                        />
+                                      </label>
+                                      <label style={{ flex: 2 }}>
+                                        Articolo
+                                        <select
+                                          value={linkPickedItemId}
+                                          onChange={(e) => setLinkPickedItemId(e.target.value)}
+                                        >
+                                          <option value="">Seleziona...</option>
+                                          {filteredItemsForLinkPicker.map((pickItem) => (
+                                            <option key={pickItem.id} value={pickItem.id}>
+                                              {(pickItem.supplier_code || pickItem.code) +
+                                                " — " +
+                                                pickItem.description}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      </label>
+                                      <button
+                                        type="button"
+                                        className="dbb-btn primary"
+                                        onClick={linkItemToRow}
+                                        disabled={linkingBusy}
+                                      >
+                                        {linkingBusy ? "Collegamento..." : "Collega"}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="dbb-btn"
+                                        onClick={cancelLinking}
+                                        disabled={linkingBusy}
+                                      >
+                                        Annulla
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
+                            </Fragment>
                           );
                         })}
                       </tbody>
@@ -928,6 +1062,47 @@ function Styles() {
       .dbb-remove-btn:disabled {
         opacity: 0.5;
         cursor: not-allowed;
+      }
+      .dbb-row-actions {
+        display: flex;
+        gap: 12px;
+        justify-content: flex-end;
+        white-space: nowrap;
+      }
+      .dbb-link-btn {
+        border: none;
+        background: transparent;
+        color: #3b82f6;
+        font-size: 13px;
+        font-weight: 700;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .dbb-link-form {
+        display: flex;
+        gap: 14px;
+        align-items: flex-end;
+        flex-wrap: wrap;
+        padding: 12px;
+        background: var(--input-bg);
+        border-radius: 10px;
+      }
+      .dbb-link-form label {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        font-size: 12px;
+        opacity: 0.7;
+        min-width: 200px;
+      }
+      .dbb-link-form input,
+      .dbb-link-form select {
+        padding: 9px 10px;
+        border-radius: 8px;
+        border: 1px solid var(--border-color);
+        background: #081524;
+        color: #fff;
+        font-size: 14px;
       }
       .dbb-table {
         width: 100%;

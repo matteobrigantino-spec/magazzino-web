@@ -961,10 +961,13 @@ export default function ProductionPage() {
       localStorage.getItem("magazzino_user") ||
       "Matteo";
 
-    const { error } = await supabase
-      .from("production_boats")
-      .update({ delivered_at: new Date().toISOString(), delivered_by: operator })
-      .eq("id", boatId);
+    // RPC (non un semplice update): segna il battello come consegnato
+    // e, se ha un parabrezza tracciato assegnato, lo scarica anche
+    // lui dal magazzino nello stesso passaggio (STEP 55).
+    const { error } = await supabase.rpc("deliver_boat_to_customer", {
+      p_boat_id: boatId,
+      p_delivered_by: operator,
+    });
 
     if (error) {
       setErrorMessage("Errore durante la consegna: " + error.message);

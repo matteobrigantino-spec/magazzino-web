@@ -103,10 +103,12 @@ export default function ConsegnatiPage() {
 
     if (!confirmed) return;
 
-    const { error } = await supabase
-      .from("production_boats")
-      .update({ delivered_at: null, delivered_by: null })
-      .eq("id", boat.id);
+    // RPC (non un semplice update): riporta il battello a "in
+    // produzione" e, se aveva un parabrezza scaricato alla consegna,
+    // lo rimette in giacenza nello stesso passaggio (STEP 55).
+    const { error } = await supabase.rpc("undo_boat_delivery", {
+      p_boat_id: boat.id,
+    });
 
     if (error) {
       setErrorMessage("Errore durante l'annullamento: " + error.message);

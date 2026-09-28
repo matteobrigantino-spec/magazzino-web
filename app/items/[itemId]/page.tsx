@@ -74,6 +74,64 @@ export default function ItemDetailPage({
     { id: string; old_price: number | null; new_price: number; changed_at: string }[]
   >([]);
 
+  // Parabrezza tracciati a pezzo (STEP 55): se questo articolo ha
+  // almeno un windshield_kits, mostriamo un pannello "Assegnato a"
+  // con i battelli a cui sono agganciati i pezzi (assegnati e
+  // consegnati), cosi' non serve andare su Produzione -> Parabrezza
+  // per saperlo.
+  const [isWindshieldItem, setIsWindshieldItem] = useState(false);
+  const [windshieldOpen, setWindshieldOpen] = useState(false);
+  const [windshieldLoaded, setWindshieldLoaded] = useState(false);
+  const [windshieldLoading, setWindshieldLoading] = useState(false);
+  const [windshieldError, setWindshieldError] = useState("");
+  const [windshieldRows, setWindshieldRows] = useState<
+    {
+      id: string;
+      status: string;
+      matricola: string | null;
+      boatOrderNumber: string;
+      boatModel: string;
+      when: string | null;
+    }[]
+  >([]);
+
+  async function toggleWindshieldPanel() {
+    const opening = !windshieldOpen;
+    setWindshieldOpen(opening);
+
+    if (!opening || windshieldLoaded) return;
+
+    setWindshieldLoading(true);
+    setWindshieldError("");
+
+    const { data, error } = await supabase
+      .from("windshield_kits")
+      .select(
+        "id,status,matricola,out_at,delivered_at,production_boats(order_number,model_boat)"
+      )
+      .eq("item_id", itemId)
+      .in("status", ["out", "delivered"])
+      .order("out_at", { ascending: false });
+
+    if (error) {
+      setWindshieldError("Errore caricamento: " + error.message);
+    } else {
+      setWindshieldRows(
+        (data || []).map((row: any) => ({
+          id: String(row.id),
+          status: String(row.status),
+          matricola: row.matricola ? String(row.matricola) : null,
+          boatOrderNumber: String(row.production_boats?.order_number || "-"),
+          boatModel: String(row.production_boats?.model_boat || "-"),
+          when: row.status === "delivered" ? row.delivered_at : row.out_at,
+        }))
+      );
+      setWindshieldLoaded(true);
+    }
+
+    setWindshieldLoading(false);
+  }
+
   async function togglePriceHistory() {
     const opening = !priceHistoryOpen;
     setPriceHistoryOpen(opening);
@@ -206,6 +264,14 @@ export default function ItemDetailPage({
       setBoxQty(Math.max(1, Number(item.box_qty || 1)));
       setOnOrder(Number(item.on_order || 0));
       setImageUrl(item.image_url || "");
+
+      const { data: wkCheck } = await supabase
+        .from("windshield_kits")
+        .select("id")
+        .eq("item_id", itemId)
+        .limit(1);
+
+      setIsWindshieldItem((wkCheck || []).length > 0);
 
       setLoading(false);
     }
@@ -719,6 +785,140 @@ export default function ItemDetailPage({
                             </div>
                           );
                         })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {isWindshieldItem && (
+              <div
+                style={{
+                  marginTop: 4,
+                  marginBottom: 16,
+                  border: "1px solid var(--border-color)",
+                  borderRadius: 9,
+                  overflow: "hidden",
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={toggleWindshieldPanel}
+                  style={{
+                    width: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 10,
+                    padding: "12px 14px",
+                    background: "var(--input-bg)",
+                    color: "var(--foreground)",
+                    border: "none",
+                    cursor: "pointer",
+                    fontSize: 13,
+                    fontWeight: 750,
+                    textAlign: "left",
+                  }}
+                >
+                  <span>
+                    Assegnato a
+                    {windshieldLoaded && (
+                      <span style={{ opacity: 0.55, fontWeight: 500 }}>
+                        {" "}
+                        ({windshieldRows.length})
+                      </span>
+                    )}
+                  </span>
+                  <span
+                    style={{
+                      display: "inline-block",
+                      transition: "transform .15s ease",
+                      transform: windshieldOpen
+                        ? "rotate(180deg)"
+                        : "rotate(0deg)",
+                    }}
+                  >
+                    ▾
+                  </span>
+                </button>
+
+                {windshieldOpen && (
+                  <div style={{ padding: "12px 14px" }}>
+                    <div style={{ marginBottom: 10, fontSize: 12, opacity: 0.55 }}>
+                      La Giacenza qui sopra include anche i pezzi già assegnati a un
+                      battello ma non ancora consegnati: restano fisicamente in
+                      magazzino finché il battello non risulta consegnato al cliente.
+                    </div>
+
+                    {windshieldLoading && (
+                      <div style={{ fontSize: 13, opacity: 0.6 }}>Caricamento...</div>
+                    )}
+
+                    {!windshieldLoading && windshieldError && (
+                      <div style={{ fontSize: 13, color: "#ef4444" }}>{windshieldError}</div>
+                    )}
+
+                    {!windshieldLoading &&
+                      !windshieldError &&
+                      windshieldLoaded &&
+                      windshieldRows.length === 0 && (
+                        <div style={{ fontSize: 13, opacity: 0.55 }}>
+                          Nessun pezzo di questo articolo attualmente assegnato a un
+                          battello.
+                        </div>
+                      )}
+
+                    {!windshieldLoading && windshieldRows.length > 0 && (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        {windshieldRows.map((row) => (
+                          <div
+                            key={row.id}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "space-between",
+                              gap: 12,
+                              padding: "8px 0",
+                              borderBottom: "1px solid var(--border-color)",
+                              fontSize: 13,
+                            }}
+                          >
+                            <span>
+                              <strong>{row.boatOrderNumber}</strong>
+                              <span style={{ opacity: 0.6 }}> · {row.boatModel}</span>
+                              {row.matricola && (
+                                <span style={{ opacity: 0.6 }}> · matricola {row.matricola}</span>
+                              )}
+                            </span>
+                            <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                              {row.when && (
+                                <span style={{ opacity: 0.55 }}>
+                                  {formatDateTimeIt(row.when)}
+                                </span>
+                              )}
+                              <span
+                                style={{
+                                  padding: "3px 9px",
+                                  borderRadius: 20,
+                                  fontSize: 11,
+                                  fontWeight: 800,
+                                  border:
+                                    row.status === "delivered"
+                                      ? "1px solid rgba(148,163,184,0.35)"
+                                      : "1px solid rgba(34,197,94,0.35)",
+                                  background:
+                                    row.status === "delivered"
+                                      ? "rgba(148,163,184,0.12)"
+                                      : "rgba(34,197,94,0.1)",
+                                  color: row.status === "delivered" ? "#94a3b8" : "#22c55e",
+                                }}
+                              >
+                                {row.status === "delivered" ? "CONSEGNATO" : "ASSEGNATO"}
+                              </span>
+                            </span>
+                          </div>
+                        ))}
                       </div>
                     )}
                   </div>

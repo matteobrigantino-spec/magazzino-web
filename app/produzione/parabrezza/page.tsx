@@ -37,12 +37,13 @@ type Kit = {
   item_id: string;
   matricola: string | null;
   unit_price: number | null;
-  status: "stock" | "out";
+  status: "stock" | "out" | "delivered";
   note: string | null;
   boat_id: string | null;
   boat_registration: string | null;
   received_at: string;
   out_at: string | null;
+  delivered_at: string | null;
 };
 
 type Boat = {
@@ -120,7 +121,7 @@ export default function ParabrezzaPage() {
         supabase
           .from("windshield_kits")
           .select(
-            "id,item_id,matricola,unit_price,status,note,boat_id,boat_registration,received_at,out_at"
+            "id,item_id,matricola,unit_price,status,note,boat_id,boat_registration,received_at,out_at,delivered_at"
           )
           .order("received_at", { ascending: false }),
         supabase
@@ -189,12 +190,13 @@ export default function ParabrezzaPage() {
         item_id: String(row.item_id || ""),
         matricola: row.matricola ? String(row.matricola) : null,
         unit_price: row.unit_price === null || row.unit_price === undefined ? null : Number(row.unit_price),
-        status: row.status === "out" ? "out" : "stock",
+        status: row.status === "out" ? "out" : row.status === "delivered" ? "delivered" : "stock",
         note: row.note ? String(row.note) : null,
         boat_id: row.boat_id ? String(row.boat_id) : null,
         boat_registration: row.boat_registration ? String(row.boat_registration) : null,
         received_at: String(row.received_at || ""),
         out_at: row.out_at ? String(row.out_at) : null,
+        delivered_at: row.delivered_at ? String(row.delivered_at) : null,
       }))
     );
 
@@ -464,6 +466,9 @@ export default function ParabrezzaPage() {
 
   const stockKits = useMemo(() => kits.filter((kit) => kit.status === "stock"), [kits]);
   const outKits = useMemo(() => kits.filter((kit) => kit.status === "out"), [kits]);
+  // Consegnati davvero al cliente insieme al battello (STEP 55): usciti
+  // per sempre dal magazzino, non contano piu' nella Giacenza generale.
+  const deliveredKits = useMemo(() => kits.filter((kit) => kit.status === "delivered"), [kits]);
 
   // Senza matricola i pezzi in giacenza sono tutti interscambiabili:
   // elencarli uno per uno (tutti identici) e' solo confusione, si
@@ -935,8 +940,13 @@ export default function ParabrezzaPage() {
 
       {outKits.length > 0 && (
         <section className="pbz-card">
-          <div className="pbz-eyebrow">STORICO</div>
-          <h2>Parabrezza già assegnati ({outKits.length})</h2>
+          <div className="pbz-eyebrow">ASSEGNATI</div>
+          <h2>Parabrezza assegnati, ancora in magazzino ({outKits.length})</h2>
+          <p className="pbz-hint">
+            Agganciati a un battello ma non ancora consegnati al cliente: contano
+            ancora nella Giacenza generale dell&apos;articolo, perché sono ancora
+            fisicamente qui.
+          </p>
           <table className="pbz-table">
             <thead>
               <tr>
@@ -953,6 +963,37 @@ export default function ParabrezzaPage() {
                   <td>{kit.matricola || "—"}</td>
                   <td>{kit.boat_registration || "—"}</td>
                   <td>{kit.out_at ? formatItDate(kit.out_at.slice(0, 10)) : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+
+      {deliveredKits.length > 0 && (
+        <section className="pbz-card">
+          <div className="pbz-eyebrow">STORICO</div>
+          <h2>Parabrezza consegnati al cliente ({deliveredKits.length})</h2>
+          <p className="pbz-hint">
+            Il battello è stato segnato come consegnato: il pezzo è uscito
+            davvero dal magazzino e non conta più nella Giacenza generale.
+          </p>
+          <table className="pbz-table">
+            <thead>
+              <tr>
+                <th>Articolo</th>
+                <th>Matricola</th>
+                <th>N. ordine battello</th>
+                <th>Consegnato il</th>
+              </tr>
+            </thead>
+            <tbody>
+              {deliveredKits.map((kit) => (
+                <tr key={kit.id}>
+                  <td>{itemLabel(kit.item_id)}</td>
+                  <td>{kit.matricola || "—"}</td>
+                  <td>{kit.boat_registration || "—"}</td>
+                  <td>{kit.delivered_at ? formatItDate(kit.delivered_at.slice(0, 10)) : "—"}</td>
                 </tr>
               ))}
             </tbody>

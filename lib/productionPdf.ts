@@ -1371,12 +1371,21 @@ export function buildDistintaBasePdf(params: {
   sections: DistintaBaseSection[];
   logo: string;
   generatedDate: string;
+  titleLabel?: string;
+  noteText?: string;
+  emptyMessage?: string;
+  filePrefix?: string;
 }) {
   const { modelName, sections, logo, generatedDate } = params;
+  const titleLabel = params.titleLabel || "DISTINTA BASE";
+  const noteText =
+    params.noteText || 'le righe senza codice ("-"/"n/d") vanno ancora create a catalogo';
+  const emptyMessage = params.emptyMessage || "Nessuna sezione ancora inserita per questo modello.";
+  const filePrefix = params.filePrefix || "Distinta_base";
 
   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
   doc.setProperties({
-    title: `Distinta base - ${modelName}`,
+    title: `${titleLabel} - ${modelName}`,
     subject: "Distinta base per modello",
   });
 
@@ -1413,7 +1422,7 @@ export function buildDistintaBasePdf(params: {
     doc.setTextColor(0, 0, 0);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(13);
-    doc.text("DISTINTA BASE", margin, 13);
+    doc.text(titleLabel, margin, 13);
 
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9.5);
@@ -1422,11 +1431,7 @@ export function buildDistintaBasePdf(params: {
 
     doc.setFontSize(7.3);
     doc.setTextColor(130, 130, 130);
-    doc.text(
-      `Generato il ${generatedDate} · le righe senza codice ("-"/"n/d") vanno ancora create a catalogo`,
-      margin,
-      24
-    );
+    doc.text(`Generato il ${generatedDate} · ${noteText}`, margin, 24);
     doc.setTextColor(0, 0, 0);
 
     doc.setDrawColor(200);
@@ -1441,7 +1446,7 @@ export function buildDistintaBasePdf(params: {
     doc.setTextColor(0, 0, 0);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(9.5);
-    doc.text(`DISTINTA BASE — ${modelName} (segue)`, margin, 9);
+    doc.text(`${titleLabel} — ${modelName} (segue)`, margin, 9);
 
     doc.setDrawColor(200);
     doc.setLineWidth(0.3);
@@ -1503,7 +1508,7 @@ export function buildDistintaBasePdf(params: {
     doc.setFont("helvetica", "italic");
     doc.setFontSize(9);
     doc.setTextColor(120, 120, 120);
-    doc.text("Nessuna sezione ancora inserita per questo modello.", colX(0), yByCol[0] + 2);
+    doc.text(emptyMessage, colX(0), yByCol[0] + 2);
     doc.setTextColor(0, 0, 0);
   }
 
@@ -1609,9 +1614,48 @@ export function buildDistintaBasePdf(params: {
   }
 
   const safeModel = modelName.replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
-  const filename = `Distinta_base_${safeModel || "modello"}.pdf`;
+  const filename = `${filePrefix}_${safeModel || "modello"}.pdf`;
 
   return { doc, filename };
+}
+
+// ============================================================
+// ARTICOLI DA CREARE A CATALOGO (STEP 53)
+//
+// Stessa distinta base di buildDistintaBasePdf, ma filtrata: tiene
+// solo le righe senza fornitore e senza codice articolo (quelle
+// "libere", non ancora collegate a un articolo del catalogo), le
+// uniche che l'utente deve ancora creare a catalogo e poi agganciare
+// con "Collega articolo". Le sezioni che restano senza righe dopo il
+// filtro vengono tolte dal PDF.
+// ============================================================
+
+export function buildMissingCatalogItemsPdf(params: {
+  modelName: string;
+  sections: DistintaBaseSection[];
+  logo: string;
+  generatedDate: string;
+}) {
+  const filteredSections: DistintaBaseSection[] = params.sections
+    .map((section) => ({
+      sectionName: section.sectionName,
+      kind: section.kind,
+      rows: section.rows.filter(
+        (row) => (row.supplierName === "-" || !row.supplierName) && (row.itemCode === "-" || !row.itemCode)
+      ),
+    }))
+    .filter((section) => section.rows.length > 0);
+
+  return buildDistintaBasePdf({
+    modelName: params.modelName,
+    sections: filteredSections,
+    logo: params.logo,
+    generatedDate: params.generatedDate,
+    titleLabel: "ARTICOLI DA CREARE A CATALOGO",
+    noteText: 'solo le righe senza fornitore e senza codice, da creare a catalogo e poi collegare con "Collega articolo"',
+    emptyMessage: "Nessuna riga senza fornitore/codice: tutti gli articoli di questo modello sono collegati a catalogo.",
+    filePrefix: "Articoli_da_creare",
+  });
 }
 
 // ============================================================

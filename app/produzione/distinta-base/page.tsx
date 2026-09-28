@@ -7,6 +7,7 @@ import { fetchCompanyLogo } from "../../../lib/pdfLogo";
 import {
   buildDistintaBasePdf,
   buildDistintaBaseBookletPdf,
+  buildMissingCatalogItemsPdf,
   type DistintaBaseSection,
 } from "../../../lib/productionPdf";
 
@@ -107,6 +108,9 @@ export default function DistintaBasePage() {
 
   const [bookletBusy, setBookletBusy] = useState(false);
   const [bookletError, setBookletError] = useState("");
+
+  const [missingBusy, setMissingBusy] = useState(false);
+  const [missingError, setMissingError] = useState("");
 
   useEffect(() => {
     loadData();
@@ -535,6 +539,37 @@ export default function DistintaBasePage() {
     }
   }
 
+  async function downloadMissingCatalogItemsPdf() {
+    setMissingError("");
+
+    if (!selectedModel) {
+      setMissingError("Seleziona prima un modello.");
+      return;
+    }
+
+    setMissingBusy(true);
+
+    try {
+      const logo = await fetchCompanyLogo();
+      if (!logo) {
+        throw new Error("Carica il logo aziendale prima di scaricare il PDF (Produzione -> Configurazioni).");
+      }
+
+      const { doc, filename } = buildMissingCatalogItemsPdf({
+        modelName: selectedModel,
+        sections: buildSectionsForPdf(),
+        logo,
+        generatedDate: new Intl.DateTimeFormat("it-IT").format(new Date()),
+      });
+
+      doc.save(filename);
+    } catch (err: any) {
+      setMissingError(err?.message || "Errore durante la creazione del PDF.");
+    } finally {
+      setMissingBusy(false);
+    }
+  }
+
   if (loading) {
     return (
       <div style={{ padding: 40, textAlign: "center", opacity: 0.6 }}>
@@ -618,11 +653,21 @@ export default function DistintaBasePage() {
               >
                 {bookletBusy ? "Creazione libretto..." : "Stampa come libretto"}
               </button>
+              <button
+                type="button"
+                className="dbb-btn"
+                onClick={downloadMissingCatalogItemsPdf}
+                disabled={missingBusy || sectionsForModel.length === 0}
+                title="Solo le righe senza fornitore e senza codice articolo, ancora da creare a catalogo."
+              >
+                {missingBusy ? "Creazione PDF..." : "Stampa articoli da creare"}
+              </button>
             </div>
           </section>
 
           {pdfError && <div className="dbb-message error">{pdfError}</div>}
           {bookletError && <div className="dbb-message error">{bookletError}</div>}
+          {missingError && <div className="dbb-message error">{missingError}</div>}
 
           <section className="dbb-card">
             <div className="dbb-card-head">

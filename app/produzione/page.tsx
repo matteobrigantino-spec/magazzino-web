@@ -5,6 +5,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabaseClient";
 import { fetchCompanyLogo } from "../../lib/pdfLogo";
+import CameraIcon from "../../components/CameraIcon";
+import BoatPhotosModal from "../../components/BoatPhotosModal";
 
 type Department = {
   id: string;
@@ -99,6 +101,16 @@ export default function ProductionPage() {
 
   const [pdfLogo, setPdfLogo] = useState("");
   const [pdfLogoLoading, setPdfLogoLoading] = useState(true);
+
+  // Archivio foto battello (STEP 56): quante foto ci sono gia' per
+  // ogni battello (per il numerino sul tasto fotocamera) e quale
+  // battello ha il pannello foto aperto in questo momento.
+  const [photoCountByBoatId, setPhotoCountByBoatId] = useState<
+    Record<string, number>
+  >({});
+  const [galleryBoat, setGalleryBoat] = useState<{ id: string; label: string } | null>(
+    null
+  );
 
   // Battelli che hanno almeno una richiesta di tappezzeria inserita
   // (indipendentemente da assegnata/in ordine/da ordinare): serve solo a
@@ -543,6 +555,20 @@ export default function ProductionPage() {
         .order("name", { ascending: true }),
       supabase.from("production_boat_upholstery").select("boat_id"),
     ]);
+
+    // Conteggio foto per battello (STEP 56): sola lettura, serve solo
+    // per il numerino sul tasto fotocamera. Se la tabella non esiste
+    // ancora su Supabase la query fallisce da sola e i conteggi
+    // restano semplicemente a zero, senza bloccare il resto.
+    const photoCountRes = await supabase.from("production_boat_photos").select("boat_id");
+    if (!photoCountRes.error) {
+      const counts: Record<string, number> = {};
+      (photoCountRes.data || []).forEach((row: any) => {
+        const id = String(row.boat_id);
+        counts[id] = (counts[id] || 0) + 1;
+      });
+      setPhotoCountByBoatId(counts);
+    }
 
     // Separate dalle altre: finche' su Supabase non esistono ancora le
     // colonne printed_at (vanno aggiunte a mano una volta sola), queste
@@ -1884,7 +1910,7 @@ export default function ProductionPage() {
                         )}
                       </td>
                       <td className="prod-note-cell">{boat.note || "—"}</td>
-                      <td onClick={(e) => e.stopPropagation()}>
+                      <td className="prod-actions-cell" onClick={(e) => e.stopPropagation()}>
                         <button
                           type="button"
                           className="prod-deliver-btn"
@@ -1897,6 +1923,24 @@ export default function ProductionPage() {
                         >
                           Consegna cliente
                         </button>
+                        <button
+                          type="button"
+                          className="prod-photo-btn"
+                          title="Archivio foto battello"
+                          onClick={() =>
+                            setGalleryBoat({
+                              id: boat.id,
+                              label: `${boat.order_number} · ${boat.model_boat}`,
+                            })
+                          }
+                        >
+                          <CameraIcon />
+                          {Boolean(photoCountByBoatId[boat.id]) && (
+                            <span className="prod-photo-badge">
+                              {photoCountByBoatId[boat.id]}
+                            </span>
+                          )}
+                        </button>
                       </td>
                     </tr>
                   );
@@ -1906,6 +1950,17 @@ export default function ProductionPage() {
           </table>
         </div>
       </section>
+
+      {galleryBoat && (
+        <BoatPhotosModal
+          boatId={galleryBoat.id}
+          boatLabel={galleryBoat.label}
+          onClose={() => setGalleryBoat(null)}
+          onCountChange={(boatId, count) =>
+            setPhotoCountByBoatId((current) => ({ ...current, [boatId]: count }))
+          }
+        />
+      )}
 
       <Styles />
     </div>
@@ -2590,6 +2645,50 @@ function Styles() {
 
       .prod-deliver-btn:hover {
         background: rgba(34,197,94,.18);
+      }
+
+      .prod-actions-cell {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .prod-photo-btn {
+        position: relative;
+        min-width: 32px;
+        min-height: 32px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid rgba(148,163,184,.22);
+        border-radius: 7px;
+        background: rgba(255,255,255,.035);
+        color: #cbd5f5;
+        cursor: pointer;
+      }
+
+      .prod-photo-btn:hover {
+        background: rgba(51,224,234,.12);
+        border-color: rgba(51,224,234,.4);
+        color: #7cf2c4;
+      }
+
+      .prod-photo-badge {
+        position: absolute;
+        top: -6px;
+        right: -6px;
+        min-width: 15px;
+        height: 15px;
+        padding: 0 3px;
+        border-radius: 999px;
+        background: #33e0ea;
+        color: #04141c;
+        font-size: 8.5px;
+        font-weight: 950;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        line-height: 1;
       }
 
       .prod-empty,

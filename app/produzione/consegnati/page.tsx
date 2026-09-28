@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../../lib/supabaseClient";
+import CameraIcon from "../../../components/CameraIcon";
+import BoatPhotosModal from "../../../components/BoatPhotosModal";
 
 /*
   BATTELLI CONSEGNATI (STEP 54)
@@ -44,6 +46,16 @@ export default function ConsegnatiPage() {
   const [message, setMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
 
+  // Archivio foto battello (STEP 56): stesso tasto fotocamera della
+  // pagina Produzione, cosi' le foto restano consultabili anche dopo
+  // la consegna, a distanza di tempo.
+  const [photoCountByBoatId, setPhotoCountByBoatId] = useState<
+    Record<string, number>
+  >({});
+  const [galleryBoat, setGalleryBoat] = useState<{ id: string; label: string } | null>(
+    null
+  );
+
   useEffect(() => {
     loadData();
   }, []);
@@ -78,6 +90,19 @@ export default function ConsegnatiPage() {
         delivered_by: row.delivered_by ? String(row.delivered_by) : null,
       }))
     );
+
+    // Conteggio foto per battello (STEP 56), sola lettura: se la
+    // tabella non esiste ancora su Supabase la query fallisce da sola
+    // e i conteggi restano a zero, senza bloccare il resto della pagina.
+    const photoCountRes = await supabase.from("production_boat_photos").select("boat_id");
+    if (!photoCountRes.error) {
+      const counts: Record<string, number> = {};
+      (photoCountRes.data || []).forEach((row: any) => {
+        const id = String(row.boat_id);
+        counts[id] = (counts[id] || 0) + 1;
+      });
+      setPhotoCountByBoatId(counts);
+    }
 
     setLoading(false);
   }
@@ -200,13 +225,31 @@ export default function ConsegnatiPage() {
                     <td>{boat.matricola || "—"}</td>
                     <td>{formatItDateTime(boat.delivered_at)}</td>
                     <td>{boat.delivered_by || "—"}</td>
-                    <td onClick={(e) => e.stopPropagation()}>
+                    <td className="pdl-actions-cell" onClick={(e) => e.stopPropagation()}>
                       <button
                         type="button"
                         className="pdl-undo-btn"
                         onClick={() => undoDelivery(boat)}
                       >
                         Annulla consegna
+                      </button>
+                      <button
+                        type="button"
+                        className="pdl-photo-btn"
+                        title="Archivio foto battello"
+                        onClick={() =>
+                          setGalleryBoat({
+                            id: boat.id,
+                            label: `${boat.order_number} · ${boat.model_boat}`,
+                          })
+                        }
+                      >
+                        <CameraIcon />
+                        {Boolean(photoCountByBoatId[boat.id]) && (
+                          <span className="pdl-photo-badge">
+                            {photoCountByBoatId[boat.id]}
+                          </span>
+                        )}
                       </button>
                     </td>
                   </tr>
@@ -216,6 +259,17 @@ export default function ConsegnatiPage() {
           </table>
         </div>
       </section>
+
+      {galleryBoat && (
+        <BoatPhotosModal
+          boatId={galleryBoat.id}
+          boatLabel={galleryBoat.label}
+          onClose={() => setGalleryBoat(null)}
+          onCountChange={(boatId, count) =>
+            setPhotoCountByBoatId((current) => ({ ...current, [boatId]: count }))
+          }
+        />
+      )}
 
       <Styles />
     </div>
@@ -250,6 +304,10 @@ function Styles() {
       .pdl-order { color:#93c5fd; font-weight:800; }
       .pdl-undo-btn { min-height:30px; padding:0 11px; border:1px solid rgba(239,68,68,.28); border-radius:7px; background:rgba(239,68,68,.08); color:#fca5a5; cursor:pointer; font-size:9px; font-weight:900; white-space:nowrap; }
       .pdl-undo-btn:hover { background:rgba(239,68,68,.15); }
+      .pdl-actions-cell { display:flex; align-items:center; gap:6px; }
+      .pdl-photo-btn { position:relative; min-width:30px; min-height:30px; display:inline-flex; align-items:center; justify-content:center; border:1px solid rgba(148,163,184,.22); border-radius:7px; background:rgba(255,255,255,.035); color:#cbd5f5; cursor:pointer; }
+      .pdl-photo-btn:hover { background:rgba(34,197,94,.12); border-color:rgba(34,197,94,.4); color:#86efac; }
+      .pdl-photo-badge { position:absolute; top:-6px; right:-6px; min-width:15px; height:15px; padding:0 3px; border-radius:999px; background:#4ade80; color:#04170d; font-size:8.5px; font-weight:950; display:flex; align-items:center; justify-content:center; line-height:1; }
       .pdl-empty-cell { padding:30px; color:#7388a3; text-align:center; font-size:10px; white-space:normal; }
       @media(max-width:800px){ .pdl-hero{align-items:stretch;flex-direction:column} .pdl-search{min-width:0;flex:1} }
     `}</style>

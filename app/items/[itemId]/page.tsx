@@ -12,6 +12,7 @@ type ItemData = {
   supplier_code: string | null;
   description: string;
   category: string;
+  unit: string;
   stock: number;
   min_stock: number;
   box_qty: number;
@@ -55,6 +56,7 @@ export default function ItemDetailPage({
   const [supplierCode, setSupplierCode] = useState("");
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState("Altro");
+  const [unit, setUnit] = useState("PZ");
   const [price, setPrice] = useState<number>(0);
   const [stock, setStock] = useState<number>(0);
   const [minStock, setMinStock] = useState<number>(0);
@@ -154,7 +156,7 @@ export default function ItemDetailPage({
         const response = await supabase
           .from("items")
           .select(
-            "id,supplier_id,code,supplier_code,description,category,stock,min_stock,box_qty,price,on_order,image_url"
+            "id,supplier_id,code,supplier_code,description,category,unit,stock,min_stock,box_qty,price,on_order,image_url"
           )
           .eq("id", itemId)
           .single();
@@ -165,7 +167,7 @@ export default function ItemDetailPage({
         const response = await supabase
           .from("items")
           .select(
-            "id,supplier_id,code,supplier_code,description,category,stock,min_stock,box_qty,on_order,image_url"
+            "id,supplier_id,code,supplier_code,description,category,unit,stock,min_stock,box_qty,on_order,image_url"
           )
           .eq("id", itemId)
           .single();
@@ -191,6 +193,7 @@ export default function ItemDetailPage({
       setSupplierCode(item.supplier_code || "");
       setDescription(item.description || "");
       setCategory(item.category?.trim() || "Altro");
+      setUnit(item.unit?.trim() || "PZ");
 
       if (needsPrice) {
         setPrice(Number(item.price || 0));
@@ -272,6 +275,7 @@ export default function ItemDetailPage({
       supplier_code: string;
       description: string;
       category: string;
+      unit: string;
       stock: number;
       min_stock: number;
       box_qty: number;
@@ -283,6 +287,7 @@ export default function ItemDetailPage({
       supplier_code: supplierCode.trim(),
       description: description.trim(),
       category: category.trim() || "Altro",
+      unit: unit.trim() || "PZ",
       stock: Number(stock) || 0,
       min_stock: Number(minStock) || 0,
       box_qty: Number(boxQty) || 1,
@@ -516,6 +521,11 @@ export default function ItemDetailPage({
             <CategoryField
               value={category}
               onChange={setCategory}
+            />
+
+            <UnitField
+              value={unit}
+              onChange={setUnit}
             />
 
             <div
@@ -1039,6 +1049,55 @@ function CategoryField({
         }}
       >
         Campo libero: inserisci la categoria che vuoi usare per questo articolo.
+      </div>
+    </div>
+  );
+}
+
+const UNIT_SUGGESTIONS = ["PZ", "MT", "KG", "CP", "LT", "MQ"];
+
+function UnitField({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <label
+        style={{
+          display: "block",
+          fontSize: 13,
+          fontWeight: 750,
+          marginBottom: 7,
+        }}
+      >
+        Unità di misura
+      </label>
+
+      <input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="PZ"
+        list="unit-suggestions"
+        style={inputStyle}
+      />
+      <datalist id="unit-suggestions">
+        {UNIT_SUGGESTIONS.map((u) => (
+          <option key={u} value={u} />
+        ))}
+      </datalist>
+
+      <div
+        style={{
+          marginTop: 6,
+          fontSize: 11,
+          opacity: 0.5,
+        }}
+      >
+        Come viene contato questo articolo (pezzi, metri, chilogrammi...).
+        Scegli dal suggerimento o scrivi la tua.
       </div>
     </div>
   );

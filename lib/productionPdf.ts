@@ -1331,3 +1331,221 @@ export function buildMissingArticlesSummaryPdf(params: {
 
   return { doc, filename };
 }
+
+// ============================================================
+// DISTINTA BASE PER MODELLO - stampa PDF (STEP 46)
+//
+// Elenco completo (tutte le sezioni, standard e optional, con
+// TUTTE le righe incluse quelle "libere" senza articolo a
+// catalogo) della distinta base di UN modello, cosi' si puo'
+// stampare e usare come riferimento cartaceo - ad es. per capire
+// quali righe libere vanno ancora create come articoli veri a
+// catalogo (Fornitore/Cod. articolo mostrati come "-", Giacenza
+// come "n/d").
+//
+// E' un export di sola lettura: non tocca mai la giacenza.
+// ============================================================
+
+export type DistintaBaseSectionRow = {
+  supplierName: string;
+  itemCode: string;
+  description: string;
+  unit: string;
+  qty: number;
+  stock: number | null;
+};
+
+export type DistintaBaseSection = {
+  sectionName: string;
+  kind: "standard" | "optional";
+  rows: DistintaBaseSectionRow[];
+};
+
+export function buildDistintaBasePdf(params: {
+  modelName: string;
+  sections: DistintaBaseSection[];
+  logo: string;
+  generatedDate: string;
+}) {
+  const { modelName, sections, logo, generatedDate } = params;
+
+  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  doc.setProperties({
+    title: `Distinta base - ${modelName}`,
+    subject: "Distinta base per modello",
+  });
+
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const margin = 14;
+  const tableWidth = pageWidth - margin * 2;
+
+  const columns = [
+    { key: "supplier", label: "FORNITORE", width: 36 },
+    { key: "code", label: "COD. ARTICOLO", width: 28 },
+    { key: "description", label: "DESCRIZIONE", width: tableWidth - 36 - 28 - 16 - 20 - 22 },
+    { key: "unit", label: "UM", width: 16 },
+    { key: "qty", label: "Q.TÀ", width: 20 },
+    { key: "stock", label: "GIACENZA", width: 22 },
+  ];
+
+  function drawPageHeader(subtitle: string) {
+    drawCompanyLogoTopRight(doc, logo);
+
+    doc.setTextColor(0, 0, 0);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.text("DISTINTA BASE", margin, 16);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.setTextColor(60, 60, 60);
+    doc.text(subtitle, margin, 23);
+
+    doc.setFontSize(9.5);
+    doc.setTextColor(120, 120, 120);
+    doc.text(`Generato il ${generatedDate}`, margin, 29);
+
+    doc.setFontSize(7.5);
+    doc.setTextColor(150, 150, 150);
+    doc.text(
+      "Le righe senza codice (Fornitore/Cod. articolo \"-\", Giacenza \"n/d\") non sono ancora collegate",
+      margin,
+      33.5
+    );
+    doc.text(
+      "a un articolo a catalogo: vanno create come articoli veri e poi ricollegate dalla Distinta base.",
+      margin,
+      37
+    );
+    doc.setTextColor(0, 0, 0);
+
+    doc.setDrawColor(200);
+    doc.setLineWidth(0.3);
+    doc.line(margin, 40.5, pageWidth - margin, 40.5);
+
+    return 47.5;
+  }
+
+  function drawTableHeader(y: number) {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.5);
+    doc.setTextColor(110, 110, 110);
+    let x = margin;
+    columns.forEach((column) => {
+      doc.text(column.label, x, y);
+      x += column.width;
+    });
+    doc.setTextColor(0, 0, 0);
+    doc.setDrawColor(225);
+    doc.setLineWidth(0.25);
+    doc.line(margin, y + 2.5, pageWidth - margin, y + 2.5);
+    return y + 8;
+  }
+
+  let y = drawPageHeader(modelName);
+
+  if (sections.length === 0) {
+    doc.setFont("helvetica", "italic");
+    doc.setFontSize(10);
+    doc.setTextColor(90, 90, 90);
+    doc.text("Nessuna sezione ancora inserita per questo modello.", margin, y + 2);
+    doc.setTextColor(0, 0, 0);
+  }
+
+  sections.forEach((section) => {
+    if (y + 8 + 10 > pageHeight - 16) {
+      doc.addPage();
+      y = drawPageHeader(modelName);
+    }
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.setTextColor(0, 0, 0);
+    const kindLabel = section.kind === "standard" ? "STANDARD" : "OPTIONAL";
+    doc.text(`${section.sectionName}  ·  ${kindLabel}`, margin, y + 3);
+    y += 9;
+
+    if (section.rows.length === 0) {
+      doc.setFont("helvetica", "italic");
+      doc.setFontSize(9);
+      doc.setTextColor(120, 120, 120);
+      doc.text("Nessun articolo in questa sezione.", margin, y + 3);
+      doc.setTextColor(0, 0, 0);
+      y += 9;
+      return;
+    }
+
+    y = drawTableHeader(y);
+
+    section.rows.forEach((row) => {
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+
+      const descLines = doc.splitTextToSize(row.description || "-", columns[2].width - 4);
+      const rowHeight = Math.max(7, descLines.length * 4 + 3);
+
+      if (y + rowHeight > pageHeight - 16) {
+        doc.addPage();
+        y = drawPageHeader(modelName);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(11);
+        doc.text(`${section.sectionName} (segue)`, margin, y + 3);
+        y += 9;
+        y = drawTableHeader(y);
+      }
+
+      let x = margin;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.setTextColor(0, 0, 0);
+
+      const supplierLines = doc.splitTextToSize(row.supplierName || "-", columns[0].width - 4);
+      doc.text(supplierLines, x, y + 4.5);
+      x += columns[0].width;
+
+      doc.text(row.itemCode || "-", x, y + 4.5);
+      x += columns[1].width;
+
+      doc.text(descLines, x, y + 4.5);
+      x += columns[2].width;
+
+      doc.text(row.unit || "-", x, y + 4.5);
+      x += columns[3].width;
+
+      doc.text(String(row.qty), x, y + 4.5);
+      x += columns[4].width;
+
+      const short = row.stock !== null && row.stock < row.qty;
+      doc.setFont("helvetica", short ? "bold" : "normal");
+      if (short) doc.setTextColor(217, 119, 6);
+      doc.text(row.stock === null ? "n/d" : String(row.stock), x, y + 4.5);
+      doc.setTextColor(0, 0, 0);
+
+      doc.setDrawColor(240);
+      doc.setLineWidth(0.15);
+      doc.line(margin, y + rowHeight, pageWidth - margin, y + rowHeight);
+      doc.setLineWidth(0.2);
+
+      y += rowHeight + 1;
+    });
+
+    y += 6;
+  });
+
+  const totalPages = doc.getNumberOfPages();
+  for (let page = 1; page <= totalPages; page++) {
+    doc.setPage(page);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(130, 130, 130);
+    doc.text(`Pagina ${page} di ${totalPages}`, pageWidth - margin, pageHeight - 8, {
+      align: "right",
+    });
+  }
+
+  const safeModel = modelName.replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  const filename = `Distinta_base_${safeModel || "modello"}.pdf`;
+
+  return { doc, filename };
+}

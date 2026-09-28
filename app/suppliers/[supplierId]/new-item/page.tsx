@@ -22,6 +22,7 @@ export default function NewItemPage({
   const [supplierCode, setSupplierCode] = useState("");
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState("Altro");
+  const [unit, setUnit] = useState("PZ");
   const [price, setPrice] = useState<number>(0);
   const [minStock, setMinStock] = useState<number>(0);
   const [boxQty, setBoxQty] = useState<number>(1);
@@ -122,6 +123,7 @@ export default function NewItemPage({
       supplier_code: trimmedSupplierCode,
       description: trimmedDescription,
       category: trimmedCategory || "Altro",
+      unit: unit.trim() || "PZ",
       price: canViewPrices
         ? Number(price) || 0
         : 0,
@@ -294,6 +296,8 @@ export default function NewItemPage({
               onChange={setCategory}
               placeholder="Scrivi la categoria"
             />
+
+            <UnitField value={unit} onChange={setUnit} />
 
             <div
               style={{
@@ -496,6 +500,11 @@ export default function NewItemPage({
               value={category || "Altro"}
             />
 
+            <PreviewRow
+              label="Unità di misura"
+              value={unit || "PZ"}
+            />
+
             <div
               style={{
                 display: "grid",
@@ -623,6 +632,60 @@ function Field({
         autoFocus={autoFocus}
         style={inputStyle}
       />
+    </div>
+  );
+}
+
+const UNIT_SUGGESTIONS = ["PZ", "MT", "KG", "CP", "LT", "MQ"];
+
+function UnitField({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div
+      style={{
+        marginBottom: 16,
+      }}
+    >
+      <label
+        style={{
+          display: "block",
+          fontSize: 13,
+          fontWeight: 750,
+          marginBottom: 7,
+        }}
+      >
+        Unità di misura
+      </label>
+
+      <input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="PZ"
+        list="unit-suggestions-new-item"
+        style={inputStyle}
+      />
+
+      <datalist id="unit-suggestions-new-item">
+        {UNIT_SUGGESTIONS.map((u) => (
+          <option key={u} value={u} />
+        ))}
+      </datalist>
+
+      <div
+        style={{
+          marginTop: 6,
+          fontSize: 11,
+          opacity: 0.5,
+        }}
+      >
+        Come viene contato questo articolo (pezzi, metri, chilogrammi...).
+        Scegli dal suggerimento o scrivi la tua.
+      </div>
     </div>
   );
 }

@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../../lib/supabaseClient";
+import { fetchCompanyLogo } from "../../../lib/pdfLogo";
+import { buildDistintaBasePdf, type DistintaBaseSection } from "../../../lib/productionPdf";
 
 /*
   DISTINTA BASE PER MODELLO (STEP 38)
@@ -26,6 +28,7 @@ type Item = {
   code: string;
   supplier_code: string | null;
   description: string;
+  unit: string;
   stock: number;
 };
 
@@ -86,6 +89,9 @@ export default function DistintaBasePage() {
 
   const [busyId, setBusyId] = useState("");
 
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfError, setPdfError] = useState("");
+
   useEffect(() => {
     loadData();
   }, []);
@@ -97,7 +103,7 @@ export default function DistintaBasePage() {
     const [itemsRes, suppliersRes, optionsRes, sectionsRes, bomItemsRes] = await Promise.all([
       supabase
         .from("items")
-        .select("id,supplier_id,code,supplier_code,description,stock")
+        .select("id,supplier_id,code,supplier_code,description,unit,stock")
         .order("description", { ascending: true }),
       supabase.from("suppliers").select("id,name").order("name", { ascending: true }),
       supabase
@@ -130,6 +136,7 @@ export default function DistintaBasePage() {
         code: String(row.code || ""),
         supplier_code: row.supplier_code ? String(row.supplier_code) : null,
         description: String(row.description || ""),
+        unit: String(row.unit || "PZ"),
         stock: Number(row.stock || 0),
       }))
     );
@@ -375,6 +382,53 @@ export default function DistintaBasePage() {
     await loadData();
   }
 
+  async function downloadDistintaBasePdf() {
+    setPdfError("");
+
+    if (!selectedModel) {
+      setPdfError("Seleziona prima un modello.");
+      return;
+    }
+
+    setPdfBusy(true);
+
+    try {
+      const logo = await fetchCompanyLogo();
+      if (!logo) {
+        throw new Error("Carica il logo aziendale prima di scaricare il PDF (Produzione -> Configurazioni).");
+      }
+
+      const sections: DistintaBaseSection[] = sectionsForModel.map((section) => ({
+        sectionName: section.name,
+        kind: section.kind,
+        rows: (itemsBySection.get(section.id) || []).map((row) => {
+          const item = row.item_id ? itemMap.get(row.item_id) : undefined;
+          return {
+            supplierName: item ? supplierNameFor(item) || "-" : "-",
+            itemCode: item ? item.supplier_code || item.code || "-" : "-",
+            description: row.description,
+            unit: row.unit,
+            qty: row.qty,
+            stock: item ? item.stock : null,
+          };
+        }),
+      }));
+
+      const { doc, filename } = buildDistintaBasePdf({
+        modelName: selectedModel,
+        sections,
+        logo,
+        generatedDate: new Intl.DateTimeFormat("it-IT").format(new Date()),
+      });
+
+      doc.save(filename);
+    } catch (err: any) {
+      setPdfError(err?.message || "Errore durante la creazione del PDF.");
+    } finally {
+      setPdfBusy(false);
+    }
+  }
+
   if (loading) {
     return (
       <div style={{ padding: 40, textAlign: "center", opacity: 0.6 }}>
@@ -431,6 +485,27 @@ export default function DistintaBasePage() {
 
       {selectedModel && (
         <>
+          <section className="dbb-card dbb-print-card">
+            <div>
+              <div className="dbb-eyebrow">STAMPA</div>
+              <h2>Distinta base completa di {selectedModel}</h2>
+              <p className="dbb-print-hint">
+                Tutte le sezioni e tutti gli articoli (comprese le righe senza codice, da
+                creare a catalogo), pronti da stampare o salvare come PDF.
+              </p>
+            </div>
+            <button
+              type="button"
+              className="dbb-btn primary"
+              onClick={downloadDistintaBasePdf}
+              disabled={pdfBusy || sectionsForModel.length === 0}
+            >
+              {pdfBusy ? "Creazione PDF..." : "Stampa PDF"}
+            </button>
+          </section>
+
+          {pdfError && <div className="dbb-message error">{pdfError}</div>}
+
           <section className="dbb-card">
             <div className="dbb-card-head">
               <div className="dbb-eyebrow">NUOVA SEZIONE</div>
@@ -571,7 +646,18 @@ export default function DistintaBasePage() {
                           </label>
                           <label style={{ flex: 2 }}>
                             Articolo
-                            <select value={pickedItemId} onChange={(e) => setPickedItemId(e.target.value)}>
+                            <select
+                              value={pickedItemId}
+                              onChange={(e) => {
+                                const id = e.target.value;
+                                setPickedItemId(id);
+                                // L'unita' di misura riparte da quella dell'articolo scelto
+                                // (alcuni si contano al metro, al kg, ecc.): resta comunque
+                                // modificabile a mano subito dopo.
+                                const picked = itemMap.get(id);
+                                if (picked) setRowUnit(picked.unit || "PZ");
+                              }}
+                            >
                               <option value="">Seleziona...</option>
                               {filteredItemsForPicker.map((item) => (
                                 <option key={item.id} value={item.id}>
@@ -722,6 +808,24 @@ function Styles() {
         margin: 0;
         font-size: 17px;
         font-weight: 800;
+      }
+      .dbb-print-card {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+      .dbb-print-card h2 {
+        margin: 0 0 4px;
+        font-size: 17px;
+        font-weight: 800;
+      }
+      .dbb-print-hint {
+        margin: 0;
+        font-size: 12.5px;
+        opacity: 0.6;
+        max-width: 520px;
       }
       .dbb-model-select {
         margin-top: 8px;

@@ -1613,3 +1613,293 @@ export function buildDistintaBasePdf(params: {
 
   return { doc, filename };
 }
+
+// ============================================================
+// DISTINTA BASE - FASCICOLO A LIBRETTO (STEP 52)
+//
+// Stessa distinta base di buildDistintaBasePdf, ma impaginata per
+// essere stampata fronte-retro su fogli A4 orizzontali e piegata a
+// meta' come un vero libretto (rilegatura a punto metallico al
+// centro). Ogni "pagina libro" e' una meta' di foglio A4 orizzontale
+// (circa quanto un foglio A5 verticale); le pagine vengono riordinate
+// secondo la classica imposizione da fascicolo (pagina 1 e ultima
+// sullo stesso foglio, e cosi' via) cosi' che, una volta piegato lo
+// stack, si legga nell'ordine giusto.
+//
+// Uso in stampa: stampa fronte-retro (capovolgi sul lato lungo), poi
+// piega tutti i fogli a meta' e pinza al centro. Se la stampante non
+// supporta il fronte-retro automatico, si puo' anche stampare prima
+// tutte le facciate "fronte" e poi, reinserendo la risma capovolta,
+// le facciate "retro" (la maggior parte delle finestre di stampa ha
+// un'opzione "fronte-retro manuale" che guida passo passo).
+//
+// E' un export di sola lettura: non tocca mai la giacenza.
+// ============================================================
+
+type BookletCmd =
+  | {
+      t: "text";
+      text: string | string[];
+      x: number;
+      y: number;
+      font: "normal" | "bold" | "italic";
+      size: number;
+      color: [number, number, number];
+      align?: "left" | "right";
+    }
+  | { t: "line"; x1: number; y1: number; x2: number; y2: number; color: [number, number, number]; width: number };
+
+export function buildDistintaBaseBookletPdf(params: {
+  modelName: string;
+  sections: DistintaBaseSection[];
+  generatedDate: string;
+}) {
+  const { modelName, sections, generatedDate } = params;
+
+  // Dimensioni di UNA pagina libro (meta' di un foglio A4 orizzontale,
+  // vicina a un A5 verticale).
+  const pageW = 144;
+  const pageH = 210;
+  const margin = 9;
+  const contentW = pageW - margin * 2;
+  const bottom = pageH - 9;
+
+  const supplierW = 30;
+  const codeW = 21;
+  const unitW = 9;
+  const qtyW = 11;
+  const stockW = 13;
+  const descW = contentW - (supplierW + codeW + unitW + qtyW + stockW);
+
+  const FONT = 7.8;
+  const LINE_STEP = 3.2;
+  const PADDING = 1.2;
+  const MIN_ROW_H = 4.7;
+  const BASELINE = 3.1;
+
+  // Doc "di misura": serve solo a calcolare l'andata a capo del testo
+  // con lo stesso font che verra' poi davvero disegnato - non viene
+  // mai stampato ne' restituito.
+  const measureDoc = new jsPDF({ unit: "mm", format: "a4" });
+
+  const pages: BookletCmd[][] = [];
+  let current: BookletCmd[] = [];
+  let y = 0;
+
+  function pushText(
+    text: string | string[],
+    x: number,
+    yy: number,
+    font: "normal" | "bold" | "italic",
+    size: number,
+    color: [number, number, number],
+    align?: "left" | "right"
+  ) {
+    current.push({ t: "text", text, x, y: yy, font, size, color, align });
+  }
+
+  function pushLine(x1: number, y1: number, x2: number, y2: number, color: [number, number, number], width: number) {
+    current.push({ t: "line", x1, y1, x2, y2, color, width });
+  }
+
+  function drawPageHeader(isFirst: boolean) {
+    if (isFirst) {
+      pushText("DISTINTA BASE", margin, margin + 3, "bold", 10.5, [0, 0, 0]);
+      pushText(modelName, margin, margin + 8, "normal", 8, [80, 80, 80]);
+      pushText(
+        `Generato il ${generatedDate} · fascicolo: fronte-retro, poi piega a meta' e pinza al centro`,
+        margin,
+        margin + 12,
+        "normal",
+        6,
+        [140, 140, 140]
+      );
+      pushLine(margin, margin + 14.5, pageW - margin, margin + 14.5, [200, 200, 200], 0.3);
+      y = margin + 19;
+    } else {
+      pushText(modelName, margin, margin + 3, "bold", 8.5, [0, 0, 0]);
+      pushLine(margin, margin + 5, pageW - margin, margin + 5, [215, 215, 215], 0.25);
+      y = margin + 9;
+    }
+  }
+
+  function newLogicalPage() {
+    pages.push(current);
+    current = [];
+    drawPageHeader(false);
+  }
+
+  drawPageHeader(true);
+
+  function ensureSpace(height: number) {
+    if (y + height > bottom) newLogicalPage();
+  }
+
+  if (sections.length === 0) {
+    pushText("Nessuna sezione ancora inserita per questo modello.", margin, y + 2, "italic", 9, [120, 120, 120]);
+  }
+
+  sections.forEach((section) => {
+    measureDoc.setFont("helvetica", "bold");
+    measureDoc.setFontSize(8.2);
+    const titleWidth = contentW - 26;
+    const titleLines = measureDoc.splitTextToSize(section.sectionName, titleWidth);
+    const titleHeight = Math.max(6, titleLines.length * 3.2 + 2.4);
+
+    const firstRow = section.rows[0];
+    let firstRowHeight = 5.2;
+    if (firstRow) {
+      measureDoc.setFont("helvetica", "normal");
+      measureDoc.setFontSize(FONT);
+      const lines = measureDoc.splitTextToSize(firstRow.description || "-", descW - 2);
+      firstRowHeight = Math.max(MIN_ROW_H, lines.length * LINE_STEP + PADDING * 2);
+    }
+    ensureSpace(titleHeight + firstRowHeight);
+
+    pushText(titleLines, margin, y + 3.4, "bold", 8.2, [0, 0, 0]);
+    pushText(
+      section.kind === "standard" ? "STANDARD" : "OPTIONAL",
+      margin + contentW,
+      y + 3.4,
+      "normal",
+      6.2,
+      [140, 140, 140],
+      "right"
+    );
+    y += titleHeight;
+
+    if (section.rows.length === 0) {
+      pushText("Nessun articolo in questa sezione.", margin, y + 2.6, "italic", 7.2, [130, 130, 130]);
+      y += 5.8;
+      return;
+    }
+
+    section.rows.forEach((row) => {
+      measureDoc.setFont("helvetica", "normal");
+      measureDoc.setFontSize(FONT);
+      const descLines = measureDoc.splitTextToSize(row.description || "-", descW - 2);
+      const rowHeight = Math.max(MIN_ROW_H, descLines.length * LINE_STEP + PADDING * 2);
+
+      ensureSpace(rowHeight);
+      const by = y;
+      let x = margin;
+
+      const supplierLines = measureDoc.splitTextToSize(row.supplierName || "-", supplierW - 2);
+      pushText(supplierLines, x, by + BASELINE, "normal", FONT, [0, 0, 0]);
+      x += supplierW;
+
+      pushText(row.itemCode || "-", x, by + BASELINE, "normal", FONT, [0, 0, 0]);
+      x += codeW;
+
+      pushText(descLines, x, by + BASELINE, "normal", FONT, [0, 0, 0]);
+      x += descW;
+
+      pushText(row.unit || "-", x, by + BASELINE, "normal", FONT, [0, 0, 0]);
+      x += unitW;
+
+      pushText(String(row.qty), x, by + BASELINE, "normal", FONT, [0, 0, 0]);
+      x += qtyW;
+
+      const short = row.stock !== null && row.stock < row.qty;
+      pushText(
+        row.stock === null ? "n/d" : String(row.stock),
+        x,
+        by + BASELINE,
+        short ? "bold" : "normal",
+        FONT,
+        short ? [217, 119, 6] : [0, 0, 0]
+      );
+
+      pushLine(margin, by + rowHeight, margin + contentW, by + rowHeight, [242, 242, 242], 0.12);
+
+      y += rowHeight;
+    });
+
+    y += 2.8;
+  });
+
+  pages.push(current);
+
+  // Un fascicolo piegato a meta' ha sempre un multiplo di 4 facciate
+  // (ogni foglio A4, stampato fronte-retro e piegato, ne porta 4):
+  // le pagine vuote aggiunte qui restano bianche in stampa.
+  while (pages.length % 4 !== 0) pages.push([]);
+
+  const total = pages.length;
+  const sheets = total / 4;
+
+  const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+  doc.setProperties({
+    title: `Distinta base (libretto) - ${modelName}`,
+    subject: "Distinta base per modello - fascicolo pieghevole",
+  });
+
+  const sheetW = doc.internal.pageSize.getWidth();
+  const halfSlot = sheetW / 2;
+  const xPad = (halfSlot - pageW) / 2;
+  const xOffsetLeft = xPad;
+  const xOffsetRight = halfSlot + xPad;
+
+  function renderHalf(pageNumber: number, xOffset: number) {
+    const cmds = pages[pageNumber - 1];
+    if (!cmds) return;
+    cmds.forEach((cmd) => {
+      if (cmd.t === "text") {
+        doc.setFont("helvetica", cmd.font);
+        doc.setFontSize(cmd.size);
+        doc.setTextColor(cmd.color[0], cmd.color[1], cmd.color[2]);
+        if (cmd.align) {
+          doc.text(cmd.text as any, xOffset + cmd.x, cmd.y, { align: cmd.align });
+        } else {
+          doc.text(cmd.text as any, xOffset + cmd.x, cmd.y);
+        }
+      } else {
+        doc.setDrawColor(cmd.color[0], cmd.color[1], cmd.color[2]);
+        doc.setLineWidth(cmd.width);
+        doc.line(xOffset + cmd.x1, cmd.y1, xOffset + cmd.x2, cmd.y2);
+      }
+    });
+    if (cmds.length > 0) {
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(6.5);
+      doc.setTextColor(160, 160, 160);
+      doc.text(String(pageNumber), xOffset + pageW / 2, pageH - 4, { align: "center" });
+      doc.setTextColor(0, 0, 0);
+    }
+  }
+
+  function drawFoldGuide() {
+    doc.setDrawColor(220, 220, 220);
+    doc.setLineWidth(0.2);
+    const midX = sheetW / 2;
+    let yy = 4;
+    while (yy < pageH - 4) {
+      doc.line(midX, yy, midX, Math.min(yy + 2, pageH - 4));
+      yy += 4;
+    }
+  }
+
+  let firstSheet = true;
+  for (let k = 1; k <= sheets; k++) {
+    const frontLeft = total - 2 * k + 2;
+    const frontRight = 2 * k - 1;
+    const backLeft = 2 * k;
+    const backRight = total - 2 * k + 1;
+
+    if (!firstSheet) doc.addPage();
+    firstSheet = false;
+    renderHalf(frontLeft, xOffsetLeft);
+    renderHalf(frontRight, xOffsetRight);
+    drawFoldGuide();
+
+    doc.addPage();
+    renderHalf(backLeft, xOffsetLeft);
+    renderHalf(backRight, xOffsetRight);
+    drawFoldGuide();
+  }
+
+  const safeModel = modelName.replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  const filename = `Distinta_base_${safeModel || "modello"}_libretto.pdf`;
+
+  return { doc, filename, totalSheets: sheets };
+}

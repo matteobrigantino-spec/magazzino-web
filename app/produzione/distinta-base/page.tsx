@@ -4,7 +4,11 @@ import Link from "next/link";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { supabase } from "../../../lib/supabaseClient";
 import { fetchCompanyLogo } from "../../../lib/pdfLogo";
-import { buildDistintaBasePdf, type DistintaBaseSection } from "../../../lib/productionPdf";
+import {
+  buildDistintaBasePdf,
+  buildDistintaBaseBookletPdf,
+  type DistintaBaseSection,
+} from "../../../lib/productionPdf";
 
 /*
   DISTINTA BASE PER MODELLO (STEP 38)
@@ -100,6 +104,9 @@ export default function DistintaBasePage() {
 
   const [pdfBusy, setPdfBusy] = useState(false);
   const [pdfError, setPdfError] = useState("");
+
+  const [bookletBusy, setBookletBusy] = useState(false);
+  const [bookletError, setBookletError] = useState("");
 
   useEffect(() => {
     loadData();
@@ -454,6 +461,24 @@ export default function DistintaBasePage() {
     await loadData();
   }
 
+  function buildSectionsForPdf(): DistintaBaseSection[] {
+    return sectionsForModel.map((section) => ({
+      sectionName: section.name,
+      kind: section.kind,
+      rows: (itemsBySection.get(section.id) || []).map((row) => {
+        const item = row.item_id ? itemMap.get(row.item_id) : undefined;
+        return {
+          supplierName: item ? supplierNameFor(item) || "-" : "-",
+          itemCode: item ? item.supplier_code || item.code || "-" : "-",
+          description: row.description,
+          unit: row.unit,
+          qty: row.qty,
+          stock: item ? item.stock : null,
+        };
+      }),
+    }));
+  }
+
   async function downloadDistintaBasePdf() {
     setPdfError("");
 
@@ -470,25 +495,9 @@ export default function DistintaBasePage() {
         throw new Error("Carica il logo aziendale prima di scaricare il PDF (Produzione -> Configurazioni).");
       }
 
-      const sections: DistintaBaseSection[] = sectionsForModel.map((section) => ({
-        sectionName: section.name,
-        kind: section.kind,
-        rows: (itemsBySection.get(section.id) || []).map((row) => {
-          const item = row.item_id ? itemMap.get(row.item_id) : undefined;
-          return {
-            supplierName: item ? supplierNameFor(item) || "-" : "-",
-            itemCode: item ? item.supplier_code || item.code || "-" : "-",
-            description: row.description,
-            unit: row.unit,
-            qty: row.qty,
-            stock: item ? item.stock : null,
-          };
-        }),
-      }));
-
       const { doc, filename } = buildDistintaBasePdf({
         modelName: selectedModel,
-        sections,
+        sections: buildSectionsForPdf(),
         logo,
         generatedDate: new Intl.DateTimeFormat("it-IT").format(new Date()),
       });
@@ -498,6 +507,31 @@ export default function DistintaBasePage() {
       setPdfError(err?.message || "Errore durante la creazione del PDF.");
     } finally {
       setPdfBusy(false);
+    }
+  }
+
+  async function downloadDistintaBaseBooklet() {
+    setBookletError("");
+
+    if (!selectedModel) {
+      setBookletError("Seleziona prima un modello.");
+      return;
+    }
+
+    setBookletBusy(true);
+
+    try {
+      const { doc, filename } = buildDistintaBaseBookletPdf({
+        modelName: selectedModel,
+        sections: buildSectionsForPdf(),
+        generatedDate: new Intl.DateTimeFormat("it-IT").format(new Date()),
+      });
+
+      doc.save(filename);
+    } catch (err: any) {
+      setBookletError(err?.message || "Errore durante la creazione del fascicolo.");
+    } finally {
+      setBookletBusy(false);
     }
   }
 
@@ -566,17 +600,29 @@ export default function DistintaBasePage() {
                 creare a catalogo), pronti da stampare o salvare come PDF.
               </p>
             </div>
-            <button
-              type="button"
-              className="dbb-btn primary"
-              onClick={downloadDistintaBasePdf}
-              disabled={pdfBusy || sectionsForModel.length === 0}
-            >
-              {pdfBusy ? "Creazione PDF..." : "Stampa PDF"}
-            </button>
+            <div className="dbb-print-actions">
+              <button
+                type="button"
+                className="dbb-btn primary"
+                onClick={downloadDistintaBasePdf}
+                disabled={pdfBusy || sectionsForModel.length === 0}
+              >
+                {pdfBusy ? "Creazione PDF..." : "Stampa PDF"}
+              </button>
+              <button
+                type="button"
+                className="dbb-btn"
+                onClick={downloadDistintaBaseBooklet}
+                disabled={bookletBusy || sectionsForModel.length === 0}
+                title="PDF pronto per la stampa fronte/retro: piegato a meta' e spillato al centro, le pagine sono gia' nell'ordine giusto."
+              >
+                {bookletBusy ? "Creazione libretto..." : "Stampa come libretto"}
+              </button>
+            </div>
           </section>
 
           {pdfError && <div className="dbb-message error">{pdfError}</div>}
+          {bookletError && <div className="dbb-message error">{bookletError}</div>}
 
           <section className="dbb-card">
             <div className="dbb-card-head">
@@ -960,6 +1006,11 @@ function Styles() {
         font-size: 12.5px;
         opacity: 0.6;
         max-width: 520px;
+      }
+      .dbb-print-actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
       }
       .dbb-model-select {
         margin-top: 8px;

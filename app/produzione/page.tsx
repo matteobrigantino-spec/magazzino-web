@@ -27,6 +27,9 @@ type Boat = {
   created_at: string;
   completed_at: string | null;
   requested_delivery_date: string | null;
+  matricola: string | null;
+  delivered_at: string | null;
+  delivered_by: string | null;
 };
 
 type Step = {
@@ -526,7 +529,7 @@ export default function ProductionPage() {
         .order("sort_order", { ascending: true }),
       supabase
         .from("production_boats")
-        .select("id,progressive_no,order_number,model_boat,hull,stringers,deck,accessories,note,status,created_at,completed_at,requested_delivery_date")
+        .select("id,progressive_no,order_number,model_boat,hull,stringers,deck,accessories,note,status,created_at,completed_at,requested_delivery_date,matricola,delivered_at,delivered_by")
         .order("requested_delivery_date", { ascending: true, nullsFirst: false })
         .order("created_at", { ascending: true }),
       supabase
@@ -606,6 +609,9 @@ export default function ProductionPage() {
         requested_delivery_date: row.requested_delivery_date
           ? String(row.requested_delivery_date)
           : null,
+        matricola: row.matricola ? String(row.matricola) : null,
+        delivered_at: row.delivered_at ? String(row.delivered_at) : null,
+        delivered_by: row.delivered_by ? String(row.delivered_by) : null,
       }))
     );
 
@@ -651,8 +657,13 @@ export default function ProductionPage() {
     [productionOptions]
   );
 
+  // Un battello resta in "Battelli in produzione" finche' non viene
+  // consegnato al cliente (delivered_at), anche se lo stato interno e'
+  // gia' passato a "completed" (tutti i reparti finiti): cosi' non si
+  // perde mai di vista un battello finito ma non ancora consegnato.
+  // Solo i battelli annullati ("cancelled") restano fuori.
   const activeBoats = useMemo(
-    () => boats.filter((boat) => boat.status === "active"),
+    () => boats.filter((boat) => boat.status !== "cancelled" && !boat.delivered_at),
     [boats]
   );
 
@@ -917,6 +928,50 @@ export default function ProductionPage() {
       .from("production_boats")
       .update({ progressive_no: parsed })
       .eq("id", boatId);
+  }
+
+  // Matricola: testo libero, stesso pattern del progressivo (si scrive
+  // qui in tabella, si salva quando si esce dal campo).
+  function editMatricolaDraft(boatId: string, value: string) {
+    setBoats((current) =>
+      current.map((boat) =>
+        boat.id === boatId ? { ...boat, matricola: value } : boat
+      )
+    );
+  }
+
+  async function saveMatricola(boatId: string, value: string) {
+    const trimmed = value.trim();
+
+    await supabase
+      .from("production_boats")
+      .update({ matricola: trimmed === "" ? null : trimmed })
+      .eq("id", boatId);
+  }
+
+  async function deliverToCustomer(boatId: string, boatLabel: string) {
+    const confirmed = window.confirm(
+      `Confermi la consegna al cliente di ${boatLabel}?\n\nIl battello uscira' da "Battelli in produzione" e finira' nell'elenco dei battelli consegnati.`
+    );
+
+    if (!confirmed) return;
+
+    const operator =
+      localStorage.getItem("magazzino_display_name") ||
+      localStorage.getItem("magazzino_user") ||
+      "Matteo";
+
+    const { error } = await supabase
+      .from("production_boats")
+      .update({ delivered_at: new Date().toISOString(), delivered_by: operator })
+      .eq("id", boatId);
+
+    if (error) {
+      setErrorMessage("Errore durante la consegna: " + error.message);
+      return;
+    }
+
+    await loadData();
   }
 
   async function createBoat() {
@@ -1185,6 +1240,9 @@ export default function ProductionPage() {
             </Link>
             <Link href="/produzione/distinta-base" className="prod-btn secondary">
               Distinta base
+            </Link>
+            <Link href="/produzione/consegnati" className="prod-btn secondary">
+              Consegnati
             </Link>
             <button
               type="button"
@@ -1754,15 +1812,17 @@ export default function ProductionPage() {
                 <th>Prog.</th>
                 <th>N° ordine</th>
                 <th>Battello</th>
+                <th>Matricola</th>
                 <th>Consegna richiesta</th>
                 <th>Tappezzeria</th>
                 <th>Note</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
               {activeBoats.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="prod-empty-cell">
+                  <td colSpan={8} className="prod-empty-cell">
                     Nessun battello attualmente in produzione.
                   </td>
                 </tr>
@@ -1796,6 +1856,16 @@ export default function ProductionPage() {
                           </span>
                         </div>
                       </td>
+                      <td className="prod-prog-cell" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="text"
+                          className="prod-matricola-input"
+                          placeholder="—"
+                          value={boat.matricola ?? ""}
+                          onChange={(e) => editMatricolaDraft(boat.id, e.target.value)}
+                          onBlur={(e) => saveMatricola(boat.id, e.target.value)}
+                        />
+                      </td>
                       <td
                         className={`prod-date-cell ${urgency === "overdue" ? "overdue" : urgency === "soon" ? "soon" : ""}`}
                       >
@@ -1811,6 +1881,20 @@ export default function ProductionPage() {
                         )}
                       </td>
                       <td className="prod-note-cell">{boat.note || "—"}</td>
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <button
+                          type="button"
+                          className="prod-deliver-btn"
+                          onClick={() =>
+                            deliverToCustomer(
+                              boat.id,
+                              `${boat.order_number} · ${boat.model_boat}`
+                            )
+                          }
+                        >
+                          Consegna cliente
+                        </button>
+                      </td>
                     </tr>
                   );
                 })
@@ -2469,6 +2553,40 @@ function Styles() {
         text-overflow: ellipsis;
         white-space: nowrap;
         color: #a9b7c9;
+      }
+
+      .prod-matricola-input {
+        width: 110px;
+        min-height: 32px;
+        padding: 0 8px;
+        background: #081524;
+        color: #f8fafc;
+        border: 1px solid rgba(148,163,184,.22);
+        border-radius: 7px;
+        font-size: 11px;
+        font-weight: 600;
+      }
+
+      .prod-matricola-input:focus {
+        outline: none;
+        border-color: rgba(51,224,234,.55);
+      }
+
+      .prod-deliver-btn {
+        min-height: 32px;
+        padding: 0 11px;
+        border: 1px solid rgba(34,197,94,.32);
+        border-radius: 7px;
+        background: rgba(34,197,94,.1);
+        color: #86efac;
+        cursor: pointer;
+        font-size: 9px;
+        font-weight: 900;
+        white-space: nowrap;
+      }
+
+      .prod-deliver-btn:hover {
+        background: rgba(34,197,94,.18);
       }
 
       .prod-empty,

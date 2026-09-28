@@ -1333,7 +1333,8 @@ export function buildMissingArticlesSummaryPdf(params: {
 }
 
 // ============================================================
-// DISTINTA BASE PER MODELLO - stampa PDF (STEP 46)
+// DISTINTA BASE PER MODELLO - stampa PDF (STEP 46, compattata
+// nello STEP 49)
 //
 // Elenco completo (tutte le sezioni, standard e optional, con
 // TUTTE le righe incluse quelle "libere" senza articolo a
@@ -1342,6 +1343,10 @@ export function buildMissingArticlesSummaryPdf(params: {
 // quali righe libere vanno ancora create come articoli veri a
 // catalogo (Fornitore/Cod. articolo mostrati come "-", Giacenza
 // come "n/d").
+//
+// Layout compatto su 2 colonne per pagina, orizzontale: una
+// distinta base con ~100 righe (come Predator 540) sta tipicamente
+// in 2-3 pagine invece delle 6 del layout a colonna singola.
 //
 // E' un export di sola lettura: non tocca mai la giacenza.
 // ============================================================
@@ -1369,7 +1374,7 @@ export function buildDistintaBasePdf(params: {
 }) {
   const { modelName, sections, logo, generatedDate } = params;
 
-  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
   doc.setProperties({
     title: `Distinta base - ${modelName}`,
     subject: "Distinta base per modello",
@@ -1377,169 +1382,228 @@ export function buildDistintaBasePdf(params: {
 
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
-  const margin = 14;
+  const margin = 12;
+  const bottom = pageHeight - 9;
   const tableWidth = pageWidth - margin * 2;
+  const columnGap = 9;
+  const colWidth = (tableWidth - columnGap) / 2;
 
-  const columns = [
-    { key: "supplier", label: "FORNITORE", width: 36 },
-    { key: "code", label: "COD. ARTICOLO", width: 28 },
-    { key: "description", label: "DESCRIZIONE", width: tableWidth - 36 - 28 - 16 - 20 - 22 },
-    { key: "unit", label: "UM", width: 16 },
-    { key: "qty", label: "Q.TÀ", width: 20 },
-    { key: "stock", label: "GIACENZA", width: 22 },
-  ];
+  // Larghezze dei campi dentro OGNI colonna (sommano a colWidth).
+  const supplierW = 27;
+  const codeW = 19;
+  const unitW = 8;
+  const qtyW = 10;
+  const stockW = 12;
+  const descW = colWidth - (supplierW + codeW + unitW + qtyW + stockW);
 
-  function drawPageHeader(subtitle: string) {
-    drawCompanyLogoTopRight(doc, logo);
+  const FONT = 7.2;
+  const LINE_STEP = 3.0;
+  const PADDING = 1.1;
+  const MIN_ROW_H = 4.4;
+  const BASELINE = 2.9;
+
+  function colX(col: number) {
+    return margin + col * (colWidth + columnGap);
+  }
+
+  // Header completo, solo in cima alla prima pagina.
+  function drawFullHeader() {
+    drawCompanyLogoTopRight(doc, logo, { maxWidth: 26, maxHeight: 11 });
 
     doc.setTextColor(0, 0, 0);
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(16);
-    doc.text("DISTINTA BASE", margin, 16);
+    doc.setFontSize(13);
+    doc.text("DISTINTA BASE", margin, 13);
 
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(10);
-    doc.setTextColor(60, 60, 60);
-    doc.text(subtitle, margin, 23);
-
     doc.setFontSize(9.5);
-    doc.setTextColor(120, 120, 120);
-    doc.text(`Generato il ${generatedDate}`, margin, 29);
+    doc.setTextColor(60, 60, 60);
+    doc.text(modelName, margin, 19);
 
-    doc.setFontSize(7.5);
-    doc.setTextColor(150, 150, 150);
+    doc.setFontSize(7.3);
+    doc.setTextColor(130, 130, 130);
     doc.text(
-      "Le righe senza codice (Fornitore/Cod. articolo \"-\", Giacenza \"n/d\") non sono ancora collegate",
+      `Generato il ${generatedDate} · le righe senza codice ("-"/"n/d") vanno ancora create a catalogo`,
       margin,
-      33.5
-    );
-    doc.text(
-      "a un articolo a catalogo: vanno create come articoli veri e poi ricollegate dalla Distinta base.",
-      margin,
-      37
+      24
     );
     doc.setTextColor(0, 0, 0);
 
     doc.setDrawColor(200);
     doc.setLineWidth(0.3);
-    doc.line(margin, 40.5, pageWidth - margin, 40.5);
+    doc.line(margin, 27, pageWidth - margin, 27);
 
-    return 47.5;
+    return 32;
   }
 
-  function drawTableHeader(y: number) {
+  // Header compatto, ripetuto sulle pagine successive.
+  function drawCompactHeader() {
+    doc.setTextColor(0, 0, 0);
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(7.5);
-    doc.setTextColor(110, 110, 110);
-    let x = margin;
-    columns.forEach((column) => {
-      doc.text(column.label, x, y);
-      x += column.width;
+    doc.setFontSize(9.5);
+    doc.text(`DISTINTA BASE — ${modelName} (segue)`, margin, 9);
+
+    doc.setDrawColor(200);
+    doc.setLineWidth(0.3);
+    doc.line(margin, 11.5, pageWidth - margin, 11.5);
+
+    return 16;
+  }
+
+  function drawColumnHeader(col: number, headerTop: number) {
+    const x0 = colX(col);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(6.3);
+    doc.setTextColor(120, 120, 120);
+    let x = x0;
+    [
+      ["FORNITORE", supplierW],
+      ["COD. ART.", codeW],
+      ["DESCRIZIONE", descW],
+      ["UM", unitW],
+      ["Q.TÀ", qtyW],
+      ["GIAC.", stockW],
+    ].forEach(([label, w]) => {
+      doc.text(String(label), x, headerTop);
+      x += Number(w);
     });
     doc.setTextColor(0, 0, 0);
-    doc.setDrawColor(225);
-    doc.setLineWidth(0.25);
-    doc.line(margin, y + 2.5, pageWidth - margin, y + 2.5);
-    return y + 8;
+    doc.setDrawColor(215);
+    doc.setLineWidth(0.2);
+    doc.line(x0, headerTop + 1.3, x0 + colWidth, headerTop + 1.3);
+    return headerTop + 4.3;
   }
 
-  let y = drawPageHeader(modelName);
+  let col = 0;
+  const yByCol = [0, 0];
+  let isFirstPage = true;
+
+  function startPage() {
+    if (!isFirstPage) doc.addPage();
+    const headerTop = isFirstPage ? drawFullHeader() : drawCompactHeader();
+    isFirstPage = false;
+    yByCol[0] = drawColumnHeader(0, headerTop);
+    yByCol[1] = drawColumnHeader(1, headerTop);
+    col = 0;
+  }
+
+  function ensureSpace(height: number) {
+    if (yByCol[col] + height > bottom) {
+      if (col === 0) {
+        col = 1;
+      } else {
+        startPage();
+      }
+    }
+  }
+
+  startPage();
 
   if (sections.length === 0) {
     doc.setFont("helvetica", "italic");
-    doc.setFontSize(10);
-    doc.setTextColor(90, 90, 90);
-    doc.text("Nessuna sezione ancora inserita per questo modello.", margin, y + 2);
+    doc.setFontSize(9);
+    doc.setTextColor(120, 120, 120);
+    doc.text("Nessuna sezione ancora inserita per questo modello.", colX(0), yByCol[0] + 2);
     doc.setTextColor(0, 0, 0);
   }
 
   sections.forEach((section) => {
-    if (y + 8 + 10 > pageHeight - 16) {
-      doc.addPage();
-      y = drawPageHeader(modelName);
-    }
-
+    // Il titolo puo' andare a capo (alcuni sono lunghi, es. "Pannello
+    // interruttori 8 servizi - Carling switches"): mai tagliato a meta',
+    // l'altezza riservata tiene conto di quante righe servono davvero.
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(11);
+    doc.setFontSize(7.6);
+    const titleWidth = colWidth - 24;
+    const titleLines = doc.splitTextToSize(section.sectionName, titleWidth);
+    const titleHeight = Math.max(5.6, titleLines.length * 3.0 + 2.2);
+
+    const firstRow = section.rows[0];
+    let firstRowHeight = 5;
+    if (firstRow) {
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(FONT);
+      const lines = doc.splitTextToSize(firstRow.description || "-", descW - 2);
+      firstRowHeight = Math.max(MIN_ROW_H, lines.length * LINE_STEP + PADDING * 2);
+    }
+    ensureSpace(titleHeight + firstRowHeight);
+
+    const x0 = colX(col);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.6);
     doc.setTextColor(0, 0, 0);
-    const kindLabel = section.kind === "standard" ? "STANDARD" : "OPTIONAL";
-    doc.text(`${section.sectionName}  ·  ${kindLabel}`, margin, y + 3);
-    y += 9;
+    doc.text(titleLines, x0, yByCol[col] + 3.2);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(5.8);
+    doc.setTextColor(140, 140, 140);
+    doc.text(section.kind === "standard" ? "STANDARD" : "OPTIONAL", x0 + colWidth, yByCol[col] + 3.2, {
+      align: "right",
+    });
+    doc.setTextColor(0, 0, 0);
+    yByCol[col] += titleHeight;
 
     if (section.rows.length === 0) {
       doc.setFont("helvetica", "italic");
-      doc.setFontSize(9);
-      doc.setTextColor(120, 120, 120);
-      doc.text("Nessun articolo in questa sezione.", margin, y + 3);
+      doc.setFontSize(6.8);
+      doc.setTextColor(130, 130, 130);
+      doc.text("Nessun articolo in questa sezione.", x0, yByCol[col] + 2.6);
       doc.setTextColor(0, 0, 0);
-      y += 9;
+      yByCol[col] += 5.5;
       return;
     }
 
-    y = drawTableHeader(y);
-
     section.rows.forEach((row) => {
       doc.setFont("helvetica", "normal");
-      doc.setFontSize(9);
+      doc.setFontSize(FONT);
+      const descLines = doc.splitTextToSize(row.description || "-", descW - 2);
+      const rowHeight = Math.max(MIN_ROW_H, descLines.length * LINE_STEP + PADDING * 2);
 
-      const descLines = doc.splitTextToSize(row.description || "-", columns[2].width - 4);
-      const rowHeight = Math.max(7, descLines.length * 4 + 3);
+      ensureSpace(rowHeight);
+      const bx = colX(col);
+      const by = yByCol[col];
+      let x = bx;
 
-      if (y + rowHeight > pageHeight - 16) {
-        doc.addPage();
-        y = drawPageHeader(modelName);
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(11);
-        doc.text(`${section.sectionName} (segue)`, margin, y + 3);
-        y += 9;
-        y = drawTableHeader(y);
-      }
-
-      let x = margin;
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(9);
       doc.setTextColor(0, 0, 0);
+      const supplierLines = doc.splitTextToSize(row.supplierName || "-", supplierW - 2);
+      doc.text(supplierLines, x, by + BASELINE);
+      x += supplierW;
 
-      const supplierLines = doc.splitTextToSize(row.supplierName || "-", columns[0].width - 4);
-      doc.text(supplierLines, x, y + 4.5);
-      x += columns[0].width;
+      doc.text(row.itemCode || "-", x, by + BASELINE);
+      x += codeW;
 
-      doc.text(row.itemCode || "-", x, y + 4.5);
-      x += columns[1].width;
+      doc.text(descLines, x, by + BASELINE);
+      x += descW;
 
-      doc.text(descLines, x, y + 4.5);
-      x += columns[2].width;
+      doc.text(row.unit || "-", x, by + BASELINE);
+      x += unitW;
 
-      doc.text(row.unit || "-", x, y + 4.5);
-      x += columns[3].width;
-
-      doc.text(String(row.qty), x, y + 4.5);
-      x += columns[4].width;
+      doc.text(String(row.qty), x, by + BASELINE);
+      x += qtyW;
 
       const short = row.stock !== null && row.stock < row.qty;
       doc.setFont("helvetica", short ? "bold" : "normal");
       if (short) doc.setTextColor(217, 119, 6);
-      doc.text(row.stock === null ? "n/d" : String(row.stock), x, y + 4.5);
+      doc.text(row.stock === null ? "n/d" : String(row.stock), x, by + BASELINE);
       doc.setTextColor(0, 0, 0);
+      doc.setFont("helvetica", "normal");
 
       doc.setDrawColor(240);
-      doc.setLineWidth(0.15);
-      doc.line(margin, y + rowHeight, pageWidth - margin, y + rowHeight);
+      doc.setLineWidth(0.12);
+      doc.line(bx, by + rowHeight, bx + colWidth, by + rowHeight);
       doc.setLineWidth(0.2);
 
-      y += rowHeight + 1;
+      yByCol[col] += rowHeight;
     });
 
-    y += 6;
+    yByCol[col] += 2.6;
   });
 
   const totalPages = doc.getNumberOfPages();
   for (let page = 1; page <= totalPages; page++) {
     doc.setPage(page);
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(8);
+    doc.setFontSize(7.5);
     doc.setTextColor(130, 130, 130);
-    doc.text(`Pagina ${page} di ${totalPages}`, pageWidth - margin, pageHeight - 8, {
+    doc.text(`Pagina ${page} di ${totalPages}`, pageWidth - margin, pageHeight - 4, {
       align: "right",
     });
   }

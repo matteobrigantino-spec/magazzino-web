@@ -323,7 +323,7 @@ export default function NewItemPage({
                 label="Scorta minima"
                 value={minStock}
                 onChange={setMinStock}
-                suffix="pz"
+                suffix={unit.trim() || "pz"}
                 step="1"
               />
 
@@ -331,7 +331,7 @@ export default function NewItemPage({
                 label="Quantità per box"
                 value={boxQty}
                 onChange={setBoxQty}
-                suffix="pz"
+                suffix={unit.trim() || "pz"}
                 step="1"
                 min="1"
               />
@@ -525,12 +525,12 @@ export default function NewItemPage({
 
               <MiniCard
                 label="Scorta minima"
-                value={`${Number(minStock || 0)} pz`}
+                value={`${Number(minStock || 0)} ${unit.trim() || "pz"}`}
               />
 
               <MiniCard
                 label="Quantità per box"
-                value={`${Number(boxQty || 1)} pz`}
+                value={`${Number(boxQty || 1)} ${unit.trim() || "pz"}`}
               />
             </div>
 
@@ -544,12 +544,12 @@ export default function NewItemPage({
             >
               <MiniCard
                 label="Giacenza iniziale"
-                value="0 pz"
+                value={`0 ${unit.trim() || "pz"}`}
               />
 
               <MiniCard
                 label="In ordine"
-                value="0 pz"
+                value={`0 ${unit.trim() || "pz"}`}
               />
             </div>
 

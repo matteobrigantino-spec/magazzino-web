@@ -817,7 +817,7 @@ export default function ItemDetailPage({
                 label="Scorta minima"
                 value={minStock}
                 onChange={setMinStock}
-                suffix="pz"
+                suffix={unit.trim() || "pz"}
                 step="1"
               />
 
@@ -825,7 +825,7 @@ export default function ItemDetailPage({
                 label="Quantità per box"
                 value={boxQty}
                 onChange={setBoxQty}
-                suffix="pz"
+                suffix={unit.trim() || "pz"}
                 step="1"
                 min="1"
               />
@@ -834,7 +834,7 @@ export default function ItemDetailPage({
                 label="Giacenza"
                 value={stock}
                 onChange={setStock}
-                suffix="pz"
+                suffix={unit.trim() || "pz"}
                 step="1"
               />
 
@@ -842,7 +842,7 @@ export default function ItemDetailPage({
                 label="In ordine"
                 value={onOrder}
                 onChange={setOnOrder}
-                suffix="pz"
+                suffix={unit.trim() || "pz"}
                 step="1"
               />
             </div>
@@ -1549,23 +1549,23 @@ export default function ItemDetailPage({
             >
               <MiniCard
                 label="Giacenza"
-                value={`${stock} pz`}
+                value={`${stock} ${unit.trim() || "pz"}`}
                 warning={lowStock}
               />
 
               <MiniCard
                 label="Scorta minima"
-                value={`${minStock} pz`}
+                value={`${minStock} ${unit.trim() || "pz"}`}
               />
 
               <MiniCard
                 label="Quantità per box"
-                value={`${boxQty} pz`}
+                value={`${boxQty} ${unit.trim() || "pz"}`}
               />
 
               <MiniCard
                 label="In ordine"
-                value={`${onOrder} pz`}
+                value={`${onOrder} ${unit.trim() || "pz"}`}
               />
 
               {canViewPrices && (

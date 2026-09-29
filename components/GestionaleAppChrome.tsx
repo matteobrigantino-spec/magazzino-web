@@ -677,17 +677,17 @@ function GestionaleShell({
 
           <span className="gma-logo-copy">
             <strong>
-              GESTIONALE
+              ITALBOATS
             </strong>
 
             <small>
-              MATTEO
+              GESTIONALE
             </small>
           </span>
         </button>
 
         <div className="gma-nav-label">
-          CONTROL CENTER
+          PANNELLO
         </div>
 
         <nav className="gma-nav">
@@ -1042,11 +1042,12 @@ function GlobalStyles() {
         background:
           radial-gradient(
             circle at 50% 0%,
-            rgba(39, 135, 255, 0.17),
+            rgba(199, 154, 93, 0.18),
             transparent 30%
           ),
-          #040b13;
-        color: #f4f8ff;
+          #10202a;
+        color: #f5efe2;
+        font-family: var(--font-sans), sans-serif;
       }
 
       .gma-boot-mark {
@@ -1056,35 +1057,36 @@ function GlobalStyles() {
         display: flex;
         align-items: center;
         justify-content: center;
-        border: 1px solid rgba(72, 148, 255, 0.34);
+        border: 1px solid rgba(199, 154, 93, 0.38);
         border-radius: 18px;
         background:
           linear-gradient(
             145deg,
-            #0e61da,
-            #2787ff
+            #8f6636,
+            #c79a5d
           );
         box-shadow:
-          0 0 42px rgba(39, 135, 255, 0.23);
+          0 0 42px rgba(199, 154, 93, 0.26);
       }
 
       .gma-boot strong {
+        font-family: var(--font-serif), serif;
         font-size: 17px;
       }
 
       .gma-boot span {
-        color: #7f91aa;
+        color: #93a5a8;
         font-size: 11px;
       }
 
       .gma-shell {
-        --background: #040b13;
-        --foreground: #f4f8ff;
-        --card: #091522;
-        --card-2: #0d1b2b;
-        --input-bg: #0d1b2b;
-        --border-color: rgba(120, 157, 199, 0.18);
-        --muted: #7f91aa;
+        --background: #10202a;
+        --foreground: #f5efe2;
+        --card: #16303a;
+        --card-2: #1c3a44;
+        --input-bg: #1c3a44;
+        --border-color: rgba(199, 154, 93, 0.16);
+        --muted: #93a5a8;
 
         min-height: 100vh;
         display: grid;
@@ -1095,16 +1097,16 @@ function GlobalStyles() {
         background:
           radial-gradient(
             circle at 67% -12%,
-            rgba(39, 135, 255, 0.10),
+            rgba(199, 154, 93, 0.09),
             transparent 27%
           ),
-          #040b13;
+          #10202a;
 
         color: var(--foreground);
         color-scheme: dark;
 
         font-family:
-          var(--font-geist-sans),
+          var(--font-sans),
           ui-sans-serif,
           system-ui,
           -apple-system,
@@ -1132,17 +1134,17 @@ function GlobalStyles() {
         border-right:
           1px solid
           rgba(
-            115,
-            151,
-            193,
+            199,
+            154,
+            93,
             0.12
           );
 
         background:
           linear-gradient(
             180deg,
-            rgba(7, 17, 29, 0.99),
-            rgba(4, 11, 19, 0.995)
+            rgba(13, 26, 33, 0.99),
+            rgba(10, 20, 26, 0.995)
           );
       }
 
@@ -1159,7 +1161,7 @@ function GlobalStyles() {
 
         border: 0;
         background: transparent;
-        color: #f4f8ff;
+        color: #f5efe2;
 
         cursor: pointer;
         text-align: left;
@@ -1178,10 +1180,10 @@ function GlobalStyles() {
         border:
           1px solid
           rgba(
-            122,
-            178,
-            255,
-            0.32
+            199,
+            154,
+            93,
+            0.34
           );
 
         border-radius: 12px;
@@ -1189,18 +1191,20 @@ function GlobalStyles() {
         background:
           linear-gradient(
             145deg,
-            #155cc8,
-            #2787ff
+            #8f6636,
+            #c79a5d
           );
 
         box-shadow:
-          0 0 28px
+          0 0 24px
           rgba(
-            39,
-            135,
-            255,
-            0.14
+            199,
+            154,
+            93,
+            0.16
           );
+
+        color: #10202a;
       }
 
       .gma-logo-copy {
@@ -1213,18 +1217,19 @@ function GlobalStyles() {
       }
 
       .gma-logo-copy strong {
-        font-size: 12px;
-        font-weight: 950;
-        letter-spacing: 0.85px;
+        font-family: var(--font-serif), serif;
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 1.1px;
       }
 
       .gma-logo-copy small {
         margin-top: 2px;
 
-        color: #69a9ff;
+        color: #c79a5d;
 
         font-size: 7px;
-        font-weight: 950;
+        font-weight: 800;
         letter-spacing: 2px;
       }
 
@@ -1234,10 +1239,10 @@ function GlobalStyles() {
           11px
           7px;
 
-        color: #58708f;
+        color: #5c7378;
 
         font-size: 7px;
-        font-weight: 950;
+        font-weight: 800;
         letter-spacing: 1.5px;
       }
 
@@ -1268,12 +1273,12 @@ function GlobalStyles() {
         background:
           transparent;
 
-        color: #9badc4;
+        color: #9fb0b3;
 
         cursor: pointer;
 
         font-size: 9px;
-        font-weight: 800;
+        font-weight: 700;
         text-align: left;
 
         transition:
@@ -1284,21 +1289,21 @@ function GlobalStyles() {
       .gma-nav-item:hover {
         background:
           rgba(
-            39,
-            135,
-            255,
-            0.07
+            199,
+            154,
+            93,
+            0.08
           );
 
-        color: #f4f8ff;
+        color: #f5efe2;
       }
 
       .gma-nav-item.active {
         border-color:
           rgba(
-            39,
-            135,
-            255,
+            199,
+            154,
+            93,
             0.42
           );
 
@@ -1306,27 +1311,27 @@ function GlobalStyles() {
           linear-gradient(
             90deg,
             rgba(
-              39,
-              135,
-              255,
-              0.20
+              199,
+              154,
+              93,
+              0.22
             ),
             rgba(
-              39,
-              135,
-              255,
+              199,
+              154,
+              93,
               0.08
             )
           );
 
-        color: #f5f9ff;
+        color: #fbf3e4;
 
         box-shadow:
           inset
           3px
           0
           0
-          #27b9ff;
+          #c79a5d;
       }
 
       .gma-nav-icon {
@@ -1351,9 +1356,9 @@ function GlobalStyles() {
 
         background:
           rgba(
-            115,
-            151,
-            193,
+            199,
+            154,
+            93,
             0.14
           );
       }
@@ -1375,9 +1380,9 @@ function GlobalStyles() {
         border-top:
           1px solid
           rgba(
-            115,
-            151,
-            193,
+            199,
+            154,
+            93,
             0.12
           );
       }
@@ -1393,20 +1398,21 @@ function GlobalStyles() {
         background:
           linear-gradient(
             145deg,
-            #1662d5,
-            #3b98ff
+            #8f6636,
+            #c79a5d
           );
 
-        color: white;
+        color: #10202a;
 
-        font-weight: 950;
+        font-family: var(--font-serif), serif;
+        font-weight: 700;
       }
 
       .gma-avatar {
         width: 31px;
         height: 31px;
 
-        font-size: 10px;
+        font-size: 11px;
       }
 
       .gma-profile-copy {
@@ -1423,16 +1429,16 @@ function GlobalStyles() {
         text-overflow: ellipsis;
         white-space: nowrap;
 
-        color: #f4f8ff;
+        color: #f5efe2;
 
         font-size: 9px;
-        font-weight: 900;
+        font-weight: 800;
       }
 
       .gma-profile-copy span {
         margin-top: 2px;
 
-        color: #637a98;
+        color: #7c9094;
 
         font-size: 7px;
       }
@@ -1458,18 +1464,18 @@ function GlobalStyles() {
         border-bottom:
           1px solid
           rgba(
-            115,
-            151,
-            193,
+            199,
+            154,
+            93,
             0.12
           );
 
         background:
           rgba(
-            4,
-            11,
-            19,
-            0.91
+            13,
+            26,
+            33,
+            0.92
           );
 
         backdrop-filter:
@@ -1495,18 +1501,18 @@ function GlobalStyles() {
         border:
           1px solid
           rgba(
-            72,
-            148,
-            255,
-            0.28
+            199,
+            154,
+            93,
+            0.26
           );
 
         border-radius: 10px;
 
         background:
-          #071523;
+          #16303a;
 
-        color: #6f829c;
+        color: #7c9094;
 
         cursor: pointer;
 
@@ -1531,9 +1537,9 @@ function GlobalStyles() {
         border:
           1px solid
           rgba(
-            120,
-            157,
             199,
+            154,
+            93,
             0.20
           );
 
@@ -1541,13 +1547,13 @@ function GlobalStyles() {
 
         background:
           rgba(
-            255,
-            255,
-            255,
-            0.025
+            245,
+            239,
+            226,
+            0.04
           );
 
-        color: #8ca0ba;
+        color: #93a5a8;
 
         font-size: 7px;
         font-family: inherit;
@@ -1571,28 +1577,28 @@ function GlobalStyles() {
         border:
           1px solid
           rgba(
-            36,
-            212,
-            123,
-            0.18
+            76,
+            146,
+            116,
+            0.24
           );
 
         border-radius: 999px;
 
         background:
           rgba(
-            36,
-            212,
-            123,
-            0.06
+            76,
+            146,
+            116,
+            0.08
           );
 
-        color: #55df96;
+        color: #7fcba6;
 
         cursor: pointer;
 
         font-size: 7px;
-        font-weight: 900;
+        font-weight: 800;
       }
 
       .gma-status-dot {
@@ -1601,7 +1607,7 @@ function GlobalStyles() {
 
         border-radius: 999px;
 
-        background: #24d47b;
+        background: #4c9274;
 
         box-shadow:
           0
@@ -1609,10 +1615,10 @@ function GlobalStyles() {
           0
           4px
           rgba(
-            36,
-            212,
-            123,
-            0.08
+            76,
+            146,
+            116,
+            0.12
           );
       }
 
@@ -1630,17 +1636,18 @@ function GlobalStyles() {
       }
 
       .gma-clock span {
-        color: #657a96;
+        color: #7c9094;
         font-size: 7px;
       }
 
       .gma-clock strong {
         margin-top: 1px;
 
-        color: #f4f8ff;
+        color: #f5efe2;
 
+        font-family: var(--font-serif), serif;
         font-size: 13px;
-        font-weight: 950;
+        font-weight: 600;
       }
 
       .gma-top-avatar {
@@ -1653,7 +1660,7 @@ function GlobalStyles() {
 
         cursor: pointer;
 
-        font-size: 10px;
+        font-size: 11px;
       }
 
       .gma-content {
@@ -1673,15 +1680,11 @@ function GlobalStyles() {
 
         background:
           radial-gradient(
-            circle at 80% 0%,
-            rgba(
-              39,
-              135,
-              255,
-              0.055
-            ),
-            transparent 28%
-          );
+            1200px 700px at 85% -10%,
+            rgba(199, 154, 93, 0.08),
+            transparent 60%
+          ),
+          #f5f1e8;
       }
 
       .gma-content-inner {
@@ -1689,17 +1692,17 @@ function GlobalStyles() {
         max-width: 1500px;
         margin: 0 auto;
 
-        --background: #040b13;
-        --foreground: #f4f8ff;
-        --card: #091522;
-        --card-2: #0d1b2b;
-        --input-bg: #0d1b2b;
+        --background: #f5f1e8;
+        --foreground: #16262b;
+        --card: #ffffff;
+        --card-2: #fbf8f2;
+        --input-bg: #ffffff;
         --border-color:
           rgba(
-            120,
-            157,
-            199,
-            0.18
+            19,
+            34,
+            39,
+            0.14
           );
 
         color: var(--foreground);
@@ -1708,7 +1711,7 @@ function GlobalStyles() {
       .gma-content-inner input,
       .gma-content-inner select,
       .gma-content-inner textarea {
-        color-scheme: dark;
+        color-scheme: light;
       }
 
       .gma-mobile-nav {
@@ -1781,9 +1784,9 @@ function GlobalStyles() {
           border:
             1px solid
             rgba(
-              120,
-              157,
               199,
+              154,
+              93,
               0.18
             );
 
@@ -1791,9 +1794,9 @@ function GlobalStyles() {
 
           background:
             rgba(
-              7,
-              17,
-              29,
+              13,
+              26,
+              33,
               0.94
             );
 
@@ -1828,24 +1831,24 @@ function GlobalStyles() {
           background:
             transparent;
 
-          color: #7388a5;
+          color: #7c9094;
 
           cursor: pointer;
 
           font-size: 7px;
-          font-weight: 850;
+          font-weight: 800;
         }
 
         .gma-mobile-nav button.active {
           background:
             rgba(
-              39,
-              135,
-              255,
-              0.12
+              199,
+              154,
+              93,
+              0.14
             );
 
-          color: #55a4ff;
+          color: #c79a5d;
         }
       }
     `}</style>

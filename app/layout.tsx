@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Fraunces, Manrope } from "next/font/google";
 
 import "./globals.css";
 
@@ -7,19 +7,22 @@ import AuthGuard from "../components/AuthGuard";
 import GestionaleAppChrome from "../components/GestionaleAppChrome";
 import GestionaleViewportFix from "../components/GestionaleViewportFix";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const fraunces = Fraunces({
+  variable: "--font-serif",
   subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  style: ["normal", "italic"],
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const manrope = Manrope({
+  variable: "--font-sans",
   subsets: ["latin"],
+  weight: ["400", "500", "600", "700", "800"],
 });
 
 export const metadata: Metadata = {
-  title: "Magazzino",
-  description: "Gestionale Magazzino",
+  title: "Italboats",
+  description: "Gestionale Magazzino Italboats",
 };
 
 export default function RootLayout({
@@ -30,7 +33,7 @@ export default function RootLayout({
   return (
     <html lang="it">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${fraunces.variable} ${manrope.variable} antialiased`}
       >
         <AuthGuard>
           <GestionaleViewportFix />

@@ -1,44 +1,44 @@
 @import "tailwindcss";
 
 :root {
-  --background: #04141d;
-  --foreground: #eaf7f9;
+  --background: #10202a;
+  --foreground: #f5efe2;
 
-  --card: rgba(255,255,255,0.06);
-  --card-2: rgba(255,255,255,0.10);
+  --card: #16303a;
+  --card-2: #1c3a44;
 
-  --header-bg: #060e14;
-  --menu-bg: #0a1b24;
-  --menu-hover: rgba(255,255,255,0.08);
+  --header-bg: #0d1a21;
+  --menu-bg: #16303a;
+  --menu-hover: rgba(199,154,93,0.10);
 
-  --border-color: rgba(255,255,255,0.14);
-  --table-head: rgba(255,255,255,0.07);
+  --border-color: rgba(199,154,93,0.16);
+  --table-head: rgba(199,154,93,0.08);
 
-  --input-bg: rgba(255,255,255,0.05);
+  --input-bg: #1c3a44;
 
-  --accent: #33e0ea;
-  --accent-2: #7cf2c4;
+  --accent: #c79a5d;
+  --accent-2: #8f6636;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #04141d;
-    --foreground: #eaf7f9;
+    --background: #10202a;
+    --foreground: #f5efe2;
 
-    --card: rgba(255,255,255,0.06);
-    --card-2: rgba(255,255,255,0.10);
+    --card: #16303a;
+    --card-2: #1c3a44;
 
-    --header-bg: #060e14;
-    --menu-bg: #0a1b24;
-    --menu-hover: rgba(255,255,255,0.08);
+    --header-bg: #0d1a21;
+    --menu-bg: #16303a;
+    --menu-hover: rgba(199,154,93,0.10);
 
-    --border-color: rgba(255,255,255,0.14);
-    --table-head: rgba(255,255,255,0.07);
+    --border-color: rgba(199,154,93,0.16);
+    --table-head: rgba(199,154,93,0.08);
 
-    --input-bg: rgba(255,255,255,0.05);
+    --input-bg: #1c3a44;
 
-    --accent: #33e0ea;
-    --accent-2: #7cf2c4;
+    --accent: #c79a5d;
+    --accent-2: #8f6636;
   }
 }
 
@@ -56,11 +56,11 @@ body {
 body {
   background-color: var(--background);
   background-image:
-    radial-gradient(1400px 700px at 94% -12%, rgba(51,224,234,0.16), transparent 60%),
-    radial-gradient(900px 620px at -10% 108%, rgba(124,242,196,0.10), transparent 60%);
+    radial-gradient(1400px 700px at 94% -12%, rgba(199,154,93,0.10), transparent 60%),
+    radial-gradient(900px 620px at -10% 108%, rgba(199,154,93,0.06), transparent 60%);
   background-attachment: fixed;
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans), Manrope, Arial, Helvetica, sans-serif;
 }
 
 a {

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabaseClient";
@@ -366,6 +367,25 @@ export default function OrdersPage() {
             ? "Seleziona un fornitore per preparare un nuovo ordine."
             : "Controlla la merce ordinata che deve ancora arrivare."}
         </div>
+
+        <Link
+          href="/orders/tempi-consegna"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            marginTop: 12,
+            padding: "9px 14px",
+            borderRadius: 8,
+            border: "1px solid var(--border-color)",
+            background: "var(--input-bg)",
+            color: "var(--foreground)",
+            textDecoration: "none",
+            fontWeight: 700,
+            fontSize: 13,
+          }}
+        >
+          Tempi di consegna →
+        </Link>
       </div>
 
       {canCreateOrders && (

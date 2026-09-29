@@ -1,9 +1,70 @@
 "use client";
 
-import React, { use, useEffect, useState } from "react";
+import React, { use, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../../../lib/supabaseClient";
 import Link from "next/link";
+
+/*
+  NUOVO ARTICOLO OFFLINE (STEP 58)
+
+  Se non c'e' connessione (o il salvataggio diretto non va a buon
+  fine), l'articolo resta salvato sul telefono (localStorage) e viene
+  inviato al gestionale in automatico non appena torna internet,
+  tramite una RPC idempotente (sync_pwa_new_items_batch) cosi' non
+  crea mai un doppione anche se l'invio viene ritentato piu' volte.
+  Stesso schema gia' usato per carico/scarico da scanner.
+*/
+
+type PendingNewItem = {
+  supplier_id: string;
+  code: string;
+  supplier_code: string;
+  description: string;
+  category: string;
+  unit: string;
+  price: number;
+  min_stock: number;
+  box_qty: number;
+  image_url: string | null;
+};
+
+type PendingNewItemBatch = {
+  id: string;
+  created_at: string;
+  item: PendingNewItem;
+};
+
+const PENDING_NEW_ITEMS_KEY = "magazzino_pending_new_items";
+
+function createLocalId() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+
+  return (
+    Date.now().toString(36) +
+    "-" +
+    Math.random().toString(36).slice(2) +
+    "-" +
+    Math.random().toString(36).slice(2)
+  );
+}
+
+function readPendingNewItems(): PendingNewItemBatch[] {
+  try {
+    const saved = localStorage.getItem(PENDING_NEW_ITEMS_KEY);
+    if (!saved) return [];
+    const parsed = JSON.parse(saved);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writePendingNewItems(batches: PendingNewItemBatch[]) {
+  localStorage.setItem(PENDING_NEW_ITEMS_KEY, JSON.stringify(batches));
+}
 
 export default function NewItemPage({
   params,
@@ -33,6 +94,98 @@ export default function NewItemPage({
 
   const [canViewPrices, setCanViewPrices] =
     useState(false);
+
+  const syncingRef = useRef(false);
+  const [pendingCount, setPendingCount] = useState(0);
+  const [syncingPending, setSyncingPending] = useState(false);
+
+  function updatePendingCount() {
+    setPendingCount(readPendingNewItems().length);
+  }
+
+  async function syncPendingNewItems(onlyBatchId?: string) {
+    if (syncingRef.current) return;
+
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      updatePendingCount();
+      return;
+    }
+
+    syncingRef.current = true;
+    setSyncingPending(true);
+
+    let anySynced = false;
+    let lastError = "";
+
+    try {
+      const pending = readPendingNewItems();
+      const toSend = onlyBatchId
+        ? pending.filter((batch) => batch.id === onlyBatchId)
+        : pending;
+
+      for (const batch of toSend) {
+        try {
+          const { error } = await supabase.rpc(
+            "sync_pwa_new_items_batch",
+            {
+              p_client_batch_id: batch.id,
+              p_items: [batch.item],
+            }
+          );
+
+          if (error) throw new Error(error.message);
+
+          const remaining = readPendingNewItems().filter(
+            (b) => b.id !== batch.id
+          );
+          writePendingNewItems(remaining);
+          anySynced = true;
+        } catch (err) {
+          lastError =
+            err instanceof Error ? err.message : "Errore invio";
+          console.error("Invio nuovo articolo fallito:", err);
+        }
+      }
+
+      updatePendingCount();
+
+      if (onlyBatchId) {
+        setMsg(
+          anySynced
+            ? "✓ Articolo in attesa inviato al gestionale."
+            : `⚠ Articolo ancora salvato sul telefono, invio non riuscito${
+                lastError ? " (" + lastError + ")" : ""
+              }. Verrà ritentato automaticamente.`
+        );
+      } else if (anySynced) {
+        setMsg("✓ Articoli in attesa inviati al gestionale.");
+      }
+    } finally {
+      syncingRef.current = false;
+      setSyncingPending(false);
+    }
+  }
+
+  useEffect(() => {
+    updatePendingCount();
+
+    function handleOnline() {
+      syncPendingNewItems();
+    }
+
+    window.addEventListener("online", handleOnline);
+
+    if (typeof navigator !== "undefined" && navigator.onLine) {
+      setTimeout(() => {
+        syncPendingNewItems();
+      }, 800);
+    }
+
+    return () => {
+      window.removeEventListener("online", handleOnline);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     const role =
@@ -117,31 +270,94 @@ export default function NewItemPage({
 
     setSaving(true);
 
-    const { error } = await supabase.from("items").insert({
+    const itemPayload: PendingNewItem = {
       supplier_id: supplierId,
       code: trimmedScannerCode,
       supplier_code: trimmedSupplierCode,
       description: trimmedDescription,
       category: trimmedCategory || "Altro",
       unit: unit.trim() || "PZ",
-      price: canViewPrices
-        ? Number(price) || 0
-        : 0,
-      stock: 0,
+      price: canViewPrices ? Number(price) || 0 : 0,
       min_stock: Number(minStock) || 0,
       box_qty: Number(boxQty) || 1,
-      on_order: 0,
       image_url: trimmedImage || null,
-    });
+    };
 
-    if (error) {
-      setMsg("Errore salvataggio: " + error.message);
+    // Se c'e' connessione, prova il salvataggio diretto: stesso
+    // comportamento di sempre (torna subito alla scheda fornitore).
+    if (typeof navigator === "undefined" || navigator.onLine) {
+      const { error } = await supabase.from("items").insert({
+        supplier_id: itemPayload.supplier_id,
+        code: itemPayload.code,
+        supplier_code: itemPayload.supplier_code,
+        description: itemPayload.description,
+        category: itemPayload.category,
+        unit: itemPayload.unit,
+        price: itemPayload.price,
+        stock: 0,
+        min_stock: itemPayload.min_stock,
+        box_qty: itemPayload.box_qty,
+        on_order: 0,
+        image_url: itemPayload.image_url,
+      });
+
+      if (!error) {
+        router.push(`/suppliers/${supplierId}`);
+        router.refresh();
+        return;
+      }
+
+      console.error(
+        "Salvataggio diretto non riuscito, lo metto in attesa sul telefono:",
+        error.message
+      );
+    }
+
+    // Offline, oppure il salvataggio diretto non e' riuscito (es. rete
+    // instabile): l'articolo resta salvato sul telefono e verra'
+    // inviato in automatico, senza doppioni, appena la connessione
+    // torna disponibile.
+    const batch: PendingNewItemBatch = {
+      id: createLocalId(),
+      created_at: new Date().toISOString(),
+      item: itemPayload,
+    };
+
+    try {
+      const pending = readPendingNewItems();
+      writePendingNewItems([...pending, batch]);
+    } catch (storageError) {
+      console.error(storageError);
+      setMsg(
+        "ERRORE: impossibile salvare l'articolo sul telefono. Non è stato inviato al gestionale."
+      );
       setSaving(false);
       return;
     }
 
-    router.push(`/suppliers/${supplierId}`);
-    router.refresh();
+    updatePendingCount();
+    setSaving(false);
+
+    const offline =
+      typeof navigator !== "undefined" && !navigator.onLine;
+
+    setMsg(
+      offline
+        ? "⏳ Articolo salvato sul telefono. Internet non disponibile: verrà inviato automaticamente appena torni online."
+        : "⚠ Articolo salvato sul telefono ma non è stato possibile inviarlo subito. Verrà ritentato automaticamente appena la connessione è stabile."
+    );
+
+    // Pulisce il modulo cosi' si puo' inserire subito il prossimo
+    // articolo, anche in fila, senza dover tornare indietro.
+    setScannerCode("");
+    setSupplierCode("");
+    setDescription("");
+    setCategory("Altro");
+    setUnit("PZ");
+    setPrice(0);
+    setMinStock(0);
+    setBoxQty(1);
+    setImageUrl("");
   }
 
   const isError = Boolean(msg);
@@ -154,6 +370,50 @@ export default function NewItemPage({
         margin: "0 auto",
       }}
     >
+      {pendingCount > 0 && (
+        <div
+          style={{
+            marginBottom: 16,
+            padding: "12px 14px",
+            borderRadius: 9,
+            border: "1px solid rgba(245,158,11,0.4)",
+            background: "rgba(245,158,11,0.08)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            flexWrap: "wrap",
+            fontSize: 13,
+            fontWeight: 700,
+            color: "#b45309",
+          }}
+        >
+          <span>
+            ⏳ {pendingCount} articol{pendingCount === 1 ? "o" : "i"}{" "}
+            salvat{pendingCount === 1 ? "o" : "i"} sul telefono, in attesa
+            di invio.
+          </span>
+          <button
+            type="button"
+            onClick={() => syncPendingNewItems()}
+            disabled={syncingPending}
+            style={{
+              padding: "7px 12px",
+              borderRadius: 7,
+              border: "1px solid rgba(245,158,11,0.5)",
+              background: "rgba(245,158,11,0.14)",
+              color: "#b45309",
+              fontSize: 12,
+              fontWeight: 800,
+              cursor: syncingPending ? "not-allowed" : "pointer",
+              opacity: syncingPending ? 0.6 : 1,
+            }}
+          >
+            {syncingPending ? "Invio..." : "Invia ora"}
+          </button>
+        </div>
+      )}
+
       <div
         style={{
           display: "flex",
@@ -373,6 +633,9 @@ export default function NewItemPage({
               }}
             >
               Giacenza iniziale e quantità in ordine verranno impostate automaticamente a 0.
+              <br />
+              Se non c&apos;è connessione, l&apos;articolo viene salvato sul
+              telefono e inviato da solo appena torni online.
             </div>
 
             {msg && (

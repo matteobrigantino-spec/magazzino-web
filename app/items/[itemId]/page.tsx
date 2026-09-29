@@ -95,6 +95,207 @@ export default function ItemDetailPage({
     }[]
   >([]);
 
+  // Articoli composti (STEP 57): un articolo puo' essere collegato a
+  // piu' altri articoli gia' a catalogo che insieme lo compongono
+  // (es. "CHIUSURA COMPLETA" fatta di 3 pezzi). Non tocca mai la
+  // giacenza di nessuno: serve solo a raggruppare e a calcolare al
+  // volo quanti se ne possono fare con lo stock attuale.
+  const [componentsOpen, setComponentsOpen] = useState(false);
+  const [componentsLoaded, setComponentsLoaded] = useState(false);
+  const [componentsLoading, setComponentsLoading] = useState(false);
+  const [componentsError, setComponentsError] = useState("");
+  const [componentRows, setComponentRows] = useState<
+    {
+      id: string;
+      componentItemId: string;
+      qty: number;
+      code: string;
+      description: string;
+      stock: number;
+    }[]
+  >([]);
+
+  const [componentSearch, setComponentSearch] = useState("");
+  const [componentSearchResults, setComponentSearchResults] = useState<
+    { id: string; code: string; description: string }[]
+  >([]);
+  const [selectedComponentId, setSelectedComponentId] = useState("");
+  const [selectedComponentLabel, setSelectedComponentLabel] = useState("");
+  const [newComponentQty, setNewComponentQty] = useState<number>(1);
+  const [addingComponent, setAddingComponent] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function runSearch() {
+      const q = componentSearch.trim().replace(/[,()]/g, "");
+      if (selectedComponentId || q.length < 2) {
+        setComponentSearchResults([]);
+        return;
+      }
+
+      const { data } = await supabase
+        .from("items")
+        .select("id,code,supplier_code,description")
+        .or(`description.ilike.%${q}%,code.ilike.%${q}%,supplier_code.ilike.%${q}%`)
+        .neq("id", itemId)
+        .limit(15);
+
+      if (cancelled) return;
+
+      setComponentSearchResults(
+        (data || []).map((row: any) => ({
+          id: String(row.id),
+          code: String(row.supplier_code || row.code || ""),
+          description: String(row.description || ""),
+        }))
+      );
+    }
+
+    const timer = setTimeout(runSearch, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [componentSearch, selectedComponentId, itemId]);
+
+  async function loadComponents() {
+    setComponentsLoading(true);
+    setComponentsError("");
+
+    const { data, error } = await supabase
+      .from("item_composites")
+      .select("id,component_item_id,qty")
+      .eq("composite_item_id", itemId)
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      setComponentsError("Errore caricamento componenti: " + error.message);
+      setComponentsLoading(false);
+      return;
+    }
+
+    const links = data || [];
+    const componentIds = Array.from(
+      new Set(links.map((row: any) => String(row.component_item_id)))
+    );
+
+    let itemsById: Record<
+      string,
+      { code: string; description: string; stock: number }
+    > = {};
+
+    if (componentIds.length > 0) {
+      const { data: itemRows } = await supabase
+        .from("items")
+        .select("id,code,supplier_code,description,stock")
+        .in("id", componentIds);
+
+      (itemRows || []).forEach((row: any) => {
+        itemsById[String(row.id)] = {
+          code: String(row.supplier_code || row.code || ""),
+          description: String(row.description || ""),
+          stock: Number(row.stock || 0),
+        };
+      });
+    }
+
+    setComponentRows(
+      links.map((row: any) => ({
+        id: String(row.id),
+        componentItemId: String(row.component_item_id),
+        qty: Number(row.qty || 1),
+        code: itemsById[String(row.component_item_id)]?.code || "—",
+        description:
+          itemsById[String(row.component_item_id)]?.description ||
+          "Articolo eliminato",
+        stock: itemsById[String(row.component_item_id)]?.stock ?? 0,
+      }))
+    );
+
+    setComponentsLoaded(true);
+    setComponentsLoading(false);
+  }
+
+  async function toggleComponentsPanel() {
+    const opening = !componentsOpen;
+    setComponentsOpen(opening);
+
+    if (!opening || componentsLoaded) return;
+
+    await loadComponents();
+  }
+
+  async function addComponent() {
+    setComponentsError("");
+
+    if (!selectedComponentId) {
+      setComponentsError("Cerca e seleziona un articolo da collegare.");
+      return;
+    }
+
+    const qty = Number(newComponentQty);
+    if (!Number.isFinite(qty) || qty <= 0) {
+      setComponentsError("Inserisci una quantità valida.");
+      return;
+    }
+
+    setAddingComponent(true);
+
+    const { error } = await supabase.from("item_composites").upsert(
+      {
+        composite_item_id: itemId,
+        component_item_id: selectedComponentId,
+        qty,
+      },
+      { onConflict: "composite_item_id,component_item_id" }
+    );
+
+    if (error) {
+      setComponentsError("Errore collegamento: " + error.message);
+      setAddingComponent(false);
+      return;
+    }
+
+    setComponentSearch("");
+    setComponentSearchResults([]);
+    setSelectedComponentId("");
+    setSelectedComponentLabel("");
+    setNewComponentQty(1);
+    setAddingComponent(false);
+    await loadComponents();
+  }
+
+  async function removeComponent(rowId: string) {
+    const confirmed = window.confirm(
+      "Scollegare questo componente da questo articolo?"
+    );
+    if (!confirmed) return;
+
+    setComponentsError("");
+
+    const { error } = await supabase
+      .from("item_composites")
+      .delete()
+      .eq("id", rowId);
+
+    if (error) {
+      setComponentsError("Errore rimozione: " + error.message);
+      return;
+    }
+
+    await loadComponents();
+  }
+
+  const buildableQty =
+    componentRows.length === 0
+      ? null
+      : Math.min(
+          ...componentRows.map((row) =>
+            Math.floor(row.stock / Math.max(row.qty, 0.0001))
+          )
+        );
+
   async function toggleWindshieldPanel() {
     const opening = !windshieldOpen;
     setWindshieldOpen(opening);
@@ -925,6 +1126,266 @@ export default function ItemDetailPage({
                 )}
               </div>
             )}
+
+            <div
+              style={{
+                marginTop: 4,
+                marginBottom: 16,
+                border: "1px solid var(--border-color)",
+                borderRadius: 9,
+                overflow: "hidden",
+              }}
+            >
+              <button
+                type="button"
+                onClick={toggleComponentsPanel}
+                style={{
+                  width: "100%",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 10,
+                  padding: "12px 14px",
+                  background: "var(--input-bg)",
+                  color: "var(--foreground)",
+                  border: "none",
+                  cursor: "pointer",
+                  fontSize: 13,
+                  fontWeight: 750,
+                  textAlign: "left",
+                }}
+              >
+                <span>
+                  Componenti
+                  {componentsLoaded && (
+                    <span style={{ opacity: 0.55, fontWeight: 500 }}>
+                      {" "}
+                      ({componentRows.length})
+                    </span>
+                  )}
+                </span>
+                <span
+                  style={{
+                    display: "inline-block",
+                    transition: "transform .15s ease",
+                    transform: componentsOpen
+                      ? "rotate(180deg)"
+                      : "rotate(0deg)",
+                  }}
+                >
+                  ▾
+                </span>
+              </button>
+
+              {componentsOpen && (
+                <div style={{ padding: "12px 14px" }}>
+                  <div style={{ marginBottom: 10, fontSize: 12, opacity: 0.55 }}>
+                    Collega qui gli articoli che insieme formano questo codice
+                    (es. un composto/chiusura fatto di più pezzi). Non tocca la
+                    giacenza di nessuno: serve solo a vederli raggruppati e a
+                    sapere subito quanti se ne possono fare con lo stock
+                    attuale dei componenti.
+                  </div>
+
+                  {componentsLoading && (
+                    <div style={{ fontSize: 13, opacity: 0.6 }}>Caricamento...</div>
+                  )}
+
+                  {!componentsLoading && componentsError && (
+                    <div style={{ fontSize: 13, color: "#ef4444", marginBottom: 10 }}>
+                      {componentsError}
+                    </div>
+                  )}
+
+                  {!componentsLoading &&
+                    componentsLoaded &&
+                    componentRows.length === 0 && (
+                      <div style={{ fontSize: 13, opacity: 0.55, marginBottom: 12 }}>
+                        Nessun articolo collegato ancora.
+                      </div>
+                    )}
+
+                  {!componentsLoading && componentRows.length > 0 && (
+                    <div style={{ marginBottom: 12 }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: 8,
+                        }}
+                      >
+                        {componentRows.map((row) => (
+                          <div
+                            key={row.id}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "space-between",
+                              gap: 12,
+                              padding: "8px 0",
+                              borderBottom: "1px solid var(--border-color)",
+                              fontSize: 13,
+                            }}
+                          >
+                            <span>
+                              <strong>{row.code}</strong>
+                              <span style={{ opacity: 0.6 }}> · {row.description}</span>
+                            </span>
+                            <span
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 10,
+                              }}
+                            >
+                              <span style={{ opacity: 0.7 }}>x{row.qty}</span>
+                              <span style={{ opacity: 0.55 }}>giacenza {row.stock}</span>
+                              <button
+                                type="button"
+                                onClick={() => removeComponent(row.id)}
+                                style={{
+                                  border: "1px solid rgba(239,68,68,0.35)",
+                                  background: "rgba(239,68,68,0.08)",
+                                  color: "#f87171",
+                                  borderRadius: 6,
+                                  padding: "3px 8px",
+                                  fontSize: 11,
+                                  fontWeight: 800,
+                                  cursor: "pointer",
+                                }}
+                              >
+                                ✕
+                              </button>
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+
+                      {buildableQty !== null && (
+                        <div style={{ marginTop: 8, fontSize: 12, fontWeight: 750, opacity: 0.85 }}>
+                          Con la giacenza attuale dei componenti puoi assemblarne:{" "}
+                          {buildableQty}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <div
+                    style={{
+                      display: "flex",
+                      flexWrap: "wrap",
+                      gap: 8,
+                      alignItems: "flex-end",
+                      paddingTop: 8,
+                      borderTop: "1px dashed var(--border-color)",
+                    }}
+                  >
+                    <div style={{ position: "relative", flex: "1 1 220px", minWidth: 180 }}>
+                      <input
+                        type="text"
+                        value={selectedComponentLabel || componentSearch}
+                        onChange={(e) => {
+                          setSelectedComponentId("");
+                          setSelectedComponentLabel("");
+                          setComponentSearch(e.target.value);
+                        }}
+                        placeholder="Cerca articolo da collegare..."
+                        style={{
+                          width: "100%",
+                          padding: "8px 10px",
+                          borderRadius: 7,
+                          border: "1px solid var(--border-color)",
+                          background: "var(--input-bg)",
+                          color: "var(--foreground)",
+                          fontSize: 13,
+                        }}
+                      />
+                      {componentSearch.trim().length >= 2 &&
+                        !selectedComponentId &&
+                        componentSearchResults.length > 0 && (
+                          <div
+                            style={{
+                              position: "absolute",
+                              top: "100%",
+                              left: 0,
+                              right: 0,
+                              zIndex: 5,
+                              marginTop: 4,
+                              background: "var(--input-bg)",
+                              border: "1px solid var(--border-color)",
+                              borderRadius: 7,
+                              maxHeight: 220,
+                              overflowY: "auto",
+                            }}
+                          >
+                            {componentSearchResults.map((res) => (
+                              <div
+                                key={res.id}
+                                onClick={() => {
+                                  setSelectedComponentId(res.id);
+                                  setSelectedComponentLabel(
+                                    `${res.code} · ${res.description}`
+                                  );
+                                  setComponentSearchResults([]);
+                                }}
+                                style={{
+                                  padding: "8px 10px",
+                                  fontSize: 12.5,
+                                  cursor: "pointer",
+                                  borderBottom: "1px solid var(--border-color)",
+                                }}
+                              >
+                                <strong>{res.code}</strong>{" "}
+                                <span style={{ opacity: 0.65 }}>{res.description}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                    </div>
+
+                    <input
+                      type="number"
+                      min="0.01"
+                      step="1"
+                      value={newComponentQty}
+                      onChange={(e) => setNewComponentQty(Number(e.target.value))}
+                      title="Quantità necessaria"
+                      style={{
+                        width: 70,
+                        padding: "8px 10px",
+                        borderRadius: 7,
+                        border: "1px solid var(--border-color)",
+                        background: "var(--input-bg)",
+                        color: "var(--foreground)",
+                        fontSize: 13,
+                      }}
+                    />
+
+                    <button
+                      type="button"
+                      onClick={addComponent}
+                      disabled={addingComponent || !selectedComponentId}
+                      style={{
+                        padding: "8px 14px",
+                        borderRadius: 7,
+                        border: "1px solid rgba(51,224,234,0.4)",
+                        background: "rgba(51,224,234,0.12)",
+                        color: "#7cf2c4",
+                        fontSize: 12.5,
+                        fontWeight: 800,
+                        cursor:
+                          addingComponent || !selectedComponentId
+                            ? "not-allowed"
+                            : "pointer",
+                        opacity: addingComponent || !selectedComponentId ? 0.55 : 1,
+                      }}
+                    >
+                      {addingComponent ? "Aggiungo..." : "+ Collega"}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
 
             {msg && (
               <div

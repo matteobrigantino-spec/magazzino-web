@@ -735,10 +735,6 @@ export default function GestionalePage() {
             </div>
 
             <div className="gm2-hero-side">
-              <div className="gm2-hero-quote">
-                “ Un magazzino efficiente lascia più tempo alle cose importanti. ”
-              </div>
-
               <div className="gm2-hero-mini">
                 <div>
                   <span>Da controllare</span>
@@ -1950,51 +1946,29 @@ function Styles() {
         position: relative;
         overflow: hidden;
         min-height: 198px;
-        padding: 22px 23px;
+        padding: 30px 30px 26px;
         display: grid;
         grid-template-columns: minmax(0, 1.4fr) minmax(280px, 0.6fr);
         align-items: stretch;
         gap: 24px;
-        border: 1px solid rgba(143, 102, 54, 0.19);
         border-radius: 17px;
-        background:
-          linear-gradient(120deg, rgba(22, 48, 58, 0.97), rgba(16, 32, 42, 0.93)),
-          #16303a;
-        box-shadow: 0 20px 55px rgba(16, 32, 42, 0.2);
+        border-bottom: 1px solid rgba(19,34,39,0.08);
+        background: radial-gradient(700px 320px at 86% -30%, rgba(199,154,93,0.14), transparent 65%), #F5F1E8;
       }
 
       .gm2-hero-grid {
         position: absolute;
         inset: 0;
-        opacity: 0.11;
+        opacity: 0.07;
         background-image:
-          linear-gradient(rgba(143, 102, 54, 0.2) 1px, transparent 1px),
-          linear-gradient(90deg, rgba(143, 102, 54, 0.2) 1px, transparent 1px);
+          linear-gradient(rgba(143, 102, 54, 0.4) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(143, 102, 54, 0.4) 1px, transparent 1px);
         background-size: 36px 36px;
         mask-image: linear-gradient(to right, black, transparent 82%);
       }
 
       .gm2-aurora {
-        position: absolute;
-        pointer-events: none;
-        border-radius: 999px;
-        filter: blur(6px);
-      }
-
-      .gm2-aurora-one {
-        width: 430px;
-        height: 300px;
-        top: -210px;
-        right: 23%;
-        background: rgba(143, 102, 54, 0.2);
-      }
-
-      .gm2-aurora-two {
-        width: 250px;
-        height: 210px;
-        right: -100px;
-        bottom: -130px;
-        background: rgba(143, 102, 54, 0.18);
+        display: none;
       }
 
       .gm2-hero-copy,
@@ -2004,47 +1978,49 @@ function Styles() {
       }
 
       .gm2-live-label {
-        display: flex;
+        display: inline-flex;
+        width: fit-content;
         align-items: center;
         gap: 8px;
-        color: #93a5a8;
-        font-size: 12.5px;
-        font-weight: 900;
-        letter-spacing: 1.25px;
+        padding: 5px 12px;
+        border: 1px solid rgba(143,102,54,0.35);
+        border-radius: 999px;
+        color: #8f6636;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 1.4px;
       }
 
       .gm2-live-label > span {
-        width: 7px;
-        height: 7px;
+        width: 6px;
+        height: 6px;
         border-radius: 999px;
         background: var(--gm2-green);
-        box-shadow: 0 0 12px rgba(62, 122, 94, 0.8);
+        box-shadow: 0 0 10px rgba(62, 122, 94, 0.6);
       }
 
       .gm2-hero h1 {
-        margin: 12px 0 0;
-        color: #f5efe2;
-        font-size: clamp(35px, 4vw, 52px);
-        line-height: 0.96;
-        font-weight: 900;
-        letter-spacing: -2px;
+        margin: 16px 0 0;
+        color: #16262b;
+        font-size: clamp(32px, 3.4vw, 44px);
+        line-height: 1.05;
+        font-weight: 600;
+        letter-spacing: -1px;
       }
 
       .gm2-hero h1 strong {
-        background: linear-gradient(90deg, #8f6636 0%, #8f6636 45%, #8f6636 100%);
-        -webkit-background-clip: text;
-        background-clip: text;
-        color: transparent;
+        color: #8f6636;
+        font-weight: 600;
       }
 
       .gm2-hero-copy > p {
-        margin: 11px 0 0;
-        color: #93a5a8;
-        font-size: 16px;
+        margin: 9px 0 0;
+        color: rgba(22,38,43,0.58);
+        font-size: 15px;
       }
 
       .gm2-hero-actions {
-        margin-top: 18px;
+        margin-top: 20px;
         display: flex;
         flex-wrap: wrap;
         gap: 8px;
@@ -2056,43 +2032,34 @@ function Styles() {
         display: inline-flex;
         align-items: center;
         gap: 7px;
-        border: 1px solid rgba(143, 102, 54, 0.28);
+        border: 1px solid rgba(19,34,39,0.12);
         border-radius: 9px;
-        background: rgba(22, 48, 58, 0.86);
-        color: #f5efe2;
+        background: #ffffff;
+        color: #16262b;
         cursor: pointer;
         font-size: 13.5px;
-        font-weight: 800;
+        font-weight: 700;
+        box-shadow: 0 8px 18px rgba(16,32,42,0.05);
         transition: 0.15s ease;
       }
 
       .gm2-action-button:hover {
         transform: translateY(-1px);
-        border-color: rgba(143, 102, 54, 0.55);
+        border-color: rgba(143, 102, 54, 0.4);
       }
 
       .gm2-action-button.primary {
         border-color: #8f6636;
         background: linear-gradient(135deg, #8f6636, #8f6636);
         color: #f5efe2;
-        box-shadow: 0 0 24px rgba(143, 102, 54, 0.22);
+        box-shadow: 0 8px 20px rgba(143, 102, 54, 0.25);
       }
 
       .gm2-hero-side {
         display: flex;
         flex-direction: column;
-        justify-content: space-between;
+        justify-content: flex-end;
         gap: 12px;
-      }
-
-      .gm2-hero-quote {
-        max-width: 330px;
-        margin-left: auto;
-        color: #93a5a8;
-        font-size: 15px;
-        font-style: italic;
-        line-height: 1.55;
-        text-align: right;
       }
 
       .gm2-hero-mini {
@@ -2102,16 +2069,16 @@ function Styles() {
         display: grid;
         grid-template-columns: 1fr 1fr;
         gap: 8px;
-        border: 1px solid rgba(199, 154, 93, 0.16);
+        border: 1px solid rgba(19,34,39,0.08);
         border-radius: 13px;
-        background: rgba(16, 32, 42, 0.56);
-        backdrop-filter: blur(10px);
+        background: #ffffff;
+        box-shadow: 0 14px 30px rgba(16,32,42,0.06);
       }
 
       .gm2-hero-mini > div {
         padding: 8px 9px;
         border-radius: 9px;
-        background: rgba(245, 239, 226, 0.025);
+        background: rgba(199,154,93,0.06);
       }
 
       .gm2-hero-mini span,
@@ -2120,7 +2087,7 @@ function Styles() {
       }
 
       .gm2-hero-mini span {
-        color: #93a5a8;
+        color: rgba(22,38,43,0.5);
         font-size: 12px;
         text-transform: uppercase;
         font-weight: 800;
@@ -2130,6 +2097,7 @@ function Styles() {
       .gm2-hero-mini strong {
         margin-top: 4px;
         font-size: 24px;
+        color: #16262b;
       }
 
       .gm2-hero-mini button {
@@ -2142,7 +2110,7 @@ function Styles() {
         border: 1px solid rgba(143, 102, 54, 0.24);
         border-radius: 8px;
         background: rgba(143, 102, 54, 0.09);
-        color: #c79a5d;
+        color: #8f6636;
         cursor: pointer;
         font-size: 12.5px;
         font-weight: 900;

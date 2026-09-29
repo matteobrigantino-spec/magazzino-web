@@ -1490,13 +1490,17 @@ export default function Home() {
           <div className="home-hero-copy">
             <div className="home-brand-row">
               <img
-                src="/logo-italboats-light.png"
+                src="/logo-italboats.png"
                 alt="Italboats"
               />
             </div>
 
+            <div className="home-eyebrow">
+              PANNELLO DI CONTROLLO
+            </div>
+
             <h1>
-              Buongiorno{" "}
+              Buongiorno,{" "}
               <span>
                 {displayName}
               </span>
@@ -1506,68 +1510,19 @@ export default function Home() {
               Tutto sotto controllo,
               a colpo d&apos;occhio.
             </p>
-
-            <div className="home-quote">
-              <div className="home-quote-symbol">
-                “
-              </div>
-
-              <div>
-                <div className="home-quote-text">
-                  {dailyQuote}
-                </div>
-
-                <div className="home-quote-label">
-                  FRASE DEL GIORNO
-                </div>
-              </div>
-            </div>
           </div>
 
-          <div className="home-calendar">
-            <div className="home-calendar-top">
-              <strong>
-                {now
-                  ? formatWeekday(
-                      now
-                    )
-                  : "—"}
-              </strong>
-
-              <div className="home-calendar-icon">
-                <CalendarIcon />
-              </div>
-            </div>
-
-            <div className="home-calendar-day">
+          <div className="home-hero-time">
+            <div className="home-hero-date">
               {now
-                ? String(
-                    now.getDate()
-                  ).padStart(
-                    2,
-                    "0"
-                  )
-                : "--"}
-            </div>
-
-            <div className="home-calendar-month">
-              {now
-                ? `${formatMonth(
-                    now
-                  )} ${now.getFullYear()}`
+                ? `${formatWeekday(now)}, ${String(now.getDate()).padStart(2, "0")} ${formatMonth(now)} ${now.getFullYear()}`
                 : "—"}
             </div>
 
-            <div className="home-calendar-time">
-              <ClockIcon />
-
-              <strong>
-                {now
-                  ? formatTime(
-                      now
-                    )
-                  : "--:--"}
-              </strong>
+            <div className="home-hero-clock">
+              {now
+                ? formatTime(now)
+                : "--:--"}
             </div>
           </div>
         </div>
@@ -1650,6 +1605,7 @@ export default function Home() {
             icon={
               <EuroIcon />
             }
+            featured
           />
         )}
       </section>
@@ -2676,185 +2632,92 @@ export default function Home() {
         .home-hero {
           position: relative;
           z-index: 1;
-          min-height: 190px;
-          margin-bottom: 28px;
-          padding: 40px 46px;
-          border-radius: 24px;
+          margin-bottom: 8px;
+          padding: 44px 6px 36px;
           overflow: hidden;
-          border: 1px solid rgba(199,154,93,0.28);
-          background:
-            radial-gradient(900px 480px at 92% -20%, rgba(199,154,93,0.16), transparent 62%),
-            linear-gradient(160deg, #10202a 0%, #16303a 100%);
-          box-shadow: 0 40px 80px -50px rgba(16,32,42,0.55);
+          background: radial-gradient(900px 420px at 88% -30%, rgba(199,154,93,0.14), transparent 65%);
+          border-bottom: 1px solid rgba(19,34,39,0.08);
         }
 
         .home-hero-main {
           position: relative;
           z-index: 2;
-          min-height: 190px;
-          padding: 0;
-          display: grid;
-          grid-template-columns: minmax(0, 1fr) 220px;
-          gap: 48px;
-          align-items: stretch;
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-end;
+          gap: 32px;
         }
 
         .home-hero-copy {
           display: flex;
           flex-direction: column;
-          justify-content: center;
         }
 
         .home-brand-row {
           display: flex;
           align-items: center;
           gap: 10px;
+          margin-bottom: 18px;
         }
 
         .home-brand-row img {
-          height: 32px;
+          height: 26px;
           width: auto;
           display: block;
-          opacity: 0.95;
+        }
+
+        .home-eyebrow {
+          display: inline-block;
+          width: fit-content;
+          margin-bottom: 16px;
+          padding: 5px 12px;
+          border: 1px solid rgba(143,102,54,0.35);
+          border-radius: 999px;
+          color: #8f6636;
+          font-size: 11px;
+          font-weight: 700;
+          letter-spacing: 1.6px;
         }
 
         .home-hero h1 {
-          margin: 22px 0 0;
-          color: #f5efe2;
+          margin: 0;
+          color: #16262b;
           font-family: var(--font-serif), serif;
           font-size: 42px;
-          line-height: 1.05;
+          line-height: 1.06;
           letter-spacing: -0.5px;
           font-weight: 600;
         }
 
         .home-hero h1 span {
-          background: linear-gradient(90deg, #c79a5d, #e8c58a);
-          -webkit-background-clip: text;
-          background-clip: text;
-          color: transparent;
-          filter: drop-shadow(0 0 22px rgba(199,154,93,0.35));
+          color: #8f6636;
         }
 
         .home-hero-subtitle {
-          margin: 11px 0 0;
-          color: rgba(245,239,226,0.62);
-          font-size: 13.5px;
+          margin: 9px 0 0;
+          color: rgba(22,38,43,0.58);
+          font-size: 14.5px;
           font-weight: 500;
         }
 
-        .home-quote {
-          max-width: 580px;
-          margin-top: 26px;
-          padding: 15px 20px;
-          display: flex;
-          align-items: center;
-          gap: 15px;
-          border: 1px solid rgba(199,154,93,0.24);
-          border-left: 3px solid rgba(199,154,93,0.65);
-          border-radius: 4px 16px 16px 4px;
-          background: rgba(199,154,93,0.06);
-          backdrop-filter: blur(16px);
-          -webkit-backdrop-filter: blur(16px);
-          box-shadow: 0 24px 46px -34px rgba(0,0,0,0.5);
+        .home-hero-time {
+          flex-shrink: 0;
+          text-align: right;
+          color: rgba(22,38,43,0.5);
+          font-size: 13px;
         }
 
-        .home-quote-symbol {
-          color: rgba(199,154,93,0.6);
-          font-family: var(--font-serif), serif;
-          font-size: 34px;
-          line-height: 0.7;
-          font-weight: 700;
-        }
-
-        .home-quote-text {
-          color: rgba(245,239,226,0.86);
-          font-family: var(--font-serif), serif;
-          font-size: 14px;
-          font-style: italic;
-          font-weight: 500;
-          line-height: 1.55;
-        }
-
-        .home-quote-label {
-          margin-top: 6px;
-          color: rgba(199,154,93,0.75);
-          font-size: 9px;
-          font-weight: 800;
-          letter-spacing: 2px;
-        }
-
-        .home-calendar {
-          padding: 22px;
-          min-height: 190px;
-          display: flex;
-          flex-direction: column;
-          border: 1px solid rgba(199,154,93,0.26);
-          border-radius: 20px;
-          background: rgba(245,239,226,0.05);
-          backdrop-filter: blur(18px);
-          -webkit-backdrop-filter: blur(18px);
-          box-shadow: 0 26px 54px -30px rgba(0,0,0,0.5), inset 0 1px 0 rgba(245,239,226,0.12), 0 0 0 1px rgba(199,154,93,0.06);
-          box-sizing: border-box;
-        }
-
-        .home-calendar-top {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          color: rgba(245,239,226,0.6);
-          font-size: 11.5px;
-          font-weight: 700;
-          text-transform: uppercase;
-          letter-spacing: 0.6px;
-        }
-
-        .home-calendar-icon {
-          width: 28px;
-          height: 28px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          border-radius: 8px;
-          background: rgba(199,154,93,0.16);
-          border: 1px solid rgba(199,154,93,0.4);
-          box-shadow: 0 0 16px -4px rgba(199,154,93,0.6);
-        }
-
-        .home-calendar-day {
-          margin-top: 16px;
-          background: linear-gradient(135deg, #ffffff 0%, #e8c58a 100%);
-          -webkit-background-clip: text;
-          background-clip: text;
-          color: transparent;
-          font-family: var(--font-serif), serif;
-          font-variant-numeric: tabular-nums;
-          font-size: 56px;
-          line-height: 0.92;
-          letter-spacing: -1px;
-          font-weight: 700;
-        }
-
-        .home-calendar-month {
-          margin-top: 7px;
-          color: rgba(245,239,226,0.55);
-          font-size: 11.5px;
+        .home-hero-date {
           text-transform: capitalize;
-          font-weight: 600;
         }
 
-        .home-calendar-time {
-          margin-top: auto;
-          padding-top: 15px;
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          border-top: 1px solid rgba(245,239,226,0.12);
-          color: #c79a5d;
+        .home-hero-clock {
+          margin-top: 4px;
+          color: #16262b;
           font-family: var(--font-serif), serif;
           font-variant-numeric: tabular-nums;
-          font-size: 15px;
-          font-weight: 600;
+          font-size: 20px;
+          font-weight: 700;
         }
 
         .home-error {
@@ -2907,6 +2770,35 @@ export default function Home() {
         .home-kpi:has(.home-tone-blue)::before { background: #2f6e68; color: rgba(47,110,104,0.7); }
         .home-kpi:has(.home-tone-purple)::before { background: #132227; color: rgba(19,34,39,0.6); }
         .home-kpi:has(.home-tone-green)::before { background: #3e7a5e; color: rgba(62,122,94,0.7); }
+
+        .home-kpi.featured {
+          background: linear-gradient(155deg, #16303a, #10202a);
+          border-color: rgba(199,154,93,0.22);
+          box-shadow: 0 22px 44px -24px rgba(16,32,42,0.5);
+        }
+
+        .home-kpi.featured::before {
+          background: #c79a5d;
+          color: rgba(199,154,93,0.7);
+        }
+
+        .home-kpi.featured .home-kpi-icon {
+          background: rgba(199,154,93,0.18) !important;
+          border-color: rgba(199,154,93,0.4) !important;
+          color: #c79a5d !important;
+        }
+
+        .home-kpi.featured .home-kpi-title {
+          color: rgba(245,239,226,0.55);
+        }
+
+        .home-kpi.featured .home-kpi-value {
+          color: #f5efe2;
+        }
+
+        .home-kpi.featured .home-kpi-subtitle {
+          color: rgba(245,239,226,0.42);
+        }
 
         .home-kpi:not(.no-click):hover {
           transform: translateY(-4px);
@@ -3714,12 +3606,13 @@ export default function Home() {
           }
 
           .home-hero-main {
-            grid-template-columns: 1fr;
-            gap: 22px;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 18px;
           }
 
-          .home-calendar {
-            min-height: auto;
+          .home-hero-time {
+            text-align: left;
           }
 
           .home-kpi-grid,
@@ -3751,6 +3644,7 @@ function KpiCard({
   icon,
   tone,
   onClick,
+  featured,
 }: {
   title: string;
   value: string;
@@ -3762,6 +3656,7 @@ function KpiCard({
     | "purple"
     | "green";
   onClick?: () => void;
+  featured?: boolean;
 }) {
   return (
     <button
@@ -3771,6 +3666,10 @@ function KpiCard({
       className={`home-kpi ${
         !onClick
           ? "no-click"
+          : ""
+      } ${
+        featured
+          ? "featured"
           : ""
       }`}
     >

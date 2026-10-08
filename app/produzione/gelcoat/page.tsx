@@ -204,7 +204,25 @@ export default function GelcoatPage() {
       return;
     }
 
-    setMessage("Salvato.");
+    // Aggancia subito anche i battelli di questo modello già in
+    // produzione: senza questa chiamata resterebbero per sempre senza
+    // impegno gelcoat (l'impegno si crea solo alla creazione del
+    // battello, non retroattivamente).
+    const { data: backfilledCount, error: backfillError } = await supabase.rpc(
+      "backfill_gelcoat_requirements_for_model",
+      { p_model_boat: selectedModel }
+    );
+
+    if (backfillError) {
+      console.error("Errore aggancio battelli esistenti:", backfillError);
+    }
+
+    const boatsNote =
+      !backfillError && backfilledCount
+        ? ` Agganciati anche ${backfilledCount} battell${backfilledCount === 1 ? "o" : "i"} già in produzione di questo modello.`
+        : "";
+
+    setMessage(`Salvato.${boatsNote}`);
     setSavingPart("");
     await loadData();
   }

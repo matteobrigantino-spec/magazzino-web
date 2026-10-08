@@ -1221,7 +1221,8 @@ export default function SupplierDetail({
     const columns = [
       { label: "Codice articolo", width: 38 },
       { label: "Codice scanner", width: 44 },
-      { label: "Descrizione", width: 112 },
+      { label: "Descrizione", width: 98 },
+      { label: "U.M.", width: 14 },
       { label: "Giacenza", width: 28 },
       { label: "Scorta min.", width: 30 },
       { label: "In ordine", width: 29 },
@@ -1327,6 +1328,7 @@ export default function SupplierDetail({
         item.supplier_code || "-",
         item.code || "-",
         descriptionLines,
+        item.unit || "-",
         String(item.stock),
         item.min_stock > 0
           ? String(item.min_stock)

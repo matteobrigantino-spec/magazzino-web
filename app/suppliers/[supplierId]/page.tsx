@@ -2041,7 +2041,7 @@ export default function SupplierDetail({
                           lowStock
                             ? "rgba(239, 68, 68, 0.08)"
                             : atMinStock
-                            ? "rgba(217, 119, 6, 0.08)"
+                            ? "rgba(217, 119, 6, 0.035)"
                             : "transparent",
                       }}
                     >
@@ -2680,15 +2680,24 @@ function StockBadge({
           borderRadius: 20,
 
           background:
-            "rgba(217, 119, 6, 0.18)",
+            "rgba(217, 119, 6, 0.10)",
 
           border:
-            "1px solid rgba(217, 119, 6, 0.45)",
+            "1px solid rgba(217, 119, 6, 0.22)",
 
-          fontWeight: 850,
+          fontWeight: 700,
         }}
       >
-        {stock} · DA CONTROLLARE
+        {stock}
+        <span
+          style={{
+            fontWeight: 500,
+            fontSize: 11,
+            opacity: 0.75,
+          }}
+        >
+          · da controllare
+        </span>
       </span>
     );
   }

@@ -11,6 +11,7 @@ type Item = {
   code: string;
   supplier_code: string | null;
   description: string;
+  unit: string | null;
   stock: number;
   min_stock: number;
   price: number;
@@ -291,7 +292,7 @@ export default function SupplierDetail({
         const response = await supabase
           .from("items")
           .select(
-            "id,code,supplier_code,description,stock,min_stock,price,on_order,image_url"
+            "id,code,supplier_code,description,unit,stock,min_stock,price,on_order,image_url"
           )
           .eq(
             "supplier_id",
@@ -320,6 +321,12 @@ export default function SupplierDetail({
                 String(
                   item.description || ""
                 ),
+              unit:
+                item.unit
+                  ? String(
+                      item.unit
+                    )
+                  : null,
               stock:
                 Number(
                   item.stock || 0
@@ -348,7 +355,7 @@ export default function SupplierDetail({
         const response = await supabase
           .from("items")
           .select(
-            "id,code,supplier_code,description,stock,min_stock,on_order,image_url"
+            "id,code,supplier_code,description,unit,stock,min_stock,on_order,image_url"
           )
           .eq(
             "supplier_id",
@@ -377,6 +384,12 @@ export default function SupplierDetail({
                 String(
                   item.description || ""
                 ),
+              unit:
+                item.unit
+                  ? String(
+                      item.unit
+                    )
+                  : null,
               stock:
                 Number(
                   item.stock || 0

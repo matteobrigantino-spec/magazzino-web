@@ -128,6 +128,11 @@ export default function ProductionPage() {
   const [missingSummaryPdfBusy, setMissingSummaryPdfBusy] = useState(false);
   const [missingSummaryPdfError, setMissingSummaryPdfError] = useState("");
 
+  // PDF "elenco battelli in produzione" (STEP 65): stampa l'intera
+  // tabella cosi' com'e' a schermo, una riga per battello.
+  const [boatsListPdfBusy, setBoatsListPdfBusy] = useState(false);
+  const [boatsListPdfError, setBoatsListPdfError] = useState("");
+
   // Pannello "stampa programma reparto": stessa logica gia' usata dentro
   // Verniciatura/Tubolari, richiamabile pero' direttamente da qui. Il
   // battello per il PDF si spunta uno per uno (mai un intervallo di
@@ -332,6 +337,46 @@ export default function ProductionPage() {
       );
     } finally {
       setMissingSummaryPdfBusy(false);
+    }
+  }
+
+  async function downloadBoatsListPdf() {
+    setBoatsListPdfError("");
+    setBoatsListPdfBusy(true);
+
+    try {
+      if (!pdfLogo) {
+        throw new Error("Carica il logo aziendale prima di scaricare il PDF.");
+      }
+
+      const { buildBoatsListPdf } = await import("../../lib/productionPdf");
+
+      const { doc, filename } = buildBoatsListPdf({
+        rows: activeBoats.map((boat) => ({
+          progressiveNo: boat.progressive_no,
+          orderNumber: boat.order_number,
+          model: boat.model_boat,
+          hull: boat.hull,
+          stringers: boat.stringers,
+          deck: boat.deck,
+          matricola: boat.matricola || "",
+          requestedDeliveryDate: boat.requested_delivery_date
+            ? formatItDate(boat.requested_delivery_date)
+            : "",
+          upholsteryInserted: upholsteryBoatIds.has(boat.id),
+          note: boat.note || "",
+        })),
+        logo: pdfLogo,
+        generatedDate: formatItDate(todayInputValue()),
+      });
+
+      doc.save(filename);
+    } catch (error) {
+      setBoatsListPdfError(
+        error instanceof Error ? error.message : "Impossibile creare il PDF. Riprova."
+      );
+    } finally {
+      setBoatsListPdfBusy(false);
     }
   }
 
@@ -1660,6 +1705,14 @@ export default function ProductionPage() {
             </Link>
             <button
               type="button"
+              className="prod-btn secondary"
+              onClick={downloadBoatsListPdf}
+              disabled={boatsListPdfBusy || pdfLogoLoading || !pdfLogo}
+            >
+              {boatsListPdfBusy ? "Creazione PDF..." : "Stampa elenco battelli"}
+            </button>
+            <button
+              type="button"
               className={`prod-btn secondary ${printPanel === "verniciatura" ? "active" : ""}`}
               onClick={() => openPrintPanel("verniciatura")}
             >
@@ -1693,6 +1746,11 @@ export default function ProductionPage() {
           </div>
         </div>
 
+        {boatsListPdfError && (
+          <div role="alert" className="prod-message error">
+            {boatsListPdfError}
+          </div>
+        )}
         {upholsteryPdfError && (
           <div role="alert" className="prod-message error">
             {upholsteryPdfError}

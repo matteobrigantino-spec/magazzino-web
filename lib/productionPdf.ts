@@ -1947,3 +1947,197 @@ export function buildDistintaBaseBookletPdf(params: {
 
   return { doc, filename, totalSheets: sheets };
 }
+
+// ============================================================
+// ELENCO BATTELLI IN PRODUZIONE - stampa PDF (STEP 65)
+//
+// Lista semplice, una riga per battello, con le stesse colonne
+// mostrate nella pagina "Battelli in produzione": progressivo,
+// ordine, battello (con carena/ragno-longh/coperta), matricola,
+// consegna richiesta, stato tappezzeria e note. E' un export di
+// sola lettura.
+// ============================================================
+
+export type BoatsListPdfRow = {
+  progressiveNo: number | null;
+  orderNumber: string;
+  model: string;
+  hull: string;
+  stringers: string;
+  deck: string;
+  matricola: string;
+  requestedDeliveryDate: string;
+  upholsteryInserted: boolean;
+  note: string;
+};
+
+export function buildBoatsListPdf(params: {
+  rows: BoatsListPdfRow[];
+  logo: string;
+  generatedDate: string;
+}) {
+  const { rows, logo, generatedDate } = params;
+
+  const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+  doc.setProperties({
+    title: "Battelli in produzione",
+    subject: "Elenco battelli attualmente in produzione",
+  });
+
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const margin = 14;
+  const tableWidth = pageWidth - margin * 2;
+
+  function drawPageHeader(subtitle: string) {
+    drawCompanyLogoTopRight(doc, logo);
+
+    doc.setTextColor(0, 0, 0);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.text("BATTELLI IN PRODUZIONE", margin, 16);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9.5);
+    doc.setTextColor(120, 120, 120);
+    doc.text(`${subtitle} · Generato il ${generatedDate}`, margin, 23);
+    doc.setTextColor(0, 0, 0);
+
+    doc.setDrawColor(200);
+    doc.setLineWidth(0.3);
+    doc.line(margin, 27, pageWidth - margin, 27);
+
+    return 34;
+  }
+
+  let y = drawPageHeader(
+    `${rows.length} battell${rows.length === 1 ? "o" : "i"} attiv${rows.length === 1 ? "o" : "i"}, ordinati per consegna cliente`
+  );
+
+  const columns = [
+    { key: "prog", label: "PROG.", width: 14 },
+    { key: "order", label: "N° ORDINE", width: 24 },
+    { key: "model", label: "BATTELLO", width: 72 },
+    { key: "matricola", label: "MATRICOLA", width: 26 },
+    { key: "delivery", label: "CONSEGNA RICHIESTA", width: 32 },
+    { key: "tap", label: "TAPPEZZERIA", width: 26 },
+    {
+      key: "note",
+      label: "NOTE",
+      width: tableWidth - 14 - 24 - 72 - 26 - 32 - 26,
+    },
+  ];
+
+  function drawTableHeader(yPos: number) {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.5);
+    doc.setTextColor(110, 110, 110);
+    let x = margin;
+    columns.forEach((column) => {
+      doc.text(column.label, x, yPos);
+      x += column.width;
+    });
+    doc.setTextColor(0, 0, 0);
+    doc.setDrawColor(225);
+    doc.setLineWidth(0.25);
+    doc.line(margin, yPos + 2.5, pageWidth - margin, yPos + 2.5);
+    return yPos + 8;
+  }
+
+  if (rows.length === 0) {
+    doc.setFont("helvetica", "italic");
+    doc.setFontSize(10);
+    doc.setTextColor(90, 90, 90);
+    doc.text("Nessun battello attualmente in produzione.", margin, y + 2);
+    doc.setTextColor(0, 0, 0);
+  } else {
+    y = drawTableHeader(y);
+
+    rows.forEach((row) => {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+
+      const modelLines = doc.splitTextToSize(row.model || "-", columns[2].width - 4);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7.5);
+      const metaText = `Carena ${row.hull || "-"} · Ragno/Longh. ${row.stringers || "-"} · Coperta ${row.deck || "-"}`;
+      const metaLines = doc.splitTextToSize(metaText, columns[2].width - 4);
+
+      doc.setFontSize(9);
+      const noteLines = doc.splitTextToSize(row.note || "-", columns[6].width - 4);
+
+      const boatBlockHeight = modelLines.length * 4 + metaLines.length * 3.4 + 1.5;
+      const rowHeight = Math.max(9, boatBlockHeight + 3, noteLines.length * 4 + 3);
+
+      if (y + rowHeight > pageHeight - 16) {
+        doc.addPage();
+        y = drawPageHeader("Elenco (segue)");
+        y = drawTableHeader(y);
+      }
+
+      let x = margin;
+      doc.setTextColor(0, 0, 0);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+
+      doc.text(row.progressiveNo ? String(row.progressiveNo) : "-", x, y + 4.5);
+      x += columns[0].width;
+
+      doc.text(row.orderNumber || "-", x, y + 4.5);
+      x += columns[1].width;
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+      doc.text(modelLines, x, y + 4.5);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7.5);
+      doc.setTextColor(120, 120, 120);
+      doc.text(metaLines, x, y + 4.5 + modelLines.length * 4);
+      doc.setTextColor(0, 0, 0);
+      doc.setFontSize(9);
+      x += columns[2].width;
+
+      doc.text(row.matricola || "-", x, y + 4.5);
+      x += columns[3].width;
+
+      doc.text(row.requestedDeliveryDate || "-", x, y + 4.5);
+      x += columns[4].width;
+
+      if (row.upholsteryInserted) {
+        doc.setTextColor(60, 130, 90);
+        doc.text("Inserita", x, y + 4.5);
+      } else {
+        doc.setTextColor(170, 120, 40);
+        doc.text("Da inserire", x, y + 4.5);
+      }
+      doc.setTextColor(0, 0, 0);
+      x += columns[5].width;
+
+      doc.text(noteLines, x, y + 4.5);
+
+      doc.setDrawColor(240);
+      doc.setLineWidth(0.15);
+      doc.line(margin, y + rowHeight, pageWidth - margin, y + rowHeight);
+      doc.setLineWidth(0.2);
+
+      y += rowHeight + 1;
+    });
+  }
+
+  const totalPages = doc.getNumberOfPages();
+  for (let page = 1; page <= totalPages; page++) {
+    doc.setPage(page);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(130, 130, 130);
+    doc.text(`Pagina ${page} di ${totalPages}`, pageWidth - margin, pageHeight - 8, {
+      align: "right",
+    });
+  }
+
+  const filename = `Battelli_in_produzione_${generatedDate.replace(/[^0-9a-zA-Z]+/g, "_")}.pdf`;
+
+  return { doc, filename };
+}

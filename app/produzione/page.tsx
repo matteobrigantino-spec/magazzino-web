@@ -1315,6 +1315,9 @@ export default function ProductionPage() {
             <Link href="/produzione/distinta-base" className="prod-btn secondary">
               Distinta base
             </Link>
+            <Link href="/produzione/gelcoat" className="prod-btn secondary">
+              Gelcoat
+            </Link>
             <Link href="/produzione/consegnati" className="prod-btn secondary">
               Consegnati
             </Link>

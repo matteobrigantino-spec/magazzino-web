@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../../lib/supabaseClient";
+import { fetchCompanyLogo } from "../../../lib/pdfLogo";
+import { buildGelcoatStockPdf } from "../../../lib/productionPdf";
 
 /*
   MAGAZZINO GELCOAT (STEP 69)
@@ -57,6 +59,9 @@ export default function GelcoatPage() {
   const [kgInput, setKgInput] = useState<Record<Part, string>>({ scafo: "", coperta: "" });
   const [savingPart, setSavingPart] = useState<Part | "">("");
   const [removingPart, setRemovingPart] = useState<Part | "">("");
+
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfError, setPdfError] = useState("");
 
   useEffect(() => {
     loadData();
@@ -230,6 +235,36 @@ export default function GelcoatPage() {
     await loadData();
   }
 
+  async function downloadStockPdf() {
+    setPdfError("");
+    setPdfBusy(true);
+
+    try {
+      const logo = await fetchCompanyLogo();
+      if (!logo) {
+        throw new Error("Carica il logo aziendale prima di scaricare il PDF (Produzione -> Configurazioni).");
+      }
+
+      const { doc, filename } = buildGelcoatStockPdf({
+        rows: gelcoatItems.map((item) => ({
+          description: item.description,
+          unit: item.unit,
+          stock: item.stock,
+          committed: committedByItem.get(item.id) || 0,
+          minStock: item.min_stock,
+        })),
+        logo,
+        generatedDate: new Intl.DateTimeFormat("it-IT").format(new Date()),
+      });
+
+      doc.save(filename);
+    } catch (err: any) {
+      setPdfError(err?.message || "Errore durante la creazione del PDF.");
+    } finally {
+      setPdfBusy(false);
+    }
+  }
+
   if (loading) {
     return (
       <div style={{ padding: 40, textAlign: "center", opacity: 0.6 }}>
@@ -314,10 +349,25 @@ export default function GelcoatPage() {
       <section className="gel-card">
         <div className="gel-card-head">
           <h2>Giacenza gelcoat</h2>
-          <Link href="/suppliers" className="gel-stock-link">
-            Gestisci articoli e scorta minima →
-          </Link>
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <Link href="/suppliers" className="gel-stock-link">
+              Gestisci articoli e scorta minima →
+            </Link>
+            <button
+              type="button"
+              className="gel-btn primary"
+              onClick={downloadStockPdf}
+              disabled={pdfBusy || gelcoatItems.length === 0}
+            >
+              {pdfBusy ? "Creazione PDF..." : "Stampa PDF"}
+            </button>
+          </div>
         </div>
+        {pdfError && (
+          <div className="gel-message error" style={{ marginTop: 12, marginBottom: 0 }}>
+            {pdfError}
+          </div>
+        )}
         {gelcoatItems.length === 0 ? (
           <div className="gel-empty">
             Nessun articolo gelcoat trovato: fai girare STEP66_FORNITORE_GELCOAT.sql

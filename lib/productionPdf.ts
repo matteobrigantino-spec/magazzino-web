@@ -2141,3 +2141,181 @@ export function buildBoatsListPdf(params: {
 
   return { doc, filename };
 }
+
+// ============================================================
+// MAGAZZINO GELCOAT - disponibilita' (STEP 69/70)
+//
+// Una tabella sola: per ogni articolo gelcoat, Giacenza (quello che
+// c'e' fisicamente), Impegnati (kg gia' prenotati dai battelli in
+// produzione non ancora consegnati - gli "scarichi virtuali"),
+// Disponibile (Giacenza - Impegnati) e Scorta minima. Le righe sotto
+// scorta minima (tenendo gia' conto degli impegnati) sono evidenziate
+// e vengono mostrate per prime, cosi' si vede subito cosa manca o sta
+// per mancare con gli ordini attualmente in produzione.
+// ============================================================
+
+export type GelcoatStockPdfRow = {
+  description: string;
+  unit: string;
+  stock: number;
+  committed: number;
+  minStock: number;
+};
+
+export function buildGelcoatStockPdf(params: {
+  rows: GelcoatStockPdfRow[];
+  logo: string;
+  generatedDate: string;
+}) {
+  const { rows, logo, generatedDate } = params;
+
+  const sorted = [...rows].sort((a, b) => {
+    const aShort = a.stock - a.committed <= a.minStock;
+    const bShort = b.stock - b.committed <= b.minStock;
+    if (aShort !== bShort) return aShort ? -1 : 1;
+    return a.description.localeCompare(b.description, "it");
+  });
+
+  const shortageCount = sorted.filter((row) => row.stock - row.committed <= row.minStock).length;
+
+  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  doc.setProperties({
+    title: "Magazzino gelcoat - disponibilità",
+    subject: "Giacenza gelcoat al netto degli scarichi virtuali degli ordini in produzione",
+  });
+
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const margin = 14;
+  const tableWidth = pageWidth - margin * 2;
+
+  function drawPageHeader(subtitle: string) {
+    drawCompanyLogoTopRight(doc, logo);
+
+    doc.setTextColor(0, 0, 0);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.text("MAGAZZINO GELCOAT — DISPONIBILITÀ", margin, 16);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9.5);
+    doc.setTextColor(120, 120, 120);
+    doc.text(`${subtitle} · Generato il ${generatedDate}`, margin, 23);
+    doc.setTextColor(0, 0, 0);
+
+    doc.setDrawColor(200);
+    doc.setLineWidth(0.3);
+    doc.line(margin, 27, pageWidth - margin, 27);
+
+    return 34;
+  }
+
+  let y = drawPageHeader(
+    shortageCount > 0
+      ? `${shortageCount} articol${shortageCount === 1 ? "o" : "i"} sotto scorta minima (con gli ordini in produzione già scaricati virtualmente)`
+      : "Nessun articolo sotto scorta minima, con gli ordini in produzione già scaricati virtualmente"
+  );
+
+  const columns = [
+    { key: "desc", label: "ARTICOLO", width: 60 },
+    { key: "stock", label: "GIACENZA", width: 24 },
+    { key: "committed", label: "IMPEGNATI", width: 24 },
+    { key: "available", label: "DISPONIBILE", width: 26 },
+    { key: "min", label: "SCORTA MIN.", width: 26 },
+    { key: "note", label: "", width: tableWidth - 60 - 24 - 24 - 26 - 26 },
+  ];
+
+  function drawTableHeader(yPos: number) {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.5);
+    doc.setTextColor(110, 110, 110);
+    let x = margin;
+    columns.forEach((column) => {
+      doc.text(column.label, x, yPos);
+      x += column.width;
+    });
+    doc.setTextColor(0, 0, 0);
+    doc.setDrawColor(225);
+    doc.setLineWidth(0.25);
+    doc.line(margin, yPos + 2.5, pageWidth - margin, yPos + 2.5);
+    return yPos + 8;
+  }
+
+  if (sorted.length === 0) {
+    doc.setFont("helvetica", "italic");
+    doc.setFontSize(10);
+    doc.setTextColor(90, 90, 90);
+    doc.text("Nessun articolo gelcoat a catalogo.", margin, y + 2);
+    doc.setTextColor(0, 0, 0);
+  } else {
+    y = drawTableHeader(y);
+
+    sorted.forEach((row) => {
+      const available = row.stock - row.committed;
+      const short = available <= row.minStock;
+
+      if (y + 8 > pageHeight - 16) {
+        doc.addPage();
+        y = drawPageHeader("Elenco (segue)");
+        y = drawTableHeader(y);
+      }
+
+      let x = margin;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.setTextColor(0, 0, 0);
+
+      const descLines = doc.splitTextToSize(row.description || "-", columns[0].width - 4);
+      doc.text(descLines, x, y + 4.5);
+      x += columns[0].width;
+
+      doc.text(`${row.stock} ${row.unit}`, x, y + 4.5);
+      x += columns[1].width;
+
+      doc.text(row.committed > 0 ? `${row.committed} ${row.unit}` : "-", x, y + 4.5);
+      x += columns[2].width;
+
+      doc.setFont("helvetica", "bold");
+      if (short) doc.setTextColor(217, 119, 6);
+      doc.text(`${available} ${row.unit}`, x, y + 4.5);
+      doc.setTextColor(0, 0, 0);
+      doc.setFont("helvetica", "normal");
+      x += columns[3].width;
+
+      doc.text(`${row.minStock} ${row.unit}`, x, y + 4.5);
+      x += columns[4].width;
+
+      if (short) {
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(217, 119, 6);
+        doc.text("DA RIORDINARE", x, y + 4.5);
+        doc.setTextColor(0, 0, 0);
+        doc.setFont("helvetica", "normal");
+      }
+
+      const rowHeight = Math.max(8, descLines.length * 4 + 3);
+
+      doc.setDrawColor(240);
+      doc.setLineWidth(0.15);
+      doc.line(margin, y + rowHeight, pageWidth - margin, y + rowHeight);
+      doc.setLineWidth(0.2);
+
+      y += rowHeight + 1;
+    });
+  }
+
+  const totalPages = doc.getNumberOfPages();
+  for (let page = 1; page <= totalPages; page++) {
+    doc.setPage(page);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(130, 130, 130);
+    doc.text(`Pagina ${page} di ${totalPages}`, pageWidth - margin, pageHeight - 8, {
+      align: "right",
+    });
+  }
+
+  const filename = `Magazzino_gelcoat_disponibilita_${generatedDate.replace(/[^0-9a-zA-Z]+/g, "_")}.pdf`;
+
+  return { doc, filename };
+}

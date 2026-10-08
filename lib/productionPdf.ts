@@ -2162,12 +2162,18 @@ export type GelcoatStockPdfRow = {
   minStock: number;
 };
 
+export type GelcoatMonthlyPdfGroup = {
+  label: string;
+  rows: { description: string; unit: string; qty: number }[];
+};
+
 export function buildGelcoatStockPdf(params: {
   rows: GelcoatStockPdfRow[];
+  monthlyGroups?: GelcoatMonthlyPdfGroup[];
   logo: string;
   generatedDate: string;
 }) {
-  const { rows, logo, generatedDate } = params;
+  const { rows, monthlyGroups, logo, generatedDate } = params;
 
   const sorted = [...rows].sort((a, b) => {
     const aShort = a.stock - a.committed <= a.minStock;
@@ -2301,6 +2307,101 @@ export function buildGelcoatStockPdf(params: {
       doc.setLineWidth(0.2);
 
       y += rowHeight + 1;
+    });
+  }
+
+  // ---------- Sezione 2: fabbisogno per mese di consegna ----------
+  if (monthlyGroups && monthlyGroups.length > 0) {
+    function drawMonthlyPageHeader(subtitle: string) {
+      drawCompanyLogoTopRight(doc, logo);
+
+      doc.setTextColor(0, 0, 0);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(16);
+      doc.text("MAGAZZINO GELCOAT — FABBISOGNO PER MESE", margin, 16);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9.5);
+      doc.setTextColor(120, 120, 120);
+      doc.text(`${subtitle} · Generato il ${generatedDate}`, margin, 23);
+      doc.setTextColor(0, 0, 0);
+
+      doc.setDrawColor(200);
+      doc.setLineWidth(0.3);
+      doc.line(margin, 27, pageWidth - margin, 27);
+
+      return 34;
+    }
+
+    const monthlyColumns = [
+      { key: "desc", label: "ARTICOLO", width: 100 },
+      { key: "qty", label: "KG NECESSARI", width: tableWidth - 100 },
+    ];
+
+    function drawMonthlyTableHeader(yPos: number) {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(7.5);
+      doc.setTextColor(110, 110, 110);
+      let x = margin;
+      monthlyColumns.forEach((column) => {
+        doc.text(column.label, x, yPos);
+        x += column.width;
+      });
+      doc.setTextColor(0, 0, 0);
+      doc.setDrawColor(225);
+      doc.setLineWidth(0.25);
+      doc.line(margin, yPos + 2.5, pageWidth - margin, yPos + 2.5);
+      return yPos + 8;
+    }
+
+    doc.addPage();
+    let my = drawMonthlyPageHeader(
+      "Kg già impegnati dai battelli in produzione, per mese di consegna richiesta"
+    );
+
+    monthlyGroups.forEach((group) => {
+      if (my + 10 + 8 > pageHeight - 16) {
+        doc.addPage();
+        my = drawMonthlyPageHeader("Fabbisogno per mese (segue)");
+      }
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(0, 0, 0);
+      doc.text(group.label, margin, my + 3);
+      my += 9;
+
+      my = drawMonthlyTableHeader(my);
+
+      group.rows.forEach((row) => {
+        if (my + 7 > pageHeight - 16) {
+          doc.addPage();
+          my = drawMonthlyPageHeader(`${group.label} (segue)`);
+          my = drawMonthlyTableHeader(my);
+        }
+
+        let x = margin;
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(9);
+        doc.setTextColor(0, 0, 0);
+
+        const descLines = doc.splitTextToSize(row.description || "-", monthlyColumns[0].width - 4);
+        doc.text(descLines, x, my + 4.5);
+        x += monthlyColumns[0].width;
+
+        doc.text(`${row.qty} ${row.unit}`, x, my + 4.5);
+
+        const rowHeight = Math.max(7, descLines.length * 4 + 3);
+
+        doc.setDrawColor(240);
+        doc.setLineWidth(0.15);
+        doc.line(margin, my + rowHeight, pageWidth - margin, my + rowHeight);
+        doc.setLineWidth(0.2);
+
+        my += rowHeight + 1;
+      });
+
+      my += 6;
     });
   }
 

@@ -46,9 +46,31 @@ type Recipe = {
   qty_kg: number;
 };
 
+type MonthGroup = {
+  key: string;
+  label: string;
+  rows: { description: string; unit: string; qty: number }[];
+};
+
+const MONTH_NAMES_IT = [
+  "Gennaio",
+  "Febbraio",
+  "Marzo",
+  "Aprile",
+  "Maggio",
+  "Giugno",
+  "Luglio",
+  "Agosto",
+  "Settembre",
+  "Ottobre",
+  "Novembre",
+  "Dicembre",
+];
+
 export default function GelcoatPage() {
   const [gelcoatItems, setGelcoatItems] = useState<GelcoatItem[]>([]);
   const [committedByItem, setCommittedByItem] = useState<Map<string, number>>(new Map());
+  const [monthlyGroups, setMonthlyGroups] = useState<MonthGroup[]>([]);
   const [modelOptions, setModelOptions] = useState<OptionRow[]>([]);
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [loading, setLoading] = useState(true);
@@ -71,7 +93,7 @@ export default function GelcoatPage() {
     setLoading(true);
     setErrorMessage("");
 
-    const [itemsRes, optionsRes, recipesRes, pendingRes] = await Promise.all([
+    const [itemsRes, optionsRes, recipesRes, pendingRes, boatsRes] = await Promise.all([
       supabase
         .from("items")
         .select("id,description,unit,stock,min_stock")
@@ -89,8 +111,13 @@ export default function GelcoatPage() {
         .order("model_boat", { ascending: true }),
       supabase
         .from("production_boat_gelcoat")
-        .select("gelcoat_item_id,qty_kg")
+        .select("boat_id,gelcoat_item_id,qty_kg")
         .eq("status", "pending"),
+      supabase
+        .from("production_boats")
+        .select("id,requested_delivery_date")
+        .neq("status", "cancelled")
+        .is("delivered_at", null),
     ]);
 
     if (itemsRes.error) {
@@ -99,15 +126,15 @@ export default function GelcoatPage() {
       return;
     }
 
-    setGelcoatItems(
-      (itemsRes.data || []).map((row: any) => ({
-        id: String(row.id),
-        description: String(row.description || ""),
-        unit: String(row.unit || "KG"),
-        stock: Number(row.stock || 0),
-        min_stock: Number(row.min_stock || 0),
-      }))
-    );
+    const itemRows = (itemsRes.data || []).map((row: any) => ({
+      id: String(row.id),
+      description: String(row.description || ""),
+      unit: String(row.unit || "KG"),
+      stock: Number(row.stock || 0),
+      min_stock: Number(row.min_stock || 0),
+    }));
+    setGelcoatItems(itemRows);
+    const itemById = new Map(itemRows.map((item) => [item.id, item]));
 
     setModelOptions(
       (optionsRes.data || []).map((row: any) => ({ id: String(row.id), name: String(row.name || "") }))
@@ -134,12 +161,62 @@ export default function GelcoatPage() {
     );
 
     const committed = new Map<string, number>();
-    (pendingRes.data || []).forEach((row: any) => {
-      const itemId = String(row.gelcoat_item_id || "");
-      if (!itemId) return;
-      committed.set(itemId, (committed.get(itemId) || 0) + Number(row.qty_kg || 0));
+    const pendingRows = (pendingRes.data || []).map((row: any) => ({
+      boatId: String(row.boat_id || ""),
+      itemId: String(row.gelcoat_item_id || ""),
+      qty: Number(row.qty_kg || 0),
+    }));
+    pendingRows.forEach((row) => {
+      if (!row.itemId) return;
+      committed.set(row.itemId, (committed.get(row.itemId) || 0) + row.qty);
     });
     setCommittedByItem(committed);
+
+    // Fabbisogno per mese: ogni impegno (scarico virtuale) viene attribuito
+    // al mese di consegna richiesta del suo battello - cosi' si vede con
+    // quale anticipo serve avere il gelcoat pronto per le consegne previste.
+    const deliveryDateByBoat = new Map<string, string | null>();
+    (boatsRes.data || []).forEach((row: any) => {
+      deliveryDateByBoat.set(String(row.id), row.requested_delivery_date ? String(row.requested_delivery_date) : null);
+    });
+
+    const monthTotals = new Map<string, { label: string; qtyByItem: Map<string, number> }>();
+    pendingRows.forEach((row) => {
+      if (!row.itemId) return;
+      const deliveryDate = deliveryDateByBoat.get(row.boatId);
+      let key = "zzz-non-specificata";
+      let label = "Data di consegna non indicata";
+
+      if (deliveryDate) {
+        const parsed = new Date(deliveryDate + "T00:00:00");
+        if (!Number.isNaN(parsed.getTime())) {
+          const year = parsed.getFullYear();
+          const month = parsed.getMonth();
+          key = `${year}-${String(month + 1).padStart(2, "0")}`;
+          label = `${MONTH_NAMES_IT[month]} ${year}`;
+        }
+      }
+
+      const group = monthTotals.get(key) || { label, qtyByItem: new Map<string, number>() };
+      group.qtyByItem.set(row.itemId, (group.qtyByItem.get(row.itemId) || 0) + row.qty);
+      monthTotals.set(key, group);
+    });
+
+    const groups: MonthGroup[] = Array.from(monthTotals.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([key, group]) => ({
+        key,
+        label: group.label,
+        rows: Array.from(group.qtyByItem.entries())
+          .map(([itemId, qty]) => ({
+            description: itemById.get(itemId)?.description || "Articolo non trovato",
+            unit: itemById.get(itemId)?.unit || "KG",
+            qty,
+          }))
+          .sort((a, b) => a.description.localeCompare(b.description, "it")),
+      }));
+
+    setMonthlyGroups(groups);
 
     setLoading(false);
   }
@@ -270,6 +347,10 @@ export default function GelcoatPage() {
           stock: item.stock,
           committed: committedByItem.get(item.id) || 0,
           minStock: item.min_stock,
+        })),
+        monthlyGroups: monthlyGroups.map((group) => ({
+          label: group.label,
+          rows: group.rows,
         })),
         logo,
         generatedDate: new Intl.DateTimeFormat("it-IT").format(new Date()),
@@ -431,6 +512,50 @@ export default function GelcoatPage() {
               "Impegnati" = kg già prenotati dai battelli in produzione (non ancora
               consegnati al cliente). "Disponibile" = Giacenza − Impegnati: è il
               numero da guardare per sapere quando e quanto riordinare.
+            </p>
+          </>
+        )}
+      </section>
+
+      <section className="gel-card">
+        <div className="gel-card-head">
+          <h2>Fabbisogno per mese di consegna</h2>
+        </div>
+        {monthlyGroups.length === 0 ? (
+          <div className="gel-empty">
+            Nessun kg impegnato al momento (nessun battello in produzione con una
+            ricetta gelcoat configurata).
+          </div>
+        ) : (
+          <>
+            {monthlyGroups.map((group) => (
+              <div key={group.key} className="gel-month-group">
+                <h3>{group.label}</h3>
+                <table className="gel-table">
+                  <thead>
+                    <tr>
+                      <th>Articolo</th>
+                      <th>Kg necessari</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {group.rows.map((row) => (
+                      <tr key={row.description}>
+                        <td>{row.description}</td>
+                        <td>
+                          {row.qty} {row.unit}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+            <p className="gel-hint">
+              Ogni riga è il totale dei kg già impegnati dai battelli con consegna
+              richiesta in quel mese. Il gelcoat va applicato prima della consegna:
+              usa questo elenco per capire con quanto anticipo (es. il mese prima)
+              ti serve avere la scorta pronta.
             </p>
           </>
         )}
@@ -625,6 +750,18 @@ function Styles() {
         text-align: center;
         opacity: 0.55;
         font-size: 14px;
+      }
+      .gel-month-group {
+        margin-top: 16px;
+      }
+      .gel-month-group:first-child {
+        margin-top: 0;
+      }
+      .gel-month-group h3 {
+        margin: 0;
+        font-size: 13px;
+        font-weight: 800;
+        opacity: 0.85;
       }
       .gel-table {
         width: 100%;

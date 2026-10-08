@@ -5,17 +5,21 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../../lib/supabaseClient";
 
 /*
-  MAGAZZINO GELCOAT (STEP 67)
+  MAGAZZINO GELCOAT (STEP 69)
 
-  Per ogni modello battello, colore e parte (scafo o coperta) si indica
-  quale articolo gelcoat usare e quanti kg servono. Quando si inserisce
-  un nuovo battello in produzione (Carena = scafo, Coperta = coperta),
-  il database cerca la ricetta giusta e scarica i kg in automatico
-  dalla giacenza dell'articolo gelcoat scelto qui.
+  Per ogni modello e parte (scafo o coperta) si indica un solo valore in
+  kg, valido per qualsiasi colore. Quando si crea un battello, il
+  database trova da solo l'articolo gelcoat giusto cercando il colore
+  scelto nel battello (Carena/Coperta) tra gli articoli gelcoat: per
+  questo gli articoli devono chiamarsi "Gelcoat <colore>" con <colore>
+  identico al nome colore del battello (es. "Gelcoat 9005" per il
+  colore "9005").
 
-  Questa pagina gestisce solo le ricette. Gli articoli gelcoat (giacenza,
-  scorta minima, prezzo) restano normali articoli di magazzino e si
-  modificano dalla pagina fornitore.
+  Alla creazione del battello i kg vengono solo IMPEGNATI (prenotati):
+  la Giacenza vera non si tocca ancora. Si scala davvero solo quando il
+  battello viene segnato "Consegna cliente" (pagina Produzione) - come
+  gia' succede per il parabrezza. Annullando la consegna, i kg tornano
+  impegnati e la Giacenza torna su.
 */
 
 type GelcoatItem = {
@@ -37,30 +41,22 @@ type Recipe = {
   id: string;
   model_boat: string;
   part: Part;
-  color: string;
-  gelcoat_item_id: string;
   qty_kg: number;
 };
 
-const emptyPartState = { scafo: "", coperta: "" };
-
 export default function GelcoatPage() {
   const [gelcoatItems, setGelcoatItems] = useState<GelcoatItem[]>([]);
+  const [committedByItem, setCommittedByItem] = useState<Map<string, number>>(new Map());
   const [modelOptions, setModelOptions] = useState<OptionRow[]>([]);
-  const [colorOptions, setColorOptions] = useState<OptionRow[]>([]);
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
 
   const [selectedModel, setSelectedModel] = useState("");
-
-  const [newColor, setNewColor] = useState<Record<Part, string>>({ ...emptyPartState });
-  const [newItemId, setNewItemId] = useState<Record<Part, string>>({ ...emptyPartState });
-  const [newQty, setNewQty] = useState<Record<Part, string>>({ ...emptyPartState });
+  const [kgInput, setKgInput] = useState<Record<Part, string>>({ scafo: "", coperta: "" });
   const [savingPart, setSavingPart] = useState<Part | "">("");
-
-  const [busyId, setBusyId] = useState("");
+  const [removingPart, setRemovingPart] = useState<Part | "">("");
 
   useEffect(() => {
     loadData();
@@ -70,7 +66,7 @@ export default function GelcoatPage() {
     setLoading(true);
     setErrorMessage("");
 
-    const [itemsRes, optionsRes, recipesRes] = await Promise.all([
+    const [itemsRes, optionsRes, recipesRes, pendingRes] = await Promise.all([
       supabase
         .from("items")
         .select("id,description,unit,stock,min_stock")
@@ -78,14 +74,18 @@ export default function GelcoatPage() {
         .order("description", { ascending: true }),
       supabase
         .from("production_options")
-        .select("id,option_type,name")
+        .select("id,name")
+        .eq("option_type", "model")
         .eq("active", true)
         .order("name", { ascending: true }),
       supabase
         .from("production_gelcoat_recipes")
-        .select("id,model_boat,part,color,gelcoat_item_id,qty_kg")
-        .order("model_boat", { ascending: true })
-        .order("color", { ascending: true }),
+        .select("id,model_boat,part,qty_kg")
+        .order("model_boat", { ascending: true }),
+      supabase
+        .from("production_boat_gelcoat")
+        .select("gelcoat_item_id,qty_kg")
+        .eq("status", "pending"),
     ]);
 
     if (itemsRes.error) {
@@ -104,26 +104,16 @@ export default function GelcoatPage() {
       }))
     );
 
-    const options = optionsRes.data || [];
-
     setModelOptions(
-      options
-        .filter((row: any) => row.option_type === "model")
-        .map((row: any) => ({ id: String(row.id), name: String(row.name || "") }))
+      (optionsRes.data || []).map((row: any) => ({ id: String(row.id), name: String(row.name || "") }))
     );
 
-    setColorOptions(
-      options
-        .filter((row: any) => row.option_type === "color")
-        .map((row: any) => ({ id: String(row.id), name: String(row.name || "") }))
-    );
-
-    // La tabella dello STEP 67 potrebbe non essere ancora stata creata sul
+    // Le tabelle dello STEP 69 potrebbero non essere ancora state create sul
     // database: in quel caso questa query fallisce da sola, senza bloccare
     // il resto della pagina (si mostra solo un avviso).
     if (recipesRes.error) {
       setErrorMessage(
-        "La tabella delle ricette gelcoat non risulta ancora creata: fai girare STEP67_GELCOAT_RICETTE_E_SCARICO.sql su Supabase, poi ricarica questa pagina."
+        "Le tabelle del magazzino gelcoat non risultano ancora aggiornate: fai girare STEP69_GELCOAT_SEMPLICE_E_SCARICO_ALLA_CONSEGNA.sql su Supabase, poi ricarica questa pagina."
       );
       setLoading(false);
       return;
@@ -134,44 +124,48 @@ export default function GelcoatPage() {
         id: String(row.id),
         model_boat: String(row.model_boat || ""),
         part: row.part === "coperta" ? "coperta" : "scafo",
-        color: String(row.color || ""),
-        gelcoat_item_id: String(row.gelcoat_item_id || ""),
         qty_kg: Number(row.qty_kg || 0),
       }))
     );
 
+    const committed = new Map<string, number>();
+    (pendingRes.data || []).forEach((row: any) => {
+      const itemId = String(row.gelcoat_item_id || "");
+      if (!itemId) return;
+      committed.set(itemId, (committed.get(itemId) || 0) + Number(row.qty_kg || 0));
+    });
+    setCommittedByItem(committed);
+
     setLoading(false);
   }
 
-  const itemMap = useMemo(() => new Map(gelcoatItems.map((item) => [item.id, item])), [gelcoatItems]);
-
-  const recipeCountByModel = useMemo(() => {
-    const counts = new Map<string, number>();
+  const recipesForModel = useMemo(() => {
+    const map = new Map<string, Record<Part, Recipe | undefined>>();
     recipes.forEach((recipe) => {
-      counts.set(recipe.model_boat, (counts.get(recipe.model_boat) || 0) + 1);
+      const current = map.get(recipe.model_boat) || { scafo: undefined, coperta: undefined };
+      current[recipe.part] = recipe;
+      map.set(recipe.model_boat, current);
     });
-    return counts;
+    return map;
   }, [recipes]);
 
-  const recipesForModel = useMemo(
-    () => ({
-      scafo: recipes
-        .filter((recipe) => recipe.model_boat === selectedModel && recipe.part === "scafo")
-        .sort((a, b) => a.color.localeCompare(b.color, "it")),
-      coperta: recipes
-        .filter((recipe) => recipe.model_boat === selectedModel && recipe.part === "coperta")
-        .sort((a, b) => a.color.localeCompare(b.color, "it")),
-    }),
-    [recipes, selectedModel]
-  );
+  const modelsConfiguredCount = useMemo(() => {
+    const models = new Set<string>();
+    recipes.forEach((recipe) => models.add(recipe.model_boat));
+    return models.size;
+  }, [recipes]);
 
-  function resetForm(part: Part) {
-    setNewColor((current) => ({ ...current, [part]: "" }));
-    setNewItemId((current) => ({ ...current, [part]: "" }));
-    setNewQty((current) => ({ ...current, [part]: "" }));
-  }
+  useEffect(() => {
+    const current = recipesForModel.get(selectedModel);
+    setKgInput({
+      scafo: current?.scafo ? String(current.scafo.qty_kg) : "",
+      coperta: current?.coperta ? String(current.coperta.qty_kg) : "",
+    });
+    setMessage("");
+    setErrorMessage("");
+  }, [selectedModel, recipesForModel]);
 
-  async function addRecipe(part: Part) {
+  async function saveRecipe(part: Part) {
     setMessage("");
     setErrorMessage("");
 
@@ -180,18 +174,7 @@ export default function GelcoatPage() {
       return;
     }
 
-    const color = newColor[part];
-    const itemId = newItemId[part];
-    const qty = Number(newQty[part].replace(",", "."));
-
-    if (!color) {
-      setErrorMessage("Seleziona il colore.");
-      return;
-    }
-    if (!itemId) {
-      setErrorMessage("Seleziona l'articolo gelcoat da scaricare.");
-      return;
-    }
+    const qty = Number(kgInput[part].replace(",", "."));
     if (!qty || qty <= 0) {
       setErrorMessage("Inserisci i kg (un numero maggiore di zero).");
       return;
@@ -199,89 +182,51 @@ export default function GelcoatPage() {
 
     setSavingPart(part);
 
-    const { error } = await supabase.from("production_gelcoat_recipes").insert({
-      model_boat: selectedModel,
-      part,
-      color,
-      gelcoat_item_id: itemId,
-      qty_kg: qty,
-    });
+    const existing = recipesForModel.get(selectedModel)?.[part];
+
+    const { error } = existing
+      ? await supabase
+          .from("production_gelcoat_recipes")
+          .update({ qty_kg: qty })
+          .eq("id", existing.id)
+      : await supabase
+          .from("production_gelcoat_recipes")
+          .insert({ model_boat: selectedModel, part, qty_kg: qty });
 
     if (error) {
-      if (error.message.toLowerCase().includes("unique")) {
-        setErrorMessage(
-          `Esiste già una ricetta per ${selectedModel} / ${part === "scafo" ? "Scafo" : "Coperta"} / ${color}: usa "Modifica kg" sulla riga qui sotto invece di crearne una nuova.`
-        );
-      } else {
-        setErrorMessage("Errore salvataggio ricetta: " + error.message);
-      }
+      setErrorMessage("Errore salvataggio: " + error.message);
       setSavingPart("");
       return;
     }
 
-    setMessage("Ricetta aggiunta.");
-    resetForm(part);
+    setMessage("Salvato.");
     setSavingPart("");
     await loadData();
   }
 
-  async function editQty(recipe: Recipe) {
-    const item = itemMap.get(recipe.gelcoat_item_id);
-    const next = window.prompt(
-      `Kg di "${item ? item.description : "gelcoat"}" per fare ${
-        recipe.part === "scafo" ? "lo scafo" : "la coperta"
-      } di ${recipe.model_boat} colore ${recipe.color}:`,
-      String(recipe.qty_kg)
-    );
+  async function removeRecipe(part: Part) {
+    const existing = recipesForModel.get(selectedModel)?.[part];
+    if (!existing) return;
 
-    if (next === null) return;
-
-    const qty = Number(next.replace(",", "."));
-    if (!qty || qty <= 0) {
-      setErrorMessage("Quantità non valida.");
-      return;
-    }
-
-    setBusyId(recipe.id);
-    setMessage("");
-    setErrorMessage("");
-
-    const { error } = await supabase
-      .from("production_gelcoat_recipes")
-      .update({ qty_kg: qty })
-      .eq("id", recipe.id);
-
-    if (error) {
-      setErrorMessage("Errore modifica: " + error.message);
-      setBusyId("");
-      return;
-    }
-
-    setMessage("Quantità aggiornata.");
-    setBusyId("");
-    await loadData();
-  }
-
-  async function removeRecipe(recipe: Recipe) {
     const confirmed = window.confirm(
-      `Eliminare la ricetta ${recipe.model_boat} / ${recipe.part === "scafo" ? "Scafo" : "Coperta"} / ${recipe.color}?`
+      `Rimuovere il valore kg per ${selectedModel} / ${part === "scafo" ? "Scafo" : "Coperta"}?`
     );
     if (!confirmed) return;
 
-    setBusyId(recipe.id);
+    setRemovingPart(part);
     setMessage("");
     setErrorMessage("");
 
-    const { error } = await supabase.from("production_gelcoat_recipes").delete().eq("id", recipe.id);
+    const { error } = await supabase.from("production_gelcoat_recipes").delete().eq("id", existing.id);
 
     if (error) {
       setErrorMessage("Errore eliminazione: " + error.message);
-      setBusyId("");
+      setRemovingPart("");
       return;
     }
 
-    setMessage("Ricetta eliminata.");
-    setBusyId("");
+    setMessage("Rimosso.");
+    setRemovingPart("");
     await loadData();
   }
 
@@ -294,110 +239,47 @@ export default function GelcoatPage() {
     );
   }
 
-  function renderPartSection(part: Part) {
+  function renderPartCard(part: Part) {
     const label = part === "scafo" ? "Scafo" : "Coperta";
-    const rows = recipesForModel[part];
+    const existing = recipesForModel.get(selectedModel)?.[part];
 
     return (
       <section className="gel-card" key={part}>
         <div className="gel-card-head">
           <h2>{label}</h2>
-          <span>{rows.length} color{rows.length === 1 ? "e" : "i"} configurat{rows.length === 1 ? "o" : "i"}</span>
+          {existing && <span>configurato</span>}
         </div>
-
-        {rows.length === 0 ? (
-          <div className="gel-empty">Nessuna ricetta ancora per questa parte.</div>
-        ) : (
-          <table className="gel-table">
-            <thead>
-              <tr>
-                <th>Colore</th>
-                <th>Gelcoat da scaricare</th>
-                <th>Kg</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((recipe) => {
-                const item = itemMap.get(recipe.gelcoat_item_id);
-                return (
-                  <tr key={recipe.id}>
-                    <td>{recipe.color}</td>
-                    <td>{item ? item.description : "Articolo non trovato"}</td>
-                    <td>{recipe.qty_kg} kg</td>
-                    <td className="gel-row-actions">
-                      <button
-                        type="button"
-                        className="gel-link-btn"
-                        onClick={() => editQty(recipe)}
-                        disabled={busyId === recipe.id}
-                      >
-                        Modifica kg
-                      </button>
-                      <button
-                        type="button"
-                        className="gel-remove-btn"
-                        onClick={() => removeRecipe(recipe)}
-                        disabled={busyId === recipe.id}
-                      >
-                        {busyId === recipe.id ? "..." : "Rimuovi"}
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
 
         <div className="gel-form-row">
           <label>
-            Colore
-            <select
-              value={newColor[part]}
-              onChange={(e) => setNewColor((current) => ({ ...current, [part]: e.target.value }))}
-            >
-              <option value="">Seleziona...</option>
-              {colorOptions.map((option) => (
-                <option key={option.id} value={option.name}>
-                  {option.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label style={{ flex: 2 }}>
-            Gelcoat da scaricare
-            <select
-              value={newItemId[part]}
-              onChange={(e) => setNewItemId((current) => ({ ...current, [part]: e.target.value }))}
-            >
-              <option value="">Seleziona...</option>
-              {gelcoatItems.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.description} (giacenza {item.stock} {item.unit})
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Kg
+            Kg (qualsiasi colore)
             <input
               type="text"
               inputMode="decimal"
-              placeholder="es. 18"
-              value={newQty[part]}
-              onChange={(e) => setNewQty((current) => ({ ...current, [part]: e.target.value }))}
-              style={{ width: 90 }}
+              placeholder="es. 20"
+              value={kgInput[part]}
+              onChange={(e) => setKgInput((current) => ({ ...current, [part]: e.target.value }))}
+              style={{ width: 110 }}
             />
           </label>
           <button
             type="button"
             className="gel-btn primary"
-            onClick={() => addRecipe(part)}
+            onClick={() => saveRecipe(part)}
             disabled={savingPart === part}
           >
-            {savingPart === part ? "Salvataggio..." : "+ Aggiungi"}
+            {savingPart === part ? "Salvataggio..." : existing ? "Aggiorna" : "+ Salva"}
           </button>
+          {existing && (
+            <button
+              type="button"
+              className="gel-remove-btn"
+              onClick={() => removeRecipe(part)}
+              disabled={removingPart === part}
+            >
+              {removingPart === part ? "..." : "Rimuovi"}
+            </button>
+          )}
         </div>
       </section>
     );
@@ -410,11 +292,12 @@ export default function GelcoatPage() {
           <div className="gel-eyebrow">CONTROLLO PRODUZIONE</div>
           <h1>Magazzino gelcoat</h1>
           <p>
-            Per ogni modello, colore e parte (scafo o coperta) imposta quanti
-            kg di gelcoat servono e quale articolo scaricare. Da quel momento,
-            ogni volta che inserisci un battello con quel modello e quel
-            colore di Carena/Coperta, i kg vengono scaricati in automatico
-            dalla giacenza dell&apos;articolo gelcoat scelto qui sotto.
+            Per ogni modello imposta quanti kg di gelcoat servono per lo
+            scafo e quanti per la coperta (un valore solo, vale per
+            qualsiasi colore). Quando crei un battello, i kg vengono
+            impegnati in automatico in base al colore scelto; vengono
+            tolti davvero dalla Giacenza solo quando il battello viene
+            segnato come consegnato al cliente.
           </p>
         </div>
         <Link href="/produzione" className="gel-back">
@@ -441,28 +324,47 @@ export default function GelcoatPage() {
             su Supabase, poi ricarica questa pagina.
           </div>
         ) : (
-          <table className="gel-table">
-            <thead>
-              <tr>
-                <th>Articolo</th>
-                <th>Giacenza</th>
-                <th>Scorta minima</th>
-              </tr>
-            </thead>
-            <tbody>
-              {gelcoatItems.map((item) => (
-                <tr key={item.id} className={item.stock <= item.min_stock ? "gel-low" : ""}>
-                  <td>{item.description}</td>
-                  <td>
-                    {item.stock} {item.unit}
-                  </td>
-                  <td>
-                    {item.min_stock} {item.unit}
-                  </td>
+          <>
+            <table className="gel-table">
+              <thead>
+                <tr>
+                  <th>Articolo</th>
+                  <th>Giacenza</th>
+                  <th>Impegnati</th>
+                  <th>Disponibile</th>
+                  <th>Scorta minima</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {gelcoatItems.map((item) => {
+                  const committed = committedByItem.get(item.id) || 0;
+                  const available = item.stock - committed;
+                  return (
+                    <tr key={item.id} className={available <= item.min_stock ? "gel-low" : ""}>
+                      <td>{item.description}</td>
+                      <td>
+                        {item.stock} {item.unit}
+                      </td>
+                      <td>
+                        {committed > 0 ? `${committed} ${item.unit}` : "-"}
+                      </td>
+                      <td>
+                        {available} {item.unit}
+                      </td>
+                      <td>
+                        {item.min_stock} {item.unit}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            <p className="gel-hint">
+              "Impegnati" = kg già prenotati dai battelli in produzione (non ancora
+              consegnati al cliente). "Disponibile" = Giacenza − Impegnati: è il
+              numero da guardare per sapere quando e quanto riordinare.
+            </p>
+          </>
         )}
       </section>
 
@@ -477,16 +379,21 @@ export default function GelcoatPage() {
           {modelOptions.map((option) => (
             <option key={option.id} value={option.name}>
               {option.name}
-              {recipeCountByModel.get(option.name) ? ` (${recipeCountByModel.get(option.name)} ricette)` : ""}
+              {recipesForModel.has(option.name) ? " (configurato)" : ""}
             </option>
           ))}
         </select>
+        {modelsConfiguredCount > 0 && (
+          <p className="gel-hint" style={{ marginTop: 10 }}>
+            {modelsConfiguredCount} modell{modelsConfiguredCount === 1 ? "o" : "i"} con almeno un valore già configurato.
+          </p>
+        )}
       </section>
 
       {selectedModel && (
         <>
-          {renderPartSection("scafo")}
-          {renderPartSection("coperta")}
+          {renderPartCard("scafo")}
+          {renderPartCard("coperta")}
         </>
       )}
 
@@ -587,6 +494,12 @@ function Styles() {
       .gel-stock-link:hover {
         opacity: 0.8;
       }
+      .gel-hint {
+        margin: 10px 0 0;
+        font-size: 11.5px;
+        opacity: 0.55;
+        line-height: 1.5;
+      }
       .gel-model-select {
         margin-top: 8px;
         padding: 9px 10px;
@@ -603,8 +516,6 @@ function Styles() {
         align-items: flex-end;
         flex-wrap: wrap;
         margin-top: 14px;
-        padding-top: 14px;
-        border-top: 1px solid var(--border-color);
       }
       .gel-form-row label {
         display: flex;
@@ -612,11 +523,8 @@ function Styles() {
         gap: 6px;
         font-size: 12px;
         opacity: 0.7;
-        flex: 1;
-        min-width: 160px;
       }
-      .gel-form-row input,
-      .gel-form-row select {
+      .gel-form-row input {
         padding: 9px 10px;
         border-radius: 8px;
         border: 1px solid var(--border-color);
@@ -673,21 +581,6 @@ function Styles() {
         color: #d97706;
         font-weight: 800;
       }
-      .gel-row-actions {
-        display: flex;
-        gap: 12px;
-        justify-content: flex-end;
-        white-space: nowrap;
-      }
-      .gel-link-btn {
-        border: none;
-        background: transparent;
-        color: #3b82f6;
-        font-size: 13px;
-        font-weight: 700;
-        cursor: pointer;
-        white-space: nowrap;
-      }
       .gel-remove-btn {
         border: none;
         background: transparent;
@@ -696,8 +589,7 @@ function Styles() {
         cursor: pointer;
         white-space: nowrap;
       }
-      .gel-remove-btn:disabled,
-      .gel-link-btn:disabled {
+      .gel-remove-btn:disabled {
         opacity: 0.5;
         cursor: not-allowed;
       }

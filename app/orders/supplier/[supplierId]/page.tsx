@@ -587,6 +587,19 @@ export default function SupplierOrderPage() {
       => 800 pezzi da ordinare
     */
     const automaticLines: OrderLine[] = cleanItems
+      .filter((item) => {
+        // Giacenza esattamente uguale alla scorta minima: non e'
+        // una vera carenza, va controllata a mano (vedi badge
+        // arancione "DA CONTROLLARE" nella scheda fornitore) -
+        // non deve mai finire da sola nella bozza automatica,
+        // nemmeno se ci sono richieste battello aperte.
+        const atMinStock =
+          Number(item.min_stock || 0) > 0 &&
+          Number(item.stock || 0) ===
+            Number(item.min_stock || 0);
+
+        return !atMinStock;
+      })
       .map((item) => {
         const missingQtyStock = Math.max(
           0,

@@ -2005,8 +2005,12 @@ export default function SupplierDetail({
                 </tr>
               ) : (
                 filteredItems.map((item) => {
+                  const atMinStock =
+                    item.min_stock > 0 &&
+                    item.stock === item.min_stock;
+
                   const lowStock =
-                    isLowStock(item);
+                    isLowStock(item) && !atMinStock;
 
                   const kitOpen =
                     openKitItemId === item.id;
@@ -2021,6 +2025,8 @@ export default function SupplierDetail({
                         background:
                           lowStock
                             ? "rgba(239, 68, 68, 0.08)"
+                            : atMinStock
+                            ? "rgba(217, 119, 6, 0.08)"
                             : "transparent",
                       }}
                     >
@@ -2610,11 +2616,15 @@ function StockBadge({
   stock: number;
   minStock: number;
 }) {
-  const low =
+  const critical =
     minStock > 0 &&
-    stock <= minStock;
+    stock < minStock;
 
-  if (low) {
+  const atMin =
+    minStock > 0 &&
+    stock === minStock;
+
+  if (critical) {
     return (
       <span
         title={`Scorta minima: ${minStock}`}
@@ -2637,6 +2647,33 @@ function StockBadge({
         }}
       >
         ⚠ {stock}
+      </span>
+    );
+  }
+
+  if (atMin) {
+    return (
+      <span
+        title={`Scorta minima: ${minStock} — da controllare`}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 5,
+
+          padding: "5px 10px",
+
+          borderRadius: 20,
+
+          background:
+            "rgba(217, 119, 6, 0.18)",
+
+          border:
+            "1px solid rgba(217, 119, 6, 0.45)",
+
+          fontWeight: 850,
+        }}
+      >
+        {stock} · DA CONTROLLARE
       </span>
     );
   }

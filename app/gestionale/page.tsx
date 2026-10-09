@@ -64,6 +64,7 @@ const NAV_ITEMS = [
   { label: "Ordini", href: "/orders", icon: "orders" },
   { label: "Movimenti", href: "/movements", icon: "movement" },
   { label: "Scorte", href: "/low-stock-report", icon: "alert" },
+  { label: "Statistiche", href: "/statistiche", icon: "stats" },
   { label: "Fornitori", href: "/suppliers", icon: "users" },
   { label: "Codici", href: "/codici-da-inserire", icon: "barcode" },
   { label: "Promemoria", href: "/promemoria", icon: "bell" },
@@ -1481,6 +1482,7 @@ function NavIcon({ name }: { name: string }) {
   if (name === "orders") return <OrderIcon />;
   if (name === "movement") return <MovementIcon />;
   if (name === "alert") return <AlertIcon />;
+  if (name === "stats") return <StatsIcon />;
   if (name === "users") return <UsersIcon />;
   if (name === "barcode") return <BarcodeIcon />;
   if (name === "bell") return <BellIcon />;
@@ -3474,6 +3476,14 @@ function AlertIcon() {
       <path d="M12 4L21 20H3L12 4Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
       <path d="M12 9V14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
       <circle cx="12" cy="17" r="1" fill="currentColor" />
+    </svg>
+  );
+}
+
+function StatsIcon() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none">
+      <path d="M4 20V10M11 20V4M18 20V13" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }

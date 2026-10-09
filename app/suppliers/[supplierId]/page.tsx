@@ -1433,6 +1433,211 @@ export default function SupplierDetail({
     );
   }
 
+  /*
+    PDF "SCORTE DA CONTROLLARE": stessa tabella del PDF magazziniere
+    qui sopra (stesse colonne, stesso ordinamento scelto), ma solo gli
+    articoli alla scorta minima o sotto - lo stesso filtro di "Solo
+    scorte basse" in tabella, già pronto da stampare per fare
+    l'ordine o il controllo fisico in magazzino.
+  */
+  function generateLowStockPdf() {
+    const lowStockItems =
+      getWarehouseSortedItems().filter(isLowStock);
+
+    if (lowStockItems.length === 0) {
+      alert(
+        "Nessun articolo sotto scorta minima da stampare."
+      );
+      return;
+    }
+
+    const doc = new jsPDF({
+      orientation: "landscape",
+      unit: "mm",
+      format: "a4",
+    });
+
+    const pageHeight =
+      doc.internal.pageSize.getHeight();
+
+    const marginLeft = 14;
+
+    const columns = [
+      { label: "Codice articolo", width: 38 },
+      { label: "Codice scanner", width: 44 },
+      { label: "Descrizione", width: 98 },
+      { label: "U.M.", width: 14 },
+      { label: "Giacenza", width: 28 },
+      { label: "Scorta min.", width: 30 },
+      { label: "In ordine", width: 29 },
+    ];
+
+    const totalTableWidth = columns.reduce(
+      (sum, column) => sum + column.width,
+      0
+    );
+
+    let y = 38;
+
+    function drawHeader() {
+      drawPdfHeader(
+        doc,
+        `SCORTE DA CONTROLLARE - ${supplierName.toUpperCase()}`,
+        `Articoli alla scorta minima o sotto - Ordine: ${getWarehouseSortLabel()}`
+      );
+
+      y = 38;
+
+      doc.setFillColor(235, 235, 235);
+
+      doc.rect(
+        marginLeft,
+        y,
+        totalTableWidth,
+        10,
+        "F"
+      );
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8.5);
+
+      let x = marginLeft;
+
+      columns.forEach((column) => {
+        doc.text(
+          column.label,
+          x + 2,
+          y + 6.3
+        );
+
+        x += column.width;
+      });
+
+      y += 10;
+    }
+
+    function newPage() {
+      doc.addPage();
+      drawHeader();
+    }
+
+    drawHeader();
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.5);
+
+    lowStockItems.forEach((item) => {
+      const descriptionLines =
+        doc.splitTextToSize(
+          item.description || "-",
+          columns[2].width - 4
+        );
+
+      const rowHeight = Math.max(
+        9,
+        descriptionLines.length * 4.3 + 3
+      );
+
+      if (
+        y + rowHeight >
+        pageHeight - 18
+      ) {
+        newPage();
+      }
+
+      doc.setFillColor(255, 242, 242);
+
+      doc.rect(
+        marginLeft,
+        y,
+        totalTableWidth,
+        rowHeight,
+        "F"
+      );
+
+      doc.setDrawColor(215);
+
+      doc.line(
+        marginLeft,
+        y + rowHeight,
+        marginLeft + totalTableWidth,
+        y + rowHeight
+      );
+
+      const values: Array<
+        string | string[]
+      > = [
+        item.supplier_code || "-",
+        item.code || "-",
+        descriptionLines,
+        item.unit || "-",
+        String(item.stock),
+        item.min_stock > 0
+          ? String(item.min_stock)
+          : "-",
+        item.on_order > 0
+          ? String(item.on_order)
+          : "-",
+      ];
+
+      let x = marginLeft;
+
+      values.forEach((value, index) => {
+        if (Array.isArray(value)) {
+          doc.text(
+            value,
+            x + 2,
+            y + 5.2
+          );
+        } else {
+          doc.text(
+            value,
+            x + 2,
+            y + 5.2
+          );
+        }
+
+        x += columns[index].width;
+      });
+
+      y += rowHeight;
+    });
+
+    if (
+      y + 15 >
+      pageHeight - 10
+    ) {
+      doc.addPage();
+
+      drawPdfHeader(
+        doc,
+        `SCORTE DA CONTROLLARE - ${supplierName.toUpperCase()}`,
+        "Riepilogo"
+      );
+
+      y = 42;
+    } else {
+      y += 8;
+    }
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+
+    doc.text(
+      `Articoli da controllare: ${lowStockItems.length}`,
+      marginLeft,
+      y
+    );
+
+    addPageNumbers(doc);
+
+    doc.save(
+      `Magazzino_${safeFileName(
+        supplierName
+      )}_scorte_da_controllare.pdf`
+    );
+  }
+
   function addPageNumbers(doc: jsPDF) {
     const pages = doc.getNumberOfPages();
 
@@ -1611,6 +1816,22 @@ export default function SupplierDetail({
               PDF dettagliato
             </button>
           )}
+
+          <button
+            type="button"
+            onClick={generateLowStockPdf}
+            disabled={loading}
+            title="Stampa solo gli articoli alla scorta minima o sotto"
+            style={{
+              ...lowStockPdfButton,
+              opacity: loading ? 0.5 : 1,
+              cursor: loading
+                ? "not-allowed"
+                : "pointer",
+            }}
+          >
+            PDF scorte da controllare
+          </button>
 
           <Link
             href={`/suppliers/${supplierId}/new-item`}
@@ -2895,6 +3116,24 @@ const detailedPdfButton = {
 
   background:
     "rgba(59,130,246,0.12)",
+
+  color:
+    "var(--foreground)",
+
+  cursor: "pointer",
+  fontWeight: 750,
+};
+
+const lowStockPdfButton = {
+  display: "inline-block",
+  padding: "11px 16px",
+
+  borderRadius: 8,
+  border:
+    "1px solid rgba(239,68,68,0.45)",
+
+  background:
+    "rgba(239,68,68,0.12)",
 
   color:
     "var(--foreground)",

@@ -66,6 +66,18 @@ type UpholsteryOption = {
   name: string;
 };
 
+// Colori teak (STEP 71): un solo gruppo, a differenza dei quattro
+// della tappezzeria, quindi niente "option_type".
+type TeakOption = {
+  id: string;
+  name: string;
+};
+
+const COVERAGE_CHOICES = [
+  { value: "completo", label: "Completo" },
+  { value: "parziale", label: "Parziale" },
+];
+
 type LineVariant = {
   id: string;
   qty: number;
@@ -73,6 +85,9 @@ type LineVariant = {
   details_logos: string;
   stitching: string;
   quilting: string;
+  // Solo per il teak (STEP 71): "parziale" o "completo". Vuota per le
+  // righe di tappezzeria, che non hanno questo concetto.
+  coverage: string;
   note: string;
 };
 
@@ -212,8 +227,16 @@ export default function SupplierOrderPage() {
     details_logos: "",
     stitching: "",
     quilting: "",
+    coverage: "completo",
     note: "",
   });
+
+  // Colori teak (STEP 71): stesso concetto di upholsteryOptions.color
+  // qui sopra, ma un solo gruppo, solo per i fornitori con Gestione
+  // Teak attiva.
+  const [teakColorOptions, setTeakColorOptions] = useState<TeakOption[]>(
+    []
+  );
 
   useEffect(() => {
     loadData();
@@ -263,6 +286,34 @@ export default function SupplierOrderPage() {
 
     loadUpholsteryOptions();
   }, [supplierId, supplier?.upholstery_enabled]);
+
+  useEffect(() => {
+    if (!supplier?.teak_enabled) {
+      setTeakColorOptions([]);
+      return;
+    }
+
+    async function loadTeakOptions() {
+      const { data, error } = await supabase
+        .from("teak_options")
+        .select("id,name,active,sort_order")
+        .eq("supplier_id", supplierId)
+        .eq("active", true)
+        .order("sort_order", { ascending: true })
+        .order("name", { ascending: true });
+
+      if (error) return;
+
+      setTeakColorOptions(
+        (data || []).map((row: any) => ({
+          id: String(row.id),
+          name: String(row.name || ""),
+        }))
+      );
+    }
+
+    loadTeakOptions();
+  }, [supplierId, supplier?.teak_enabled]);
 
   const [openBoatRequests, setOpenBoatRequests] = useState<
     OpenBoatRequest[]
@@ -322,10 +373,13 @@ export default function SupplierOrderPage() {
     setOpenVariantItemId(itemId);
     setVariantDraft({
       qty: "1",
-      color: upholsteryOptions.color[0]?.name || "",
+      color: supplier?.teak_enabled
+        ? teakColorOptions[0]?.name || ""
+        : upholsteryOptions.color[0]?.name || "",
       details_logos: upholsteryOptions.details_logos[0]?.name || "",
       stitching: upholsteryOptions.stitching[0]?.name || "",
       quilting: upholsteryOptions.quilting[0]?.name || "",
+      coverage: "completo",
       note: "",
     });
   }
@@ -335,7 +389,13 @@ export default function SupplierOrderPage() {
   }
 
   function addVariant(itemId: string) {
-    if (
+    // Il teak (STEP 71) ha un solo attributo (colore) + la copertura;
+    // la tappezzeria ne ha quattro. Stessa form, validazione diversa.
+    const isTeak = !!supplier?.teak_enabled;
+
+    if (isTeak) {
+      if (!variantDraft.color || !variantDraft.coverage) return;
+    } else if (
       !variantDraft.color ||
       !variantDraft.details_logos ||
       !variantDraft.stitching ||
@@ -357,9 +417,10 @@ export default function SupplierOrderPage() {
                   id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
                   qty,
                   color: variantDraft.color,
-                  details_logos: variantDraft.details_logos,
-                  stitching: variantDraft.stitching,
-                  quilting: variantDraft.quilting,
+                  details_logos: isTeak ? "" : variantDraft.details_logos,
+                  stitching: isTeak ? "" : variantDraft.stitching,
+                  quilting: isTeak ? "" : variantDraft.quilting,
+                  coverage: isTeak ? variantDraft.coverage : "",
                   note: variantDraft.note.trim(),
                 },
               ],
@@ -472,7 +533,13 @@ export default function SupplierOrderPage() {
     */
     const openRequestVariantsByItem = new Map<
       string,
-      { color: string; details_logos: string; stitching: string; quilting: string }[]
+      {
+        color: string;
+        details_logos: string;
+        stitching: string;
+        quilting: string;
+        coverage: string;
+      }[]
     >();
 
     if (supplierData.upholstery_enabled) {
@@ -498,6 +565,7 @@ export default function SupplierOrderPage() {
           details_logos: String((row as any).details_logos || ""),
           stitching: String((row as any).stitching || ""),
           quilting: String((row as any).quilting || ""),
+          coverage: "",
         });
 
         openRequestVariantsByItem.set(itemId, list);
@@ -537,24 +605,37 @@ export default function SupplierOrderPage() {
 
       Stessa logica della tappezzeria qui sopra: production_boat_teak
       ha una colonna supplier_id propria, quindi filtriamo
-      direttamente per fornitore. Niente colori/variant precompilati
-      sulla riga d'ordine (a differenza della tappezzeria): qui conta
-      solo la quantita', come per il parabrezza.
+      direttamente per fornitore. A differenza del parabrezza, qui
+      precompiliamo anche colore/copertura (come la tappezzeria), cosi'
+      la riga d'ordine arriva gia' con i "colori" da ordinare pronti.
     */
     if (supplierData.teak_enabled) {
       const { data: openTeakData } = await supabase
         .from("production_boat_teak")
-        .select("item_id")
+        .select("item_id,color,coverage")
         .eq("supplier_id", supplierId)
         .is("kit_id", null)
         .is("order_item_id", null);
 
       for (const row of openTeakData || []) {
         const itemId = String((row as any).item_id);
+
         openRequestCounts.set(
           itemId,
           (openRequestCounts.get(itemId) || 0) + 1
         );
+
+        const list = openRequestVariantsByItem.get(itemId) || [];
+
+        list.push({
+          color: String((row as any).color || ""),
+          details_logos: "",
+          stitching: "",
+          quilting: "",
+          coverage: String((row as any).coverage || ""),
+        });
+
+        openRequestVariantsByItem.set(itemId, list);
       }
     }
 
@@ -578,6 +659,7 @@ export default function SupplierOrderPage() {
           request.details_logos,
           request.stitching,
           request.quilting,
+          request.coverage,
         ].join("||");
 
         const existing = groups.get(key);
@@ -596,6 +678,7 @@ export default function SupplierOrderPage() {
         details_logos: group.details_logos,
         stitching: group.stitching,
         quilting: group.quilting,
+        coverage: group.coverage,
         note: "",
       }));
     }
@@ -1202,6 +1285,18 @@ export default function SupplierOrderPage() {
         fields.push({ label: "Trapuntatura", value: variant.quilting });
       }
 
+      if (variant.coverage) {
+        fields.push({
+          label: "Copertura",
+          value:
+            variant.coverage === "completo"
+              ? "Completo"
+              : variant.coverage === "parziale"
+                ? "Parziale"
+                : variant.coverage,
+        });
+      }
+
       if (variant.note) {
         fields.push({ label: "Nota", value: variant.note });
       }
@@ -1774,6 +1869,9 @@ export default function SupplierOrderPage() {
             details_logos: variant.details_logos,
             stitching: variant.stitching,
             quilting: variant.quilting,
+            // Solo righe teak (STEP 71): colonna aggiunta apposta per
+            // questo in order_item_variants, vuota per la tappezzeria.
+            coverage: variant.coverage || null,
             note: variant.note || null,
           }));
         });
@@ -2347,6 +2445,12 @@ export default function SupplierOrderPage() {
                     Per battello
                   </TableHead>
                 )}
+
+                {supplier?.teak_enabled && (
+                  <TableHead>
+                    Colore / copertura
+                  </TableHead>
+                )}
               </tr>
             </thead>
 
@@ -2654,9 +2758,36 @@ export default function SupplierOrderPage() {
                         </select>
                       </TableCell>
                     )}
+
+                    {supplier?.teak_enabled && (
+                      <TableCell>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            openVariantItemId === line.item.id
+                              ? closeVariantEditor()
+                              : openVariantEditor(line.item.id)
+                          }
+                          style={{
+                            padding: "7px 10px",
+                            borderRadius: 7,
+                            border: "1px solid rgba(96,165,250,0.35)",
+                            background: "rgba(59,130,246,0.08)",
+                            color: "#3b82f6",
+                            cursor: "pointer",
+                            fontWeight: 750,
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {line.variants.length > 0
+                            ? `${line.variants.length} colore/i`
+                            : "+ Colore"}
+                        </button>
+                      </TableCell>
+                    )}
                   </tr>
 
-                  {supplier?.upholstery_enabled &&
+                  {(supplier?.upholstery_enabled || supplier?.teak_enabled) &&
                     openVariantItemId === line.item.id && (
                       <tr>
                         <td
@@ -2687,7 +2818,10 @@ export default function SupplierOrderPage() {
                                 }
                               >
                                 <option value="">Seleziona...</option>
-                                {upholsteryOptions.color.map((opt) => (
+                                {(supplier?.teak_enabled
+                                  ? teakColorOptions
+                                  : upholsteryOptions.color
+                                ).map((opt) => (
                                   <option key={opt.id} value={opt.name}>
                                     {opt.name}
                                   </option>
@@ -2695,62 +2829,87 @@ export default function SupplierOrderPage() {
                               </select>
                             </VariantField>
 
-                            <VariantField label="Dettagli e loghi">
-                              <select
-                                value={variantDraft.details_logos}
-                                onChange={(e) =>
-                                  setVariantDraft((c) => ({
-                                    ...c,
-                                    details_logos: e.target.value,
-                                  }))
-                                }
-                              >
-                                <option value="">Seleziona...</option>
-                                {upholsteryOptions.details_logos.map((opt) => (
-                                  <option key={opt.id} value={opt.name}>
-                                    {opt.name}
-                                  </option>
-                                ))}
-                              </select>
-                            </VariantField>
+                            {supplier?.teak_enabled ? (
+                              <VariantField label="Copertura">
+                                <select
+                                  value={variantDraft.coverage}
+                                  onChange={(e) =>
+                                    setVariantDraft((c) => ({
+                                      ...c,
+                                      coverage: e.target.value,
+                                    }))
+                                  }
+                                >
+                                  {COVERAGE_CHOICES.map((choice) => (
+                                    <option
+                                      key={choice.value}
+                                      value={choice.value}
+                                    >
+                                      {choice.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              </VariantField>
+                            ) : (
+                              <>
+                                <VariantField label="Dettagli e loghi">
+                                  <select
+                                    value={variantDraft.details_logos}
+                                    onChange={(e) =>
+                                      setVariantDraft((c) => ({
+                                        ...c,
+                                        details_logos: e.target.value,
+                                      }))
+                                    }
+                                  >
+                                    <option value="">Seleziona...</option>
+                                    {upholsteryOptions.details_logos.map((opt) => (
+                                      <option key={opt.id} value={opt.name}>
+                                        {opt.name}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </VariantField>
 
-                            <VariantField label="Cucitura">
-                              <select
-                                value={variantDraft.stitching}
-                                onChange={(e) =>
-                                  setVariantDraft((c) => ({
-                                    ...c,
-                                    stitching: e.target.value,
-                                  }))
-                                }
-                              >
-                                <option value="">Seleziona...</option>
-                                {upholsteryOptions.stitching.map((opt) => (
-                                  <option key={opt.id} value={opt.name}>
-                                    {opt.name}
-                                  </option>
-                                ))}
-                              </select>
-                            </VariantField>
+                                <VariantField label="Cucitura">
+                                  <select
+                                    value={variantDraft.stitching}
+                                    onChange={(e) =>
+                                      setVariantDraft((c) => ({
+                                        ...c,
+                                        stitching: e.target.value,
+                                      }))
+                                    }
+                                  >
+                                    <option value="">Seleziona...</option>
+                                    {upholsteryOptions.stitching.map((opt) => (
+                                      <option key={opt.id} value={opt.name}>
+                                        {opt.name}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </VariantField>
 
-                            <VariantField label="Trapuntatura">
-                              <select
-                                value={variantDraft.quilting}
-                                onChange={(e) =>
-                                  setVariantDraft((c) => ({
-                                    ...c,
-                                    quilting: e.target.value,
-                                  }))
-                                }
-                              >
-                                <option value="">Seleziona...</option>
-                                {upholsteryOptions.quilting.map((opt) => (
-                                  <option key={opt.id} value={opt.name}>
-                                    {opt.name}
-                                  </option>
-                                ))}
-                              </select>
-                            </VariantField>
+                                <VariantField label="Trapuntatura">
+                                  <select
+                                    value={variantDraft.quilting}
+                                    onChange={(e) =>
+                                      setVariantDraft((c) => ({
+                                        ...c,
+                                        quilting: e.target.value,
+                                      }))
+                                    }
+                                  >
+                                    <option value="">Seleziona...</option>
+                                    {upholsteryOptions.quilting.map((opt) => (
+                                      <option key={opt.id} value={opt.name}>
+                                        {opt.name}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </VariantField>
+                              </>
+                            )}
 
                             <VariantField label="Pezzi">
                               <input
@@ -2829,8 +2988,15 @@ export default function SupplierOrderPage() {
                                   }}
                                 >
                                   <span>
-                                    {variant.color} / {variant.details_logos} /{" "}
-                                    {variant.stitching} / {variant.quilting}
+                                    {supplier?.teak_enabled
+                                      ? `${variant.color} · ${
+                                          variant.coverage === "completo"
+                                            ? "Completo"
+                                            : variant.coverage === "parziale"
+                                              ? "Parziale"
+                                              : variant.coverage
+                                        }`
+                                      : `${variant.color} / ${variant.details_logos} / ${variant.stitching} / ${variant.quilting}`}
                                     {variant.note ? ` — ${variant.note}` : ""}
                                   </span>
                                   <strong>{variant.qty} pz</strong>

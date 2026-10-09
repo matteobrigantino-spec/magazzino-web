@@ -533,6 +533,32 @@ export default function SupplierOrderPage() {
     }
 
     /*
+      RICHIESTE TEAK "DA ORDINARE" (STEP 71)
+
+      Stessa logica della tappezzeria qui sopra: production_boat_teak
+      ha una colonna supplier_id propria, quindi filtriamo
+      direttamente per fornitore. Niente colori/variant precompilati
+      sulla riga d'ordine (a differenza della tappezzeria): qui conta
+      solo la quantita', come per il parabrezza.
+    */
+    if (supplierData.teak_enabled) {
+      const { data: openTeakData } = await supabase
+        .from("production_boat_teak")
+        .select("item_id")
+        .eq("supplier_id", supplierId)
+        .is("kit_id", null)
+        .is("order_item_id", null);
+
+      for (const row of openTeakData || []) {
+        const itemId = String((row as any).item_id);
+        openRequestCounts.set(
+          itemId,
+          (openRequestCounts.get(itemId) || 0) + 1
+        );
+      }
+    }
+
+    /*
       Raggruppa le richieste aperte di un articolo per combinazione
       colore/dettagli/cucitura/trapuntatura, contando quanti pezzi
       servono per ciascuna: diventa la lista "colori" già pronta

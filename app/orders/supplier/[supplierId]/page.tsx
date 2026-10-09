@@ -38,6 +38,7 @@ type Supplier = {
   name: string;
   upholstery_enabled?: boolean;
   windshield_enabled?: boolean;
+  teak_enabled?: boolean;
 };
 
 type Item = {
@@ -151,6 +152,21 @@ const KIT_LINK_TYPES: KitLinkType[] = [
     includeLine: () => true,
     runLink: async (itemId) => {
       await supabase.rpc("sync_windshield_order_links", {
+        p_item_id: itemId,
+      });
+    },
+  },
+  {
+    // Teak (STEP 71): stesso concetto della tappezzeria/parabrezza,
+    // nessuna assegnazione manuale "Per battello" dalla riga d'ordine
+    // (come il parabrezza), quindi prova sempre tutte le righe.
+    key: "teak",
+    label: "teak",
+    isEnabled: (supplier) => !!supplier.teak_enabled,
+    includeLine: () => true,
+    runLink: async (itemId, currentSupplierId) => {
+      await supabase.rpc("sync_teak_order_links", {
+        p_supplier_id: currentSupplierId,
         p_item_id: itemId,
       });
     },
@@ -379,7 +395,7 @@ export default function SupplierOrderPage() {
     const { data: supplierData, error: supplierError } =
       await supabase
         .from("suppliers")
-        .select("id,name,upholstery_enabled,windshield_enabled")
+        .select("id,name,upholstery_enabled,windshield_enabled,teak_enabled")
         .eq("id", supplierId)
         .single();
 

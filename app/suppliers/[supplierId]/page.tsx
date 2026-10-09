@@ -105,6 +105,8 @@ export default function SupplierDetail({
     useState(false);
   const [windshieldEnabled, setWindshieldEnabled] =
     useState(false);
+  const [teakEnabled, setTeakEnabled] =
+    useState(false);
   const [items, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -226,6 +228,18 @@ export default function SupplierDetail({
       setWindshieldEnabled(
         !windshieldError &&
           windshieldRow?.windshield_enabled === true
+      );
+
+      // Stessa query isolata, questa volta per teak_enabled (STEP71).
+      const { data: teakRow, error: teakError } =
+        await supabase
+          .from("suppliers")
+          .select("teak_enabled")
+          .eq("id", supplierId)
+          .maybeSingle();
+
+      setTeakEnabled(
+        !teakError && teakRow?.teak_enabled === true
       );
 
       /*
@@ -1780,6 +1794,94 @@ export default function SupplierDetail({
             }}
           >
             Apri gestione parabrezza →
+          </Link>
+        </section>
+      )}
+
+      {teakEnabled && (
+        <section
+          style={{
+            marginBottom: 20,
+            padding: "18px 20px",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 18,
+            flexWrap: "wrap",
+            border:
+              "1px solid rgba(37,99,235,0.28)",
+            borderRadius: 14,
+            background:
+              "linear-gradient(135deg, rgba(37,99,235,0.10), rgba(59,130,246,0.035))",
+            boxShadow:
+              "0 10px 28px rgba(37,99,235,0.07)",
+          }}
+        >
+          <div
+            style={{
+              minWidth: 0,
+            }}
+          >
+            <div
+              style={{
+                marginBottom: 5,
+                color: "#2563eb",
+                fontSize: 11,
+                fontWeight: 900,
+                letterSpacing: 1.1,
+                textTransform: "uppercase",
+              }}
+            >
+              Fornitore teak
+            </div>
+
+            <div
+              style={{
+                fontSize: 20,
+                fontWeight: 900,
+                lineHeight: 1.2,
+              }}
+            >
+              Gestione Teak
+            </div>
+
+            <div
+              style={{
+                marginTop: 6,
+                maxWidth: 720,
+                color: "var(--muted-foreground, #64748b)",
+                fontSize: 13,
+                lineHeight: 1.55,
+              }}
+            >
+              Gestisci Matricola Kit, colori e copertura
+              (parziale/completo) del teak di coperta senza
+              modificare il normale magazzino.
+            </div>
+          </div>
+
+          <Link
+            href={`/suppliers/${supplierId}/teak`}
+            style={{
+              minHeight: 44,
+              padding: "0 17px",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              border:
+                "1px solid rgba(37,99,235,0.40)",
+              borderRadius: 10,
+              background: "#2563eb",
+              color: "#ffffff",
+              textDecoration: "none",
+              fontSize: 13,
+              fontWeight: 900,
+              whiteSpace: "nowrap",
+              boxShadow:
+                "0 8px 18px rgba(37,99,235,0.20)",
+            }}
+          >
+            Apri gestione teak →
           </Link>
         </section>
       )}

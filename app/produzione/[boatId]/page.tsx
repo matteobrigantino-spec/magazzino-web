@@ -80,6 +80,26 @@ type UpholsteryStockCandidate = {
   quilting: string;
 };
 
+type BoatTeakRequirement = {
+  id: string;
+  supplierId: string;
+  itemId: string;
+  color: string;
+  coverage: string;
+  note: string | null;
+  kitId: string | null;
+  kitMatricola: number | null;
+  openOrderQty: number;
+  requestedDelivery: string | null;
+};
+
+type TeakStockCandidate = {
+  id: string;
+  matricola: number;
+  color: string;
+  coverage: string;
+};
+
 // Solo per lo storico: le voci passate possono ancora avere uno stato
 // intermedio (da quando esisteva), qui mostrato in modo leggibile senza
 // riproporre la scelta manuale nel resto della pagina.
@@ -550,6 +570,348 @@ export default function ProductionBoatDetailPage({
     }
   }
 
+  // Teak di coperta collegato a questo battello: stesso identico
+  // concetto della tappezzeria qui sopra, solo con colore + copertura
+  // (parziale/completo) al posto di colore/dettagli/cucitura/trapuntatura.
+  const [teakRequirements, setTeakRequirements] = useState<
+    BoatTeakRequirement[]
+  >([]);
+  const [teakItemDescriptionById, setTeakItemDescriptionById] = useState<
+    Record<string, string>
+  >({});
+  const [teakSupplierNameById, setTeakSupplierNameById] = useState<
+    Record<string, string>
+  >({});
+
+  const [teakSuppliers, setTeakSuppliers] = useState<
+    { id: string; name: string }[]
+  >([]);
+  const [teakItemLookup, setTeakItemLookup] = useState<
+    { id: string; supplierId: string; description: string }[]
+  >([]);
+  const [teakColorOptions, setTeakColorOptions] = useState<
+    { id: string; supplierId: string; name: string }[]
+  >([]);
+
+  const [showAddTeak, setShowAddTeak] = useState(false);
+  const [newTeakSupplierId, setNewTeakSupplierId] = useState("");
+  const [newTeakItemId, setNewTeakItemId] = useState("");
+  const [newTeakColor, setNewTeakColor] = useState("");
+  const [newTeakCoverage, setNewTeakCoverage] = useState("completo");
+  const [newTeakNote, setNewTeakNote] = useState("");
+  const [teakReqSaving, setTeakReqSaving] = useState(false);
+  const [teakReqError, setTeakReqError] = useState("");
+
+  const [searchingTeakReqId, setSearchingTeakReqId] = useState("");
+  const [teakStockCandidates, setTeakStockCandidates] = useState<
+    TeakStockCandidate[]
+  >([]);
+  const [assigningTeakKitId, setAssigningTeakKitId] = useState("");
+
+  async function loadTeakRequirements() {
+    const { data, error } = await supabase
+      .from("production_boat_teak")
+      .select(
+        "id,supplier_id,item_id,color,coverage,note,kit_id,created_at,teak_kits(matricola,status),order_items(id,qty,received_qty,requested_delivery_date)"
+      )
+      .eq("boat_id", boatId)
+      .order("created_at", { ascending: true });
+
+    if (error || !data) {
+      setTeakRequirements([]);
+      return;
+    }
+
+    const rows: BoatTeakRequirement[] = (data as any[]).map((row) => {
+      // La richiesta ha al massimo UNA riga d'ordine collegata
+      // (production_boat_teak.order_item_id): piu' richieste possono
+      // pero' condividere la stessa riga d'ordine se la sua quantita'
+      // copre piu' battelli (stesso meccanismo della tappezzeria).
+      const orderLine = row.order_items || null;
+      const isOpen =
+        orderLine &&
+        Number(orderLine.qty || 0) > Number(orderLine.received_qty || 0);
+
+      return {
+        id: String(row.id),
+        supplierId: String(row.supplier_id),
+        itemId: String(row.item_id),
+        color: String(row.color || ""),
+        coverage: String(row.coverage || ""),
+        note: row.note ? String(row.note) : null,
+        kitId: row.kit_id ? String(row.kit_id) : null,
+        kitMatricola: row.teak_kits ? Number(row.teak_kits.matricola) : null,
+        openOrderQty: isOpen
+          ? Number(orderLine.qty || 0) - Number(orderLine.received_qty || 0)
+          : 0,
+        requestedDelivery: isOpen
+          ? orderLine.requested_delivery_date || null
+          : null,
+      };
+    });
+
+    setTeakRequirements(rows);
+
+    const itemIds = Array.from(new Set(rows.map((row) => row.itemId)));
+    const supplierIds = Array.from(
+      new Set(rows.map((row) => row.supplierId))
+    );
+
+    if (itemIds.length > 0) {
+      const { data: itemRows } = await supabase
+        .from("items")
+        .select("id,description")
+        .in("id", itemIds);
+
+      const map: Record<string, string> = {};
+      (itemRows || []).forEach((item: any) => {
+        map[String(item.id)] = String(item.description || "");
+      });
+      setTeakItemDescriptionById(map);
+    }
+
+    if (supplierIds.length > 0) {
+      const { data: supplierRows } = await supabase
+        .from("suppliers")
+        .select("id,name")
+        .in("id", supplierIds);
+
+      const map: Record<string, string> = {};
+      (supplierRows || []).forEach((row: any) => {
+        map[String(row.id)] = String(row.name || "");
+      });
+      setTeakSupplierNameById(map);
+    }
+  }
+
+  async function loadTeakCatalog() {
+    const { data: supplierRows } = await supabase
+      .from("suppliers")
+      .select("id,name")
+      .eq("teak_enabled", true)
+      .order("name", { ascending: true });
+
+    const suppliers = (supplierRows || []).map((row: any) => ({
+      id: String(row.id),
+      name: String(row.name || ""),
+    }));
+
+    setTeakSuppliers(suppliers);
+
+    const supplierIds = suppliers.map((supplier) => supplier.id);
+
+    if (supplierIds.length === 0) {
+      setTeakItemLookup([]);
+      setTeakColorOptions([]);
+      return;
+    }
+
+    const [itemsRes, optionsRes] = await Promise.all([
+      supabase
+        .from("items")
+        .select("id,supplier_id,description")
+        .in("supplier_id", supplierIds)
+        .order("description", { ascending: true }),
+      supabase
+        .from("teak_options")
+        .select("id,supplier_id,name")
+        .in("supplier_id", supplierIds)
+        .eq("active", true)
+        .order("sort_order", { ascending: true })
+        .order("name", { ascending: true }),
+    ]);
+
+    setTeakItemLookup(
+      (itemsRes.data || []).map((row: any) => ({
+        id: String(row.id),
+        supplierId: String(row.supplier_id),
+        description: String(row.description || ""),
+      }))
+    );
+
+    setTeakColorOptions(
+      (optionsRes.data || []).map((row: any) => ({
+        id: String(row.id),
+        supplierId: String(row.supplier_id),
+        name: String(row.name || ""),
+      }))
+    );
+  }
+
+  function teakItemsFor(supplierId: string) {
+    return teakItemLookup.filter((item) => item.supplierId === supplierId);
+  }
+
+  function teakColorsFor(supplierId: string) {
+    return teakColorOptions.filter(
+      (option) => option.supplierId === supplierId
+    );
+  }
+
+  function openAddTeak() {
+    setTeakReqError("");
+    setNewTeakSupplierId(teakSuppliers[0]?.id || "");
+    setNewTeakItemId("");
+    setNewTeakColor("");
+    setNewTeakCoverage("completo");
+    setNewTeakNote("");
+    setShowAddTeak(true);
+  }
+
+  async function addTeakRequirement() {
+    setTeakReqError("");
+
+    if (
+      !newTeakSupplierId ||
+      !newTeakItemId ||
+      !newTeakColor ||
+      !newTeakCoverage
+    ) {
+      setTeakReqError("Compila fornitore, articolo, colore e copertura.");
+      return;
+    }
+
+    setTeakReqSaving(true);
+
+    const { data: inserted, error } = await supabase
+      .from("production_boat_teak")
+      .insert({
+        boat_id: boatId,
+        supplier_id: newTeakSupplierId,
+        item_id: newTeakItemId,
+        color: newTeakColor,
+        coverage: newTeakCoverage,
+        note: newTeakNote.trim() || null,
+      })
+      .select("id")
+      .single();
+
+    if (error || !inserted) {
+      setTeakReqError("Errore salvataggio: " + (error?.message || ""));
+      setTeakReqSaving(false);
+      return;
+    }
+
+    const { data: stockMatch } = await supabase
+      .from("teak_kits")
+      .select("id")
+      .eq("supplier_id", newTeakSupplierId)
+      .eq("item_id", newTeakItemId)
+      .eq("status", "stock")
+      .eq("color", newTeakColor)
+      .eq("coverage", newTeakCoverage)
+      .limit(1)
+      .maybeSingle();
+
+    if (stockMatch?.id) {
+      // Un kit identico è già in giacenza: va al battello con la
+      // consegna richiesta più vicina tra tutti quelli in attesa
+      // dello stesso articolo (non necessariamente questo appena
+      // inserito).
+      try {
+        await supabase.rpc("assign_stock_kit_by_priority_teak", {
+          p_kit_id: stockMatch.id,
+        });
+      } catch (priorityError) {
+        console.error(
+          "Errore assegnazione automatica kit in giacenza:",
+          priorityError
+        );
+      }
+    } else {
+      // Nessun kit identico già in giacenza: prova ad abbinare in
+      // automatico una riga d'ordine già aperta per lo stesso
+      // fornitore + articolo (in base alla consegna richiesta più
+      // vicina tra tutti i battelli in attesa).
+      try {
+        await supabase.rpc("sync_teak_order_links", {
+          p_supplier_id: newTeakSupplierId,
+          p_item_id: newTeakItemId,
+        });
+      } catch (syncError) {
+        console.error("Errore abbinamento automatico teak:", syncError);
+      }
+    }
+
+    setShowAddTeak(false);
+    setTeakReqSaving(false);
+    await loadTeakRequirements();
+  }
+
+  async function deleteTeakRequirement(requirementId: string) {
+    const confirmed = confirm("Eliminare questa richiesta teak?");
+
+    if (!confirmed) return;
+
+    const { error } = await supabase
+      .from("production_boat_teak")
+      .delete()
+      .eq("id", requirementId);
+
+    if (!error) {
+      await loadTeakRequirements();
+    }
+  }
+
+  async function searchTeakStockFor(requirement: BoatTeakRequirement) {
+    setSearchingTeakReqId(requirement.id);
+    setTeakStockCandidates([]);
+
+    const { data } = await supabase
+      .from("teak_kits")
+      .select("id,matricola,color,coverage")
+      .eq("supplier_id", requirement.supplierId)
+      .eq("item_id", requirement.itemId)
+      .eq("status", "stock")
+      .order("matricola", { ascending: true });
+
+    setTeakStockCandidates(
+      (data || []).map((row: any) => ({
+        id: String(row.id),
+        matricola: Number(row.matricola),
+        color: String(row.color || ""),
+        coverage: String(row.coverage || ""),
+      }))
+    );
+  }
+
+  function closeTeakStockSearch() {
+    setSearchingTeakReqId("");
+    setTeakStockCandidates([]);
+  }
+
+  async function assignTeakCandidate(requirementId: string, kitId: string) {
+    setAssigningTeakKitId(kitId);
+
+    const { error } = await supabase.rpc("assign_teak_kit_to_boat", {
+      p_kit_id: kitId,
+      p_boat_teak_id: requirementId,
+    });
+
+    setAssigningTeakKitId("");
+
+    if (!error) {
+      closeTeakStockSearch();
+      await loadTeakRequirements();
+    }
+  }
+
+  async function unassignTeakRequirement(kitId: string) {
+    const confirmed = confirm(
+      "Annullare l'assegnazione? Il kit torna in giacenza."
+    );
+
+    if (!confirmed) return;
+
+    const { error } = await supabase.rpc("unassign_teak_kit_from_boat", {
+      p_kit_id: kitId,
+    });
+
+    if (!error) {
+      await loadTeakRequirements();
+    }
+  }
+
   // Barra di avanzamento a step: un tap sul reparto attuale apre questo
   // pannellino per aggiungere una nota o completare il reparto, senza
   // uscire dalla scheda.
@@ -562,6 +924,8 @@ export default function ProductionBoatDetailPage({
     loadData();
     loadUpholsteryRequirements();
     loadUpholsteryCatalog();
+    loadTeakRequirements();
+    loadTeakCatalog();
     loadBomSections();
   }, [boatId]);
 
@@ -1554,6 +1918,263 @@ export default function ProductionBoatDetailPage({
                 disabled={reqSaving}
               >
                 {reqSaving ? "Salvataggio..." : "Salva tappezzeria"}
+              </button>
+            </div>
+          </div>
+        )}
+      </section>
+
+      <section className="pbd-card">
+        <div className="pbd-head">
+          <div>
+            <div className="pbd-eyebrow">TEAK</div>
+            <h2>Stato teak</h2>
+          </div>
+
+          <button
+            type="button"
+            className="pbd-edit-btn"
+            onClick={openAddTeak}
+            disabled={teakSuppliers.length === 0}
+          >
+            + Aggiungi teak
+          </button>
+        </div>
+
+        {teakRequirements.length === 0 && !showAddTeak && (
+          <div className="pbd-note">
+            Nessun teak collegato a questo battello.
+          </div>
+        )}
+
+        {teakRequirements.map((requirement) => {
+          const statusLabelText = requirement.kitId
+            ? "ASSEGNATA"
+            : requirement.openOrderQty > 0
+            ? "IN ORDINE"
+            : "DA ORDINARE";
+
+          const statusClass = requirement.kitId
+            ? "assigned"
+            : requirement.openOrderQty > 0
+            ? "ordered"
+            : "toorder";
+
+          return (
+            <div key={requirement.id} className="pbd-upholstery-row">
+              <div className="pbd-upholstery-main">
+                <div>
+                  <strong>
+                    {teakItemDescriptionById[requirement.itemId] ||
+                      "Articolo"}
+                  </strong>
+                  <span className="pbd-upholstery-supplier">
+                    {teakSupplierNameById[requirement.supplierId] || ""}
+                  </span>
+                </div>
+
+                <div className="pbd-upholstery-details">
+                  {requirement.color} ·{" "}
+                  {requirement.coverage === "parziale"
+                    ? "Parziale"
+                    : "Completo"}
+                </div>
+
+                {requirement.note && (
+                  <div className="pbd-upholstery-note">
+                    {requirement.note}
+                  </div>
+                )}
+              </div>
+
+              <div className="pbd-upholstery-status">
+                <span className={`pbd-uph-badge ${statusClass}`}>
+                  {statusLabelText}
+                </span>
+
+                {requirement.kitId && (
+                  <>
+                    <span className="pbd-upholstery-info">
+                      Matricola #{requirement.kitMatricola}
+                    </span>
+                    <button
+                      type="button"
+                      className="pbd-btn-link"
+                      onClick={() =>
+                        unassignTeakRequirement(requirement.kitId as string)
+                      }
+                    >
+                      Annulla assegnazione
+                    </button>
+                  </>
+                )}
+
+                {!requirement.kitId && requirement.openOrderQty > 0 && (
+                  <span className="pbd-upholstery-info">
+                    {requirement.requestedDelivery
+                      ? `Consegna richiesta: ${formatDate(
+                          requirement.requestedDelivery
+                        )}`
+                      : "Nessuna data di consegna indicata"}
+                  </span>
+                )}
+
+                {!requirement.kitId && requirement.openOrderQty === 0 && (
+                  <div className="pbd-upholstery-actions">
+                    <button
+                      type="button"
+                      className="pbd-btn-link"
+                      onClick={() => searchTeakStockFor(requirement)}
+                    >
+                      Cerca in giacenza
+                    </button>
+                    <button
+                      type="button"
+                      className="pbd-btn-link danger"
+                      onClick={() =>
+                        deleteTeakRequirement(requirement.id)
+                      }
+                    >
+                      Elimina
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {searchingTeakReqId === requirement.id && (
+                <div className="pbd-upholstery-search">
+                  {teakStockCandidates.length === 0 ? (
+                    <div className="pbd-upholstery-note">
+                      Nessun kit di questo articolo in giacenza.
+                    </div>
+                  ) : (
+                    teakStockCandidates.map((candidate) => (
+                      <div
+                        key={candidate.id}
+                        className="pbd-upholstery-candidate"
+                      >
+                        <span>
+                          #{candidate.matricola} — {candidate.color} ·{" "}
+                          {candidate.coverage === "parziale"
+                            ? "Parziale"
+                            : "Completo"}
+                        </span>
+                        <button
+                          type="button"
+                          className="pbd-btn-link"
+                          disabled={assigningTeakKitId === candidate.id}
+                          onClick={() =>
+                            assignTeakCandidate(requirement.id, candidate.id)
+                          }
+                        >
+                          {assigningTeakKitId === candidate.id
+                            ? "Assegno..."
+                            : "Assegna"}
+                        </button>
+                      </div>
+                    ))
+                  )}
+
+                  <button
+                    type="button"
+                    className="pbd-btn-link"
+                    onClick={closeTeakStockSearch}
+                  >
+                    Chiudi
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {showAddTeak && (
+          <div className="pbd-upholstery-add">
+            {teakReqError && (
+              <div className="pbd-form-error">{teakReqError}</div>
+            )}
+
+            <div className="pbd-form-grid">
+              <EditField label="Fornitore">
+                <select
+                  value={newTeakSupplierId}
+                  onChange={(e) => {
+                    setNewTeakSupplierId(e.target.value);
+                    setNewTeakItemId("");
+                    setNewTeakColor("");
+                  }}
+                >
+                  {teakSuppliers.map((supplier) => (
+                    <option key={supplier.id} value={supplier.id}>
+                      {supplier.name}
+                    </option>
+                  ))}
+                </select>
+              </EditField>
+
+              <EditField label="Articolo">
+                <select
+                  value={newTeakItemId}
+                  onChange={(e) => setNewTeakItemId(e.target.value)}
+                >
+                  <option value="">Seleziona articolo...</option>
+                  {teakItemsFor(newTeakSupplierId).map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.description}
+                    </option>
+                  ))}
+                </select>
+              </EditField>
+
+              <EditField label="Colore">
+                <select
+                  value={newTeakColor}
+                  onChange={(e) => setNewTeakColor(e.target.value)}
+                >
+                  <option value="">Seleziona...</option>
+                  {teakColorsFor(newTeakSupplierId).map((option) => (
+                    <option key={option.id} value={option.name}>
+                      {option.name}
+                    </option>
+                  ))}
+                </select>
+              </EditField>
+
+              <EditField label="Copertura">
+                <select
+                  value={newTeakCoverage}
+                  onChange={(e) => setNewTeakCoverage(e.target.value)}
+                >
+                  <option value="completo">Completo</option>
+                  <option value="parziale">Parziale</option>
+                </select>
+              </EditField>
+
+              <EditField label="Nota" wide>
+                <input
+                  value={newTeakNote}
+                  onChange={(e) => setNewTeakNote(e.target.value)}
+                  placeholder="Facoltativa"
+                />
+              </EditField>
+            </div>
+
+            <div className="pbd-form-actions">
+              <button
+                type="button"
+                className="pbd-back"
+                onClick={() => setShowAddTeak(false)}
+                disabled={teakReqSaving}
+              >
+                Annulla
+              </button>
+              <button
+                type="button"
+                className="pbd-save-btn"
+                onClick={addTeakRequirement}
+                disabled={teakReqSaving}
+              >
+                {teakReqSaving ? "Salvataggio..." : "Salva teak"}
               </button>
             </div>
           </div>

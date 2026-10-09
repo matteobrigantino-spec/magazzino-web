@@ -122,6 +122,11 @@ export default function ProductionPage() {
   const [upholsteryPdfBusy, setUpholsteryPdfBusy] = useState(false);
   const [upholsteryPdfError, setUpholsteryPdfError] = useState("");
 
+  // PDF "Stato Teak" (STEP 71): stesso concetto dello stato tappezzerie,
+  // ma sulle richieste di production_boat_teak.
+  const [teakPdfBusy, setTeakPdfBusy] = useState(false);
+  const [teakPdfError, setTeakPdfError] = useState("");
+
   // PDF riepilogo "battelli con articoli mancanti" (STEP 39): stesso
   // calcolo usato nella scheda del singolo battello, ma su tutta la
   // produzione insieme.
@@ -296,6 +301,128 @@ export default function ProductionPage() {
       );
     } finally {
       setUpholsteryPdfBusy(false);
+    }
+  }
+
+  async function downloadTeakStatusPdf() {
+    setTeakPdfError("");
+    setTeakPdfBusy(true);
+
+    try {
+      if (!pdfLogo) {
+        throw new Error("Carica il logo aziendale prima di scaricare il PDF.");
+      }
+
+      const { data, error } = await supabase
+        .from("production_boat_teak")
+        .select(
+          "id,item_id,color,coverage,kit_id,created_at,production_boats(order_number,model_boat,requested_delivery_date),teak_kits(matricola),order_items(qty,received_qty,requested_delivery_date)"
+        )
+        .order("created_at", { ascending: true });
+
+      if (error) throw error;
+
+      const requirementRows = (data || []) as any[];
+
+      if (requirementRows.length === 0) {
+        throw new Error("Non ci sono ancora richieste di teak collegate a nessun battello.");
+      }
+
+      const itemIds = Array.from(
+        new Set(requirementRows.map((row) => String(row.item_id)))
+      );
+
+      let itemDescriptionById: Record<string, string> = {};
+
+      if (itemIds.length > 0) {
+        const { data: itemRows } = await supabase
+          .from("items")
+          .select("id,description")
+          .in("id", itemIds);
+
+        (itemRows || []).forEach((item: any) => {
+          itemDescriptionById[String(item.id)] = String(item.description || "");
+        });
+      }
+
+      const collator = new Intl.Collator("it", { numeric: true, sensitivity: "base" });
+
+      const { buildTeakStatusPdf } = await import("../../lib/productionPdf");
+
+      const rows = requirementRows
+        .map((row) => {
+          // Al massimo una riga d'ordine collegata per richiesta
+          // (production_boat_teak.order_item_id), stesso concetto della
+          // tappezzeria (STEP 71 -> STEP 23).
+          const orderLine = row.order_items || null;
+          const isOpen =
+            orderLine &&
+            Number(orderLine.qty || 0) > Number(orderLine.received_qty || 0);
+
+          const kitMatricola = row.teak_kits
+            ? Number(row.teak_kits.matricola)
+            : null;
+
+          const status: "assegnata" | "ordine" | "da_ordinare" = row.kit_id
+            ? "assegnata"
+            : isOpen
+              ? "ordine"
+              : "da_ordinare";
+
+          const statusInfo =
+            status === "assegnata"
+              ? kitMatricola
+                ? `Kit N. ${kitMatricola}`
+                : "Kit assegnato"
+              : status === "ordine"
+                ? orderLine.requested_delivery_date
+                  ? `Consegna richiesta: ${formatItDate(String(orderLine.requested_delivery_date))}`
+                  : "In ordine dal fornitore"
+                : "-";
+
+          const coverageLabel =
+            row.coverage === "completo"
+              ? "Completo"
+              : row.coverage === "parziale"
+                ? "Parziale"
+                : String(row.coverage || "");
+
+          return {
+            boatOrderNumber: String(row.production_boats?.order_number || "-"),
+            boatModel: String(row.production_boats?.model_boat || "-"),
+            boatDeliveryDate: row.production_boats?.requested_delivery_date
+              ? String(row.production_boats.requested_delivery_date)
+              : null,
+            itemDescription: itemDescriptionById[String(row.item_id)] || "-",
+            color: String(row.color || ""),
+            coverage: coverageLabel,
+            status,
+            statusInfo,
+          };
+        })
+        // Stesso ordine di stampa della tappezzeria: prima le consegne piu'
+        // vicine (chi non ha una data di consegna richiesta va in fondo),
+        // poi per N. ordine.
+        .sort((a, b) => {
+          if (a.boatDeliveryDate && b.boatDeliveryDate) {
+            if (a.boatDeliveryDate !== b.boatDeliveryDate) {
+              return a.boatDeliveryDate < b.boatDeliveryDate ? -1 : 1;
+            }
+          } else if (a.boatDeliveryDate || b.boatDeliveryDate) {
+            return a.boatDeliveryDate ? -1 : 1;
+          }
+          return collator.compare(a.boatOrderNumber, b.boatOrderNumber);
+        });
+
+      const doc = buildTeakStatusPdf(rows, pdfLogo, formatItDate(todayInputValue()));
+
+      await doc.save("stato_teak_battelli.pdf", { returnPromise: true });
+    } catch (error) {
+      setTeakPdfError(
+        error instanceof Error ? error.message : "Impossibile creare il PDF. Riprova."
+      );
+    } finally {
+      setTeakPdfBusy(false);
     }
   }
 
@@ -1739,6 +1866,14 @@ export default function ProductionPage() {
             <button
               type="button"
               className="prod-btn primary"
+              onClick={downloadTeakStatusPdf}
+              disabled={teakPdfBusy || pdfLogoLoading || !pdfLogo}
+            >
+              {teakPdfBusy ? "Creazione PDF..." : "Stato Teak"}
+            </button>
+            <button
+              type="button"
+              className="prod-btn primary"
               onClick={downloadMissingArticlesSummaryPdf}
               disabled={missingSummaryPdfBusy || pdfLogoLoading || !pdfLogo}
             >
@@ -1757,6 +1892,11 @@ export default function ProductionPage() {
         {upholsteryPdfError && (
           <div role="alert" className="prod-message error">
             {upholsteryPdfError}
+          </div>
+        )}
+        {teakPdfError && (
+          <div role="alert" className="prod-message error">
+            {teakPdfError}
           </div>
         )}
 

@@ -470,6 +470,188 @@ export function buildUpholsteryStatusPdf(
 }
 
 // ============================================================
+// STATO TEAK BATTELLI (STEP 71)
+//
+// Stesso concetto di STATO TAPPEZZERIE BATTELLI qui sopra, ma sulle
+// richieste di production_boat_teak: una riga per ogni richiesta di
+// teak di un battello. Al posto di Colore/Dettagli/Cuciture/
+// Trapuntatura c'e' solo Colore + Copertura (parziale/completo).
+// ============================================================
+
+export type TeakStatusRow = {
+  boatOrderNumber: string;
+  boatModel: string;
+  itemDescription: string;
+  color: string;
+  coverage: string;
+  status: "assegnata" | "ordine" | "da_ordinare";
+  statusInfo: string;
+};
+
+export function buildTeakStatusPdf(
+  rows: TeakStatusRow[],
+  logo: string,
+  generatedDate: string
+) {
+  if (!rows.length) throw new Error("Nessun teak da elencare.");
+
+  const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+  doc.setProperties({
+    title: "Stato Teak battelli",
+    subject: "Report teak battelli",
+  });
+
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const margin = 14;
+  const tableWidth = pageWidth - margin * 2;
+
+  const columns = [
+    { key: "order", label: "N. ORDINE", width: 24 },
+    { key: "model", label: "MODELLO", width: 38 },
+    { key: "item", label: "ARTICOLO TEAK", width: 60 },
+    { key: "details", label: "COLORE / COPERTURA", width: 70 },
+    { key: "status", label: "STATO", width: 30 },
+    { key: "info", label: "INFO", width: tableWidth - (24 + 38 + 60 + 70 + 30) },
+  ];
+
+  function statusColor(status: TeakStatusRow["status"]): [number, number, number] {
+    if (status === "assegnata") return [22, 163, 74];
+    if (status === "ordine") return [37, 99, 235];
+    return [217, 119, 6];
+  }
+
+  function statusLabel(status: TeakStatusRow["status"]) {
+    if (status === "assegnata") return "ASSEGNATA";
+    if (status === "ordine") return "IN ORDINE";
+    return "DA ORDINARE";
+  }
+
+  function drawHeader() {
+    drawCompanyLogoTopRight(doc, logo);
+
+    doc.setTextColor(0, 0, 0);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.text("STATO TEAK BATTELLI", margin, 16);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9.5);
+    doc.setTextColor(120, 120, 120);
+    doc.text(`Report al ${generatedDate}`, margin, 22);
+    doc.setTextColor(0, 0, 0);
+
+    doc.setDrawColor(200);
+    doc.setLineWidth(0.3);
+    doc.line(margin, 26, pageWidth - margin, 26);
+
+    const headingY = 33;
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.5);
+    doc.setTextColor(110, 110, 110);
+
+    let x = margin;
+    columns.forEach((column) => {
+      doc.text(column.label, x, headingY);
+      x += column.width;
+    });
+
+    doc.setTextColor(0, 0, 0);
+    doc.setDrawColor(225);
+    doc.setLineWidth(0.25);
+    doc.line(margin, headingY + 2.5, pageWidth - margin, headingY + 2.5);
+
+    return headingY + 8;
+  }
+
+  let y = drawHeader();
+  let previousBoatKey = "";
+
+  rows.forEach((row) => {
+    const boatKey = row.boatOrderNumber;
+    const sameBoatAsPrevious = boatKey === previousBoatKey && boatKey !== "";
+    previousBoatKey = boatKey;
+
+    const detailsText = [row.color, row.coverage].filter(Boolean).join(" · ");
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+
+    const itemLines = doc.splitTextToSize(row.itemDescription || "-", columns[2].width - 4);
+    const detailsLines = doc.splitTextToSize(detailsText || "-", columns[3].width - 4);
+    const infoLines = doc.splitTextToSize(row.statusInfo || "-", columns[5].width - 4);
+
+    const maxLines = Math.max(itemLines.length, detailsLines.length, infoLines.length, 1);
+    const rowHeight = Math.max(8, maxLines * 4.2 + 3);
+
+    if (y + rowHeight > pageHeight - 16) {
+      doc.addPage();
+      y = drawHeader();
+    }
+
+    let x = margin;
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.setTextColor(0, 0, 0);
+
+    if (!sameBoatAsPrevious) {
+      doc.text(row.boatOrderNumber || "-", x, y + 4.7);
+    }
+    x += columns[0].width;
+
+    if (!sameBoatAsPrevious) {
+      doc.text(row.boatModel || "-", x, y + 4.7);
+    }
+    x += columns[1].width;
+
+    doc.setFont("helvetica", "normal");
+    doc.text(itemLines, x, y + 4.7);
+    x += columns[2].width;
+
+    doc.setTextColor(110, 110, 110);
+    doc.text(detailsLines, x, y + 4.7);
+    doc.setTextColor(0, 0, 0);
+    x += columns[3].width;
+
+    const [r, g, b] = statusColor(row.status);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8);
+    doc.setTextColor(r, g, b);
+    doc.text(statusLabel(row.status), x, y + 4.7);
+    doc.setTextColor(0, 0, 0);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    x += columns[4].width;
+
+    doc.setTextColor(90, 90, 90);
+    doc.text(infoLines, x, y + 4.7);
+    doc.setTextColor(0, 0, 0);
+
+    doc.setDrawColor(240);
+    doc.setLineWidth(0.15);
+    doc.line(margin, y + rowHeight, pageWidth - margin, y + rowHeight);
+    doc.setLineWidth(0.2);
+
+    y += rowHeight + 1;
+  });
+
+  const totalPages = doc.getNumberOfPages();
+  for (let page = 1; page <= totalPages; page++) {
+    doc.setPage(page);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(130, 130, 130);
+    doc.text(`Pagina ${page} di ${totalPages}`, pageWidth - margin, pageHeight - 8, {
+      align: "right",
+    });
+  }
+
+  return doc;
+}
+
+// ============================================================
 // PROGRAMMA DI REPARTO (Verniciatura resina, Tubolari, ecc.)
 //
 // Stessa tabella "da spuntare a mano" di sempre - Prog./N. ordine/

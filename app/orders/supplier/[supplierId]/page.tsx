@@ -204,6 +204,11 @@ export default function SupplierOrderPage() {
   const [showAddItems, setShowAddItems] = useState(false);
   const [search, setSearch] = useState("");
 
+  // Il PDF dell'ordine mostra prezzo unitario, totale riga e totale
+  // ordine solo se questa opzione e' attiva (es. per stampare una
+  // copia interna senza i prezzi, senza toccare il resto del flusso).
+  const [showPricesInPdf, setShowPricesInPdf] = useState(true);
+
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState<
     "success" | "error" | ""
@@ -925,7 +930,8 @@ export default function SupplierOrderPage() {
   async function createOrderPdf(
     orderId: string,
     orderLines: OrderLine[],
-    orderNumber: number | null
+    orderNumber: number | null,
+    showPrices: boolean
   ) {
     if (!supplier) {
       throw new Error("Fornitore non disponibile");
@@ -1006,7 +1012,9 @@ export default function SupplierOrderPage() {
       {
         key: "description",
         label: "Descrizione",
-        frac: 0.33,
+        // Senza prezzo/totale, la descrizione riprende lo spazio
+        // libero (0.33 + 0.11 + 0.11) invece di lasciarlo vuoto.
+        frac: showPrices ? 0.33 : 0.55,
         align: "left" as const,
       },
       {
@@ -1016,13 +1024,22 @@ export default function SupplierOrderPage() {
         align: "center" as const,
       },
       { key: "qty", label: "Q.tà", frac: 0.09, align: "right" as const },
-      {
-        key: "price",
-        label: "Prezzo unit.",
-        frac: 0.11,
-        align: "right" as const,
-      },
-      { key: "total", label: "Totale", frac: 0.11, align: "right" as const },
+      ...(showPrices
+        ? [
+            {
+              key: "price",
+              label: "Prezzo unit.",
+              frac: 0.11,
+              align: "right" as const,
+            },
+            {
+              key: "total",
+              label: "Totale",
+              frac: 0.11,
+              align: "right" as const,
+            },
+          ]
+        : []),
     ];
 
     const colX: Record<string, number> = {};
@@ -1544,27 +1561,29 @@ export default function SupplierOrderPage() {
         );
       }
 
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(8.2);
-      setInk(MUTED);
+      if (showPrices) {
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(8.2);
+        setInk(MUTED);
 
-      doc.text(
-        formatPdfEuro(line.item.price),
-        colX.price + colW.price - cellPad,
-        rowTextTop,
-        { align: "right" }
-      );
+        doc.text(
+          formatPdfEuro(line.item.price),
+          colX.price + colW.price - cellPad,
+          rowTextTop,
+          { align: "right" }
+        );
 
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(8.6);
-      setInk(INK);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8.6);
+        setInk(INK);
 
-      doc.text(
-        formatPdfEuro(lineTotal),
-        colX.total + colW.total - cellPad,
-        rowTextTop,
-        { align: "right" }
-      );
+        doc.text(
+          formatPdfEuro(lineTotal),
+          colX.total + colW.total - cellPad,
+          rowTextTop,
+          { align: "right" }
+        );
+      }
 
       y = rowTop + rowHeight;
 
@@ -1584,44 +1603,46 @@ export default function SupplierOrderPage() {
 
     y += 8;
 
-    setDraw(INK);
-    doc.setLineWidth(0.45);
+    if (showPrices) {
+      setDraw(INK);
+      doc.setLineWidth(0.45);
 
-    const totalLineWidth = 78;
+      const totalLineWidth = 78;
 
-    doc.line(
-      pageWidth - marginRight - totalLineWidth,
-      y,
-      pageWidth - marginRight,
-      y
-    );
+      doc.line(
+        pageWidth - marginRight - totalLineWidth,
+        y,
+        pageWidth - marginRight,
+        y
+      );
 
-    doc.setLineWidth(0.2);
+      doc.setLineWidth(0.2);
 
-    y += 6;
+      y += 6;
 
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8.6);
-    setInk(MUTED);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8.6);
+      setInk(MUTED);
 
-    doc.text(
-      "Importo totale ordine, IVA escl.",
-      pageWidth - marginRight - totalLineWidth,
-      y
-    );
+      doc.text(
+        "Importo totale ordine, IVA escl.",
+        pageWidth - marginRight - totalLineWidth,
+        y
+      );
 
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(12);
-    setInk(INK);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(12);
+      setInk(INK);
 
-    doc.text(
-      formatPdfEuro(totalOrder, true),
-      pageWidth - marginRight,
-      y,
-      { align: "right" }
-    );
+      doc.text(
+        formatPdfEuro(totalOrder, true),
+        pageWidth - marginRight,
+        y,
+        { align: "right" }
+      );
 
-    y += 12;
+      y += 12;
+    }
 
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8.6);
@@ -1986,7 +2007,8 @@ export default function SupplierOrderPage() {
         await createOrderPdf(
           orderId,
           lines,
-          orderNumber
+          orderNumber,
+          showPricesInPdf
         );
 
       const pdfBlob =
@@ -3287,6 +3309,28 @@ export default function SupplierOrderPage() {
             per ogni articolo nella tabella qui sopra
             (facoltativa).
           </div>
+
+          <label
+            style={{
+              marginTop: 14,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              fontSize: 13,
+              fontWeight: 700,
+              cursor: "pointer",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={showPricesInPdf}
+              onChange={(e) =>
+                setShowPricesInPdf(e.target.checked)
+              }
+              style={{ width: 16, height: 16, cursor: "pointer" }}
+            />
+            Mostra prezzi nel PDF dell&apos;ordine
+          </label>
         </div>
 
         <button

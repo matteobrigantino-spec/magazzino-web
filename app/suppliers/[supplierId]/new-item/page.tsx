@@ -159,6 +159,16 @@ export default function NewItemPage({
         );
       } else if (anySynced) {
         setMsg("✓ Articoli in attesa inviati al gestionale.");
+      } else if (toSend.length > 0) {
+        // Prima non si vedeva nulla quando l'invio falliva per tutti
+        // gli articoli in coda: restava il banner "in attesa" senza
+        // nessun messaggio, anche con connessione presente (es. la
+        // funzione sync_pwa_new_items_batch mancante sul database).
+        setMsg(
+          `⚠ Invio non riuscito, articoli ancora salvati sul telefono${
+            lastError ? " (" + lastError + ")" : ""
+          }. Verrà ritentato automaticamente.`
+        );
       }
     } finally {
       syncingRef.current = false;

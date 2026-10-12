@@ -278,6 +278,28 @@ export default function NewItemPage({
       return;
     }
 
+    // Il codice scanner deve essere unico in tutto il catalogo (vincolo
+    // del database): se e' gia' usato da un altro articolo, l'avviso
+    // qui evita un salvataggio che altrimenti fallisce in silenzio
+    // (specialmente quando l'articolo finisce in coda offline).
+    if (typeof navigator === "undefined" || navigator.onLine) {
+      const { data: existingCode, error: existingCodeError } =
+        await supabase
+          .from("items")
+          .select("id,description")
+          .eq("code", trimmedScannerCode)
+          .maybeSingle();
+
+      if (!existingCodeError && existingCode) {
+        setMsg(
+          `Il codice scanner "${trimmedScannerCode}" è già usato da un altro articolo (${
+            existingCode.description || "senza descrizione"
+          }). Usa un codice diverso.`
+        );
+        return;
+      }
+    }
+
     setSaving(true);
 
     const itemPayload: PendingNewItem = {

@@ -89,6 +89,11 @@ type LineVariant = {
   // righe di tappezzeria, che non hanno questo concetto.
   coverage: string;
   note: string;
+  // Consegna richiesta per questo singolo colore: se diversa da quella
+  // degli altri colori dello stesso articolo, nel PDF questo colore
+  // diventa una riga separata con la sua data (vedi createOrderPdf).
+  // Vuota = usa la consegna generale della riga (line.requestedDelivery).
+  requestedDelivery: string;
 };
 
 type OrderLine = {
@@ -241,6 +246,7 @@ function groupRequestsIntoVariants(
     quilting: group.variant.quilting,
     coverage: group.variant.coverage,
     note: "",
+    requestedDelivery: "",
   }));
 }
 
@@ -299,6 +305,7 @@ export default function SupplierOrderPage() {
     quilting: "",
     coverage: "completo",
     note: "",
+    requestedDelivery: "",
   });
 
   // Colori teak (STEP 71): stesso concetto di upholsteryOptions.color
@@ -451,6 +458,7 @@ export default function SupplierOrderPage() {
       quilting: upholsteryOptions.quilting[0]?.name || "",
       coverage: "completo",
       note: "",
+      requestedDelivery: "",
     });
   }
 
@@ -492,6 +500,7 @@ export default function SupplierOrderPage() {
                   quilting: isTeak ? "" : variantDraft.quilting,
                   coverage: isTeak ? variantDraft.coverage : "",
                   note: variantDraft.note.trim(),
+                  requestedDelivery: variantDraft.requestedDelivery,
                 },
               ],
             }
@@ -509,6 +518,29 @@ export default function SupplierOrderPage() {
           ? {
               ...line,
               variants: line.variants.filter((v) => v.id !== variantId),
+            }
+          : line
+      )
+    );
+  }
+
+  // Consegna richiesta per un singolo colore (vedi LineVariant.
+  // requestedDelivery): editabile anche dopo averlo aggiunto, perché i
+  // colori precompilati dalle richieste battello aperte partono senza
+  // data.
+  function changeVariantDelivery(
+    itemId: string,
+    variantId: string,
+    value: string
+  ) {
+    setLines((current) =>
+      current.map((line) =>
+        line.item.id === itemId
+          ? {
+              ...line,
+              variants: line.variants.map((v) =>
+                v.id === variantId ? { ...v, requestedDelivery: value } : v
+              ),
             }
           : line
       )
@@ -1186,9 +1218,18 @@ export default function SupplierOrderPage() {
       setInk(INK);
       doc.text(supplier!.name, leftX, topY + 5);
 
+      // Considera sia la consegna generale di ogni riga sia quella dei
+      // singoli colori (se impostata): basta una data diversa da
+      // qualsiasi parte perché l'intestazione rimandi alle righe sotto.
       const deliveryDates = Array.from(
         new Set(
-          orderLines.map((line) => line.requestedDelivery).filter(Boolean)
+          orderLines.flatMap((line) =>
+            line.variants.length > 0
+              ? line.variants.map(
+                  (variant) => variant.requestedDelivery || line.requestedDelivery
+                )
+              : [line.requestedDelivery]
+          ).filter(Boolean)
         )
       );
 
@@ -1463,11 +1504,77 @@ export default function SupplierOrderPage() {
     y = drawRecipientAndMeta(y);
     y = drawTableHeader(y);
 
+    // Il totale ordine resta sempre calcolato sulle righe reali
+    // (quantità effettivamente ordinata/registrata su order_items),
+    // indipendentemente da come vengono poi suddivise in stampa.
     let totalOrder = 0;
 
-    orderLines.forEach((line, index) => {
-      const lineTotal = Number(line.qty || 0) * Number(line.item.price || 0);
-      totalOrder += lineTotal;
+    orderLines.forEach((line) => {
+      totalOrder += Number(line.qty || 0) * Number(line.item.price || 0);
+    });
+
+    type PrintRow = {
+      item: Item;
+      qty: number;
+      variants: LineVariant[];
+      requestedDelivery: string;
+    };
+
+    /*
+      RIGHE STAMPATE
+
+      Un articolo con più colori diventa più righe separate nel PDF,
+      una per colore, ognuna con la propria consegna richiesta (vuota
+      = usa quella generale della riga) - cosi' il fornitore vede
+      subito quali pezzi vanno consegnati quando, invece di dover
+      decifrare più date dentro la stessa riga.
+
+      Se la somma dei colori non copre tutta la quantità della riga
+      (es. scorta generica oltre alle richieste aperte), i pezzi
+      restanti finiscono su una riga propria senza colore, cosi' la
+      quantità stampata torna sempre a coincidere con quella
+      dell'ordine.
+    */
+    const printRows: PrintRow[] = orderLines.flatMap((line) => {
+      if (line.variants.length === 0) {
+        return [
+          {
+            item: line.item,
+            qty: line.qty,
+            variants: [] as LineVariant[],
+            requestedDelivery: line.requestedDelivery,
+          },
+        ];
+      }
+
+      const rows: PrintRow[] = line.variants.map((variant) => ({
+        item: line.item,
+        qty: variant.qty,
+        variants: [variant],
+        requestedDelivery: variant.requestedDelivery || line.requestedDelivery,
+      }));
+
+      const variantsQty = line.variants.reduce(
+        (sum, variant) => sum + Number(variant.qty || 0),
+        0
+      );
+
+      const leftoverQty = Math.max(0, Number(line.qty || 0) - variantsQty);
+
+      if (leftoverQty > 0) {
+        rows.push({
+          item: line.item,
+          qty: leftoverQty,
+          variants: [],
+          requestedDelivery: line.requestedDelivery,
+        });
+      }
+
+      return rows;
+    });
+
+    printRows.forEach((row, index) => {
+      const rowTotal = Number(row.qty || 0) * Number(row.item.price || 0);
 
       const descMaxWidth = colW.description - 2 * cellPad;
 
@@ -1475,11 +1582,11 @@ export default function SupplierOrderPage() {
       doc.setFontSize(8.6);
 
       const descriptionLines = doc.splitTextToSize(
-        line.item.description || "-",
+        row.item.description || "-",
         descMaxWidth
       );
 
-      const variantLayouts = line.variants.map((variant) =>
+      const variantLayouts = row.variants.map((variant) =>
         layoutVariantCard(variant)
       );
 
@@ -1491,9 +1598,9 @@ export default function SupplierOrderPage() {
         0
       );
 
-      const lineBoxQty = Math.max(1, Number(line.item.box_qty || 1));
+      const lineBoxQty = Math.max(1, Number(row.item.box_qty || 1));
       const hasBoxQty = lineBoxQty > 1;
-      const lineBoxes = Math.ceil(Number(line.qty || 0) / lineBoxQty);
+      const lineBoxes = Math.ceil(Number(row.qty || 0) / lineBoxQty);
 
       const rowHeight = Math.max(
         rowMinH,
@@ -1528,7 +1635,7 @@ export default function SupplierOrderPage() {
         align: "center",
       });
 
-      const code = line.item.supplier_code || "-";
+      const code = row.item.supplier_code || "-";
       const codeSize = fitFontSize(
         code,
         8.2,
@@ -1546,13 +1653,13 @@ export default function SupplierOrderPage() {
       setInk(INK);
       doc.text(descriptionLines, colX.description + cellPad, rowTextTop);
 
-      if (line.requestedDelivery) {
+      if (row.requestedDelivery) {
         doc.setFont("helvetica", "normal");
         doc.setFontSize(8.2);
         setInk(MUTED);
 
         doc.text(
-          formatDateForPdf(parseDateInputValue(line.requestedDelivery)),
+          formatDateForPdf(parseDateInputValue(row.requestedDelivery)),
           colX.consegna + colW.consegna / 2,
           rowTextTop,
           { align: "center" }
@@ -1562,7 +1669,7 @@ export default function SupplierOrderPage() {
       if (variantLayouts.length > 0) {
         let cardY = rowTop + rowVPad + descriptionLines.length * descLineH + variantsTopGap;
 
-        line.variants.forEach((variant, i) => {
+        row.variants.forEach((variant, i) => {
           const layout = variantLayouts[i];
 
           drawVariantCard(
@@ -1571,7 +1678,7 @@ export default function SupplierOrderPage() {
             variant,
             layout,
             i,
-            line.variants.length
+            row.variants.length
           );
 
           cardY += layout.height + VARIANT_CARD_GAP;
@@ -1583,7 +1690,7 @@ export default function SupplierOrderPage() {
       setInk(INK);
 
       doc.text(
-        String(line.qty),
+        String(row.qty),
         colX.qty + colW.qty - cellPad,
         rowTextTop,
         { align: "right" }
@@ -1608,7 +1715,7 @@ export default function SupplierOrderPage() {
         setInk(MUTED);
 
         doc.text(
-          formatPdfEuro(line.item.price),
+          formatPdfEuro(row.item.price),
           colX.price + colW.price - cellPad,
           rowTextTop,
           { align: "right" }
@@ -1619,7 +1726,7 @@ export default function SupplierOrderPage() {
         setInk(INK);
 
         doc.text(
-          formatPdfEuro(lineTotal),
+          formatPdfEuro(rowTotal),
           colX.total + colW.total - cellPad,
           rowTextTop,
           { align: "right" }
@@ -1935,6 +2042,9 @@ export default function SupplierOrderPage() {
             // questo in order_item_variants, vuota per la tappezzeria.
             coverage: variant.coverage || null,
             note: variant.note || null,
+            // Consegna richiesta per questo singolo colore (vuota =
+            // usa quella della riga, già salvata su order_items sotto).
+            requested_delivery_date: variant.requestedDelivery || null,
           }));
         });
 
@@ -2112,12 +2222,19 @@ export default function SupplierOrderPage() {
         SALVIAMO URL E PATH NELL'ORDINE
 
         requested_delivery_date sull'ordine resta come riepilogo
-        (la consegna più vicina tra le righe), usato nella lista
-        ordini: la data vera, per articolo, è su order_items.
+        (la consegna più vicina tra tutte le righe E tutti i colori),
+        usato nella lista ordini: la data vera, per articolo/colore, è
+        su order_items/order_item_variants.
       */
-      const earliestDelivery = linesWithDelivery
-        .map((line) => line.requestedDelivery)
-        .sort()[0] || null;
+      const earliestDelivery =
+        lines
+          .flatMap((line) =>
+            line.variants.length > 0
+              ? line.variants.map((variant) => variant.requestedDelivery)
+              : [line.requestedDelivery]
+          )
+          .filter(Boolean)
+          .sort()[0] || null;
 
       const {
         error: pdfUpdateError,
@@ -2990,6 +3107,20 @@ export default function SupplierOrderPage() {
                               />
                             </VariantField>
 
+                            <VariantField label="Consegna richiesta (facoltativa)">
+                              <input
+                                type="date"
+                                value={variantDraft.requestedDelivery}
+                                onChange={(e) =>
+                                  setVariantDraft((c) => ({
+                                    ...c,
+                                    requestedDelivery: e.target.value,
+                                  }))
+                                }
+                                style={{ width: 140 }}
+                              />
+                            </VariantField>
+
                             <VariantField label="Nota (facoltativa)">
                               <input
                                 value={variantDraft.note}
@@ -3063,13 +3194,34 @@ export default function SupplierOrderPage() {
                                     {variant.note ? ` — ${variant.note}` : ""}
                                   </span>
                                   <strong>{variant.qty} pz</strong>
+                                  <input
+                                    type="date"
+                                    value={variant.requestedDelivery}
+                                    onChange={(e) =>
+                                      changeVariantDelivery(
+                                        line.item.id,
+                                        variant.id,
+                                        e.target.value
+                                      )
+                                    }
+                                    title="Consegna richiesta per questo colore (vuota = usa quella della riga)"
+                                    style={{
+                                      marginLeft: "auto",
+                                      minHeight: 28,
+                                      padding: "0 6px",
+                                      borderRadius: 6,
+                                      border: "1px solid var(--border-color)",
+                                      background: "var(--input-bg)",
+                                      color: "var(--foreground)",
+                                      fontSize: 11,
+                                    }}
+                                  />
                                   <button
                                     type="button"
                                     onClick={() =>
                                       removeVariant(line.item.id, variant.id)
                                     }
                                     style={{
-                                      marginLeft: "auto",
                                       padding: "4px 9px",
                                       borderRadius: 6,
                                       border:

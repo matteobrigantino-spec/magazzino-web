@@ -99,6 +99,17 @@ type OrderLine = {
   boatUpholsteryId: string;
 };
 
+// Colore/dettagli/cucitura/trapuntatura (o copertura, per il teak) di
+// una singola richiesta battello ancora "da ordinare", prima di
+// essere raggruppata per combinazione in un LineVariant.
+type RequestVariant = {
+  color: string;
+  details_logos: string;
+  stitching: string;
+  quilting: string;
+  coverage: string;
+};
+
 type OpenBoatRequest = {
   id: string;
   itemId: string;
@@ -188,6 +199,51 @@ const KIT_LINK_TYPES: KitLinkType[] = [
   },
 ];
 
+// Raggruppa le richieste aperte di un articolo (viste in loadData, da
+// production_boat_upholstery/production_boat_teak) per combinazione
+// colore/dettagli/cucitura/trapuntatura (o copertura, per il teak),
+// contando quanti pezzi servono per ciascuna: diventa la lista
+// "colori" già pronta sulla riga d'ordine. Funzione condivisa: la usa
+// sia la bozza automatica (buildVariantsFromRequests dentro loadData)
+// sia "+ Aggiungi articolo" (addItem qui sotto), cosi' un articolo
+// aggiunto a mano con richieste battello ancora "da ordinare" arriva
+// gia' con i "colori" pronti, senza doverli reinserire con "+Colore".
+function groupRequestsIntoVariants(
+  itemId: string,
+  requests: RequestVariant[]
+): LineVariant[] {
+  const groups = new Map<string, { qty: number; variant: RequestVariant }>();
+
+  for (const request of requests) {
+    const key = [
+      request.color,
+      request.details_logos,
+      request.stitching,
+      request.quilting,
+      request.coverage,
+    ].join("||");
+
+    const existing = groups.get(key);
+
+    if (existing) {
+      existing.qty += 1;
+    } else {
+      groups.set(key, { qty: 1, variant: request });
+    }
+  }
+
+  return Array.from(groups.values()).map((group, index) => ({
+    id: `open-${itemId}-${index}-${Date.now()}`,
+    qty: group.qty,
+    color: group.variant.color,
+    details_logos: group.variant.details_logos,
+    stitching: group.variant.stitching,
+    quilting: group.variant.quilting,
+    coverage: group.variant.coverage,
+    note: "",
+  }));
+}
+
 export default function SupplierOrderPage() {
   const params = useParams();
   const router = useRouter();
@@ -208,6 +264,15 @@ export default function SupplierOrderPage() {
   // ordine solo se questa opzione e' attiva (es. per stampare una
   // copia interna senza i prezzi, senza toccare il resto del flusso).
   const [showPricesInPdf, setShowPricesInPdf] = useState(true);
+
+  // Richieste battello ancora "da ordinare" per articolo (caricate da
+  // loadData), usate per precompilare da sole i "colori" quando un
+  // articolo con richieste aperte viene aggiunto all'ordine - sia
+  // nella bozza automatica sia con "+ Aggiungi articolo" qui sotto -
+  // cosi' non vanno mai reinseriti a mano.
+  const [openRequestVariantsByItem, setOpenRequestVariantsByItem] = useState<
+    Map<string, RequestVariant[]>
+  >(new Map());
 
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState<
@@ -536,16 +601,7 @@ export default function SupplierOrderPage() {
       mano con "+ Colore"), così il fornitore vede subito quanti pezzi
       per ciascun colore senza doverli riselezionare uno per uno.
     */
-    const openRequestVariantsByItem = new Map<
-      string,
-      {
-        color: string;
-        details_logos: string;
-        stitching: string;
-        quilting: string;
-        coverage: string;
-      }[]
-    >();
+    const openRequestVariantsByItem = new Map<string, RequestVariant[]>();
 
     if (supplierData.upholstery_enabled) {
       const { data: openReqData } = await supabase
@@ -644,48 +700,15 @@ export default function SupplierOrderPage() {
       }
     }
 
-    /*
-      Raggruppa le richieste aperte di un articolo per combinazione
-      colore/dettagli/cucitura/trapuntatura, contando quanti pezzi
-      servono per ciascuna: diventa la lista "colori" già pronta
-      sulla riga d'ordine.
-    */
+    // Raggruppa le richieste aperte di un articolo per combinazione
+    // colore/dettagli/cucitura/trapuntatura (funzione condivisa, vedi
+    // groupRequestsIntoVariants piu' sotto: la usa anche "+ Aggiungi
+    // articolo" per gli articoli aggiunti a mano).
     function buildVariantsFromRequests(itemId: string): LineVariant[] {
-      const requests = openRequestVariantsByItem.get(itemId) || [];
-
-      const groups = new Map<
-        string,
-        { qty: number } & Omit<LineVariant, "id" | "qty" | "note">
-      >();
-
-      for (const request of requests) {
-        const key = [
-          request.color,
-          request.details_logos,
-          request.stitching,
-          request.quilting,
-          request.coverage,
-        ].join("||");
-
-        const existing = groups.get(key);
-
-        if (existing) {
-          existing.qty += 1;
-        } else {
-          groups.set(key, { qty: 1, ...request });
-        }
-      }
-
-      return Array.from(groups.values()).map((group, index) => ({
-        id: `auto-${itemId}-${index}-${Date.now()}`,
-        qty: group.qty,
-        color: group.color,
-        details_logos: group.details_logos,
-        stitching: group.stitching,
-        quilting: group.quilting,
-        coverage: group.coverage,
-        note: "",
-      }));
+      return groupRequestsIntoVariants(
+        itemId,
+        openRequestVariantsByItem.get(itemId) || []
+      );
     }
 
     /*
@@ -772,6 +795,7 @@ export default function SupplierOrderPage() {
     setSupplier(supplierData);
     setItems(cleanItems);
     setLines(automaticLines);
+    setOpenRequestVariantsByItem(openRequestVariantsByItem);
     setLoading(false);
   }
 
@@ -888,15 +912,32 @@ export default function SupplierOrderPage() {
         return current;
       }
 
+      // Se questo articolo ha richieste battello ancora "da ordinare"
+      // (tappezzeria/teak), precompiliamo subito i "colori" - niente
+      // da reinserire a mano con "+Colore" - e la quantità coperta
+      // da quelle richieste, arrotondata al box intero come fa la
+      // bozza automatica.
+      const variants = groupRequestsIntoVariants(
+        item.id,
+        openRequestVariantsByItem.get(item.id) || []
+      );
+
+      const openRequestsQty = variants.reduce(
+        (sum, variant) => sum + Number(variant.qty || 0),
+        0
+      );
+
+      const boxQty = Math.max(1, Number(item.box_qty || 1));
+
+      const boxesNeeded =
+        openRequestsQty > 0 ? Math.ceil(openRequestsQty / boxQty) : 1;
+
       return [
         ...current,
         {
           item,
-          qty: Math.max(
-            1,
-            Number(item.box_qty || 1)
-          ),
-          variants: [],
+          qty: boxesNeeded * boxQty,
+          variants,
           requestedDelivery: "",
           boatUpholsteryId: "",
         },

@@ -254,7 +254,7 @@ export default function ProductionBoatDetailPage({
     const { data, error } = await supabase
       .from("production_boat_upholstery")
       .select(
-        "id,supplier_id,item_id,color,details_logos,stitching,quilting,note,kit_id,created_at,upholstery_kits(matricola,status),order_items(id,qty,received_qty,requested_delivery_date)"
+        "id,supplier_id,item_id,color,details_logos,stitching,quilting,note,kit_id,created_at,upholstery_kits(matricola,status),order_items(id,qty,received_qty,requested_delivery_date,order_item_variants(color,details_logos,stitching,quilting,requested_delivery_date))"
       )
       .eq("boat_id", boatId)
       .order("created_at", { ascending: true });
@@ -274,6 +274,24 @@ export default function ProductionBoatDetailPage({
         orderLine &&
         Number(orderLine.qty || 0) > Number(orderLine.received_qty || 0);
 
+      // La consegna richiesta puo' essere stata messa sul singolo
+      // colore (order_item_variants, stesso colore/dettagli/cucitura/
+      // trapuntatura di questa richiesta) invece che su tutta la riga:
+      // in quel caso vale quella, non quella generale della riga.
+      const matchingVariant = (orderLine?.order_item_variants || []).find(
+        (variant: any) =>
+          String(variant.color || "") === String(row.color || "") &&
+          String(variant.details_logos || "") ===
+            String(row.details_logos || "") &&
+          String(variant.stitching || "") === String(row.stitching || "") &&
+          String(variant.quilting || "") === String(row.quilting || "")
+      );
+
+      const orderDeliveryDate =
+        matchingVariant?.requested_delivery_date ||
+        orderLine?.requested_delivery_date ||
+        null;
+
       return {
         id: String(row.id),
         supplierId: String(row.supplier_id),
@@ -290,9 +308,7 @@ export default function ProductionBoatDetailPage({
         openOrderQty: isOpen
           ? Number(orderLine.qty || 0) - Number(orderLine.received_qty || 0)
           : 0,
-        requestedDelivery: isOpen
-          ? orderLine.requested_delivery_date || null
-          : null,
+        requestedDelivery: isOpen ? orderDeliveryDate : null,
       };
     });
 
@@ -622,7 +638,7 @@ export default function ProductionBoatDetailPage({
     const { data, error } = await supabase
       .from("production_boat_teak")
       .select(
-        "id,supplier_id,item_id,color,coverage,note,kit_id,created_at,teak_kits(matricola,status),order_items(id,qty,received_qty,requested_delivery_date)"
+        "id,supplier_id,item_id,color,coverage,note,kit_id,created_at,teak_kits(matricola,status),order_items(id,qty,received_qty,requested_delivery_date,order_item_variants(color,coverage,requested_delivery_date))"
       )
       .eq("boat_id", boatId)
       .order("created_at", { ascending: true });
@@ -642,6 +658,19 @@ export default function ProductionBoatDetailPage({
         orderLine &&
         Number(orderLine.qty || 0) > Number(orderLine.received_qty || 0);
 
+      // Stesso discorso della tappezzeria: la consegna puo' essere
+      // stata messa sul singolo colore invece che su tutta la riga.
+      const matchingVariant = (orderLine?.order_item_variants || []).find(
+        (variant: any) =>
+          String(variant.color || "") === String(row.color || "") &&
+          String(variant.coverage || "") === String(row.coverage || "")
+      );
+
+      const orderDeliveryDate =
+        matchingVariant?.requested_delivery_date ||
+        orderLine?.requested_delivery_date ||
+        null;
+
       return {
         id: String(row.id),
         supplierId: String(row.supplier_id),
@@ -654,9 +683,7 @@ export default function ProductionBoatDetailPage({
         openOrderQty: isOpen
           ? Number(orderLine.qty || 0) - Number(orderLine.received_qty || 0)
           : 0,
-        requestedDelivery: isOpen
-          ? orderLine.requested_delivery_date || null
-          : null,
+        requestedDelivery: isOpen ? orderDeliveryDate : null,
       };
     });
 

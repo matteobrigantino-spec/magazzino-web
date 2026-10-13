@@ -199,7 +199,7 @@ export default function ProductionPage() {
       const { data, error } = await supabase
         .from("production_boat_upholstery")
         .select(
-          "id,item_id,color,details_logos,stitching,quilting,kit_id,created_at,production_boats(order_number,model_boat,requested_delivery_date),upholstery_kits(matricola),order_items(qty,received_qty,requested_delivery_date)"
+          "id,item_id,color,details_logos,stitching,quilting,kit_id,created_at,production_boats(order_number,model_boat,requested_delivery_date),upholstery_kits(matricola),order_items(qty,received_qty,requested_delivery_date,order_item_variants(color,details_logos,stitching,quilting,requested_delivery_date))"
         )
         .order("created_at", { ascending: true });
 
@@ -243,6 +243,23 @@ export default function ProductionPage() {
             orderLine &&
             Number(orderLine.qty || 0) > Number(orderLine.received_qty || 0);
 
+          // La consegna puo' essere stata messa sul singolo colore
+          // (order_item_variants) invece che su tutta la riga d'ordine:
+          // in quel caso vale quella.
+          const matchingVariant = (orderLine?.order_item_variants || []).find(
+            (variant: any) =>
+              String(variant.color || "") === String(row.color || "") &&
+              String(variant.details_logos || "") ===
+                String(row.details_logos || "") &&
+              String(variant.stitching || "") === String(row.stitching || "") &&
+              String(variant.quilting || "") === String(row.quilting || "")
+          );
+
+          const orderDeliveryDate =
+            matchingVariant?.requested_delivery_date ||
+            orderLine?.requested_delivery_date ||
+            null;
+
           const kitMatricola = row.upholstery_kits
             ? Number(row.upholstery_kits.matricola)
             : null;
@@ -259,8 +276,8 @@ export default function ProductionPage() {
                 ? `Kit N. ${kitMatricola}`
                 : "Kit assegnato"
               : status === "ordine"
-                ? orderLine.requested_delivery_date
-                  ? `Consegna richiesta: ${formatItDate(String(orderLine.requested_delivery_date))}`
+                ? orderDeliveryDate
+                  ? `Consegna richiesta: ${formatItDate(String(orderDeliveryDate))}`
                   : "In ordine dal fornitore"
                 : "-";
 
@@ -316,7 +333,7 @@ export default function ProductionPage() {
       const { data, error } = await supabase
         .from("production_boat_teak")
         .select(
-          "id,item_id,color,coverage,kit_id,created_at,production_boats(order_number,model_boat,requested_delivery_date),teak_kits(matricola),order_items(qty,received_qty,requested_delivery_date)"
+          "id,item_id,color,coverage,kit_id,created_at,production_boats(order_number,model_boat,requested_delivery_date),teak_kits(matricola),order_items(qty,received_qty,requested_delivery_date,order_item_variants(color,coverage,requested_delivery_date))"
         )
         .order("created_at", { ascending: true });
 
@@ -359,6 +376,19 @@ export default function ProductionPage() {
             orderLine &&
             Number(orderLine.qty || 0) > Number(orderLine.received_qty || 0);
 
+          // Stesso discorso della tappezzeria: la consegna puo' essere
+          // stata messa sul singolo colore invece che su tutta la riga.
+          const matchingVariant = (orderLine?.order_item_variants || []).find(
+            (variant: any) =>
+              String(variant.color || "") === String(row.color || "") &&
+              String(variant.coverage || "") === String(row.coverage || "")
+          );
+
+          const orderDeliveryDate =
+            matchingVariant?.requested_delivery_date ||
+            orderLine?.requested_delivery_date ||
+            null;
+
           const kitMatricola = row.teak_kits
             ? Number(row.teak_kits.matricola)
             : null;
@@ -375,8 +405,8 @@ export default function ProductionPage() {
                 ? `Kit N. ${kitMatricola}`
                 : "Kit assegnato"
               : status === "ordine"
-                ? orderLine.requested_delivery_date
-                  ? `Consegna richiesta: ${formatItDate(String(orderLine.requested_delivery_date))}`
+                ? orderDeliveryDate
+                  ? `Consegna richiesta: ${formatItDate(String(orderDeliveryDate))}`
                   : "In ordine dal fornitore"
                 : "-";
 

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Fragment, use, useEffect, useMemo, useState } from "react";
 import { supabase } from "../../../lib/supabaseClient";
 import { fetchCompanyLogo } from "../../../lib/pdfLogo";
@@ -151,6 +152,7 @@ export default function ProductionBoatDetailPage({
       : (params as { boatId: string });
 
   const boatId = resolvedParams.boatId;
+  const router = useRouter();
 
   const [boat, setBoat] = useState<Boat | null>(null);
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -173,6 +175,14 @@ export default function ProductionBoatDetailPage({
   // non tocca mai la giacenza.
   const [missingPdfBusy, setMissingPdfBusy] = useState(false);
   const [missingPdfError, setMissingPdfError] = useState("");
+
+  // Elimina battello: rimuove definitivamente la scheda e tutto quello
+  // che è collegato solo a lei (percorso produttivo, foto, tappezzeria/
+  // teak/parabrezza richiesti). Qualsiasi kit fisico già assegnato
+  // (tappezzeria/teak/parabrezza) torna prima in giacenza - vedi
+  // delete_production_boat lato database.
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
 
   // Sezioni OPTIONAL della distinta base del modello di questo
   // battello, e quali risultano gia' scelte per lui (production_
@@ -1336,6 +1346,36 @@ export default function ProductionBoatDetailPage({
     }
   }
 
+  async function deleteBoat() {
+    if (!boat) return;
+
+    setDeleteError("");
+
+    const confirmed = window.confirm(
+      `Eliminare definitivamente il battello ${boat.order_number} · ${boat.model_boat}?\n\n` +
+        "Ogni kit di tappezzeria/teak/parabrezza già assegnato a questo " +
+        "battello torna in giacenza. Il percorso produttivo, le richieste " +
+        "e le foto del battello vengono eliminati. L'operazione non si " +
+        "può annullare."
+    );
+
+    if (!confirmed) return;
+
+    setDeleting(true);
+
+    const { error } = await supabase.rpc("delete_production_boat", {
+      p_boat_id: boatId,
+    });
+
+    if (error) {
+      setDeleteError("Errore eliminazione battello: " + error.message);
+      setDeleting(false);
+      return;
+    }
+
+    router.push("/produzione");
+  }
+
   async function saveEdits() {
     setSaveError("");
 
@@ -1460,10 +1500,19 @@ export default function ProductionBoatDetailPage({
               Modifica
             </button>
           )}
+          <button
+            type="button"
+            className="pbd-delete-btn"
+            onClick={deleteBoat}
+            disabled={deleting}
+          >
+            {deleting ? "Eliminazione..." : "Elimina battello"}
+          </button>
         </div>
       </section>
 
       {missingPdfError && <div className="pbd-error">{missingPdfError}</div>}
+      {deleteError && <div className="pbd-error">{deleteError}</div>}
 
       {bomSectionsLoaded && optionalBomSections.length > 0 && (
         <section className="pbd-card">
@@ -2360,10 +2409,12 @@ function Styles() {
       .pbd-hero h1 { margin:5px 0 0; font-size:27px; font-weight:950; letter-spacing:-.6px; }
       .pbd-hero p { margin:6px 0 0; color:#91a4bc; font-size:10px; }
       .pbd-actions { display:flex; align-items:center; flex-wrap:wrap; gap:7px; }
-      .pbd-back,.pbd-current,.pbd-edit-btn,.pbd-save-btn { min-height:38px; padding:0 12px; display:inline-flex; align-items:center; border-radius:8px; text-decoration:none; font-size:9px; font-weight:900; cursor:pointer; border:0; }
+      .pbd-back,.pbd-current,.pbd-edit-btn,.pbd-save-btn,.pbd-delete-btn { min-height:38px; padding:0 12px; display:inline-flex; align-items:center; border-radius:8px; text-decoration:none; font-size:9px; font-weight:900; cursor:pointer; border:0; }
       .pbd-back { border:1px solid rgba(148,163,184,.22); background:rgba(255,255,255,.035); color:#e2e8f0; }
       .pbd-current { border:1px solid rgba(59,130,246,.30); background:rgba(59,130,246,.10); color:#93c5fd; }
       .pbd-edit-btn { border:1px solid rgba(96,165,250,.32); background:rgba(59,130,246,.14); color:#bfdbfe; }
+      .pbd-delete-btn { border:1px solid rgba(239,68,68,.35); background:rgba(239,68,68,.1); color:#fca5a5; }
+      .pbd-delete-btn:disabled { opacity:.55; cursor:wait; }
       .pbd-save-btn { border:1px solid #2563eb; background:#2563eb; color:#fff; }
       .pbd-save-btn.secondary { border:1px solid rgba(148,163,184,.28); background:rgba(255,255,255,.035); color:#dce8f5; }
       .pbd-save-btn:disabled,.pbd-back:disabled { opacity:.55; cursor:wait; }

@@ -4,6 +4,7 @@ import React, { use, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../../lib/supabaseClient";
+import ItemDrawingsPanel from "../../../components/ItemDrawingsPanel";
 
 type ItemData = {
   id: string;
@@ -867,6 +868,8 @@ export default function ItemDetailPage({
               onChange={setImageUrl}
               placeholder="https://..."
             />
+
+            <ItemDrawingsPanel itemId={itemId} />
 
             {canViewPrices && (
               <div

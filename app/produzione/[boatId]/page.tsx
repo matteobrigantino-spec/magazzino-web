@@ -70,6 +70,10 @@ type BoatUpholsteryRequirement = {
   kitMatricola: number | null;
   openOrderQty: number;
   requestedDelivery: string | null;
+  // Riga d'ordine collegata (order_items.id), se questa richiesta e'
+  // "IN ORDINE": serve per poter correggere anche il colore/dettagli
+  // gia' scritti sull'ordine quando si modifica la richiesta.
+  orderItemId: string | null;
 };
 
 type UpholsteryStockCandidate = {
@@ -262,6 +266,18 @@ export default function ProductionBoatDetailPage({
   const [editReqSaving, setEditReqSaving] = useState(false);
   const [editReqError, setEditReqError] = useState("");
 
+  // Valori originali al momento dell'apertura della modifica (prima
+  // che l'utente tocchi qualunque campo): servono per capire, al
+  // salvataggio, cosa e' davvero cambiato e aggiornare di conseguenza
+  // anche la riga d'ordine gia' inviata al fornitore, se c'e'.
+  const [editOrigSupplierId, setEditOrigSupplierId] = useState("");
+  const [editOrigItemId, setEditOrigItemId] = useState("");
+  const [editOrigColor, setEditOrigColor] = useState("");
+  const [editOrigDetails, setEditOrigDetails] = useState("");
+  const [editOrigStitching, setEditOrigStitching] = useState("");
+  const [editOrigQuilting, setEditOrigQuilting] = useState("");
+  const [editOrderItemId, setEditOrderItemId] = useState<string | null>(null);
+
   const [searchingReqId, setSearchingReqId] = useState("");
   const [stockCandidates, setStockCandidates] = useState<
     UpholsteryStockCandidate[]
@@ -327,6 +343,7 @@ export default function ProductionBoatDetailPage({
           ? Number(orderLine.qty || 0) - Number(orderLine.received_qty || 0)
           : 0,
         requestedDelivery: isOpen ? orderDeliveryDate : null,
+        orderItemId: orderLine?.id ? String(orderLine.id) : null,
       };
     });
 
@@ -562,10 +579,134 @@ export default function ProductionBoatDetailPage({
     setEditReqStitching(requirement.stitching);
     setEditReqQuilting(requirement.quilting);
     setEditReqNote(requirement.note || "");
+
+    setEditOrigSupplierId(requirement.supplierId);
+    setEditOrigItemId(requirement.itemId);
+    setEditOrigColor(requirement.color);
+    setEditOrigDetails(requirement.detailsLogos);
+    setEditOrigStitching(requirement.stitching);
+    setEditOrigQuilting(requirement.quilting);
+    setEditOrderItemId(requirement.orderItemId);
   }
 
   function closeEditUpholstery() {
     setEditingReqId("");
+  }
+
+  // Se questa richiesta e' gia' "IN ORDINE" (orderItemId presente) e il
+  // fornitore/articolo non sono cambiati, corregge anche il colore/
+  // dettagli/cucitura/trapuntatura gia' scritti sulla riga d'ordine
+  // inviata al fornitore - altrimenti la richiesta sul battello
+  // risulterebbe corretta ma l'ordine (e il suo PDF) resterebbe con i
+  // dati vecchi. Trova la variante che corrispondeva esattamente ai
+  // valori di prima: se quella variante vale 1 solo pezzo la corregge
+  // sul posto, se invece la sua quantita' e' condivisa con altri
+  // battelli con la stessa combinazione ne stacca 1 pezzo e lo sposta
+  // su una variante (nuova o gia' esistente) con i valori corretti, per
+  // non cambiare colore anche alle quantita' degli altri battelli.
+  async function syncOrderVariantForEdit(params: {
+    orderItemId: string;
+    oldColor: string;
+    oldDetails: string;
+    oldStitching: string;
+    oldQuilting: string;
+    newColor: string;
+    newDetails: string;
+    newStitching: string;
+    newQuilting: string;
+  }) {
+    const {
+      orderItemId,
+      oldColor,
+      oldDetails,
+      oldStitching,
+      oldQuilting,
+      newColor,
+      newDetails,
+      newStitching,
+      newQuilting,
+    } = params;
+
+    if (
+      oldColor === newColor &&
+      oldDetails === newDetails &&
+      oldStitching === newStitching &&
+      oldQuilting === newQuilting
+    ) {
+      return;
+    }
+
+    const { data: variantRows } = await supabase
+      .from("order_item_variants")
+      .select("id,qty,color,details_logos,stitching,quilting")
+      .eq("order_item_id", orderItemId);
+
+    if (!variantRows || variantRows.length === 0) {
+      // Ordine creato prima che esistessero le varianti per colore:
+      // non c'e' niente da correggere sulla riga d'ordine.
+      return;
+    }
+
+    const oldMatch = variantRows.find(
+      (v: any) =>
+        String(v.color || "") === oldColor &&
+        String(v.details_logos || "") === oldDetails &&
+        String(v.stitching || "") === oldStitching &&
+        String(v.quilting || "") === oldQuilting
+    );
+
+    if (!oldMatch) {
+      // Non troviamo a quale variante corrispondeva prima: meglio non
+      // toccare l'ordine piuttosto che rischiare di correggere quella
+      // sbagliata.
+      return;
+    }
+
+    if (Number(oldMatch.qty || 0) <= 1) {
+      await supabase
+        .from("order_item_variants")
+        .update({
+          color: newColor,
+          details_logos: newDetails,
+          stitching: newStitching,
+          quilting: newQuilting,
+        })
+        .eq("id", oldMatch.id);
+      return;
+    }
+
+    await supabase
+      .from("order_item_variants")
+      .update({ qty: Number(oldMatch.qty || 0) - 1 })
+      .eq("id", oldMatch.id);
+
+    const newMatch = variantRows.find(
+      (v: any) =>
+        v.id !== oldMatch.id &&
+        String(v.color || "") === newColor &&
+        String(v.details_logos || "") === newDetails &&
+        String(v.stitching || "") === newStitching &&
+        String(v.quilting || "") === newQuilting
+    );
+
+    if (newMatch) {
+      await supabase
+        .from("order_item_variants")
+        .update({ qty: Number(newMatch.qty || 0) + 1 })
+        .eq("id", newMatch.id);
+    } else {
+      await supabase.from("order_item_variants").insert({
+        order_item_id: orderItemId,
+        qty: 1,
+        color: newColor,
+        details_logos: newDetails,
+        stitching: newStitching,
+        quilting: newQuilting,
+        coverage: null,
+        note: null,
+        requested_delivery_date: null,
+      });
+    }
   }
 
   async function saveUpholsteryEdit() {
@@ -604,6 +745,35 @@ export default function ProductionBoatDetailPage({
       setEditReqError("Errore salvataggio: " + error.message);
       setEditReqSaving(false);
       return;
+    }
+
+    // Se fornitore e articolo non sono cambiati e la richiesta era gia'
+    // agganciata a una riga d'ordine, correggiamo anche li' - altrimenti
+    // il PDF ordine gia' inviato al fornitore resterebbe con i dati
+    // vecchi anche dopo aver "corretto" la richiesta.
+    if (
+      editOrderItemId &&
+      editReqSupplierId === editOrigSupplierId &&
+      editReqItemId === editOrigItemId
+    ) {
+      try {
+        await syncOrderVariantForEdit({
+          orderItemId: editOrderItemId,
+          oldColor: editOrigColor,
+          oldDetails: editOrigDetails,
+          oldStitching: editOrigStitching,
+          oldQuilting: editOrigQuilting,
+          newColor: editReqColor,
+          newDetails: editReqDetails,
+          newStitching: editReqStitching,
+          newQuilting: editReqQuilting,
+        });
+      } catch (orderSyncError) {
+        console.error(
+          "Errore aggiornamento riga d'ordine collegata:",
+          orderSyncError
+        );
+      }
     }
 
     // Stesso abbinamento automatico usato per una richiesta nuova: se il

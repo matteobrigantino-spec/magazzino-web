@@ -7,7 +7,9 @@ import { supabase } from "../../lib/supabaseClient";
 import { fetchCompanyLogo } from "../../lib/pdfLogo";
 import CameraIcon from "../../components/CameraIcon";
 import ChecklistIcon from "../../components/ChecklistIcon";
+import DocumentIcon from "../../components/DocumentIcon";
 import BoatPhotosModal from "../../components/BoatPhotosModal";
+import BoatDocumentsModal from "../../components/BoatDocumentsModal";
 
 type Department = {
   id: string;
@@ -110,6 +112,16 @@ export default function ProductionPage() {
     Record<string, number>
   >({});
   const [galleryBoat, setGalleryBoat] = useState<{ id: string; label: string } | null>(
+    null
+  );
+
+  // Documenti PDF battello (fatture, certificati, schede tecniche):
+  // stesso concetto dell'archivio foto, ma per documenti - quanti ce ne
+  // sono gia' per ogni battello e quale battello ha il pannello aperto.
+  const [docCountByBoatId, setDocCountByBoatId] = useState<
+    Record<string, number>
+  >({});
+  const [docsBoat, setDocsBoat] = useState<{ id: string; label: string } | null>(
     null
   );
 
@@ -776,6 +788,21 @@ export default function ProductionPage() {
         counts[id] = (counts[id] || 0) + 1;
       });
       setPhotoCountByBoatId(counts);
+    }
+
+    // Stesso conteggio ma per i documenti PDF del battello: se la
+    // tabella non esiste ancora su Supabase i conteggi restano a zero,
+    // senza bloccare il resto.
+    const docCountRes = await supabase
+      .from("production_boat_documents")
+      .select("boat_id");
+    if (!docCountRes.error) {
+      const docCounts: Record<string, number> = {};
+      (docCountRes.data || []).forEach((row: any) => {
+        const id = String(row.boat_id);
+        docCounts[id] = (docCounts[id] || 0) + 1;
+      });
+      setDocCountByBoatId(docCounts);
     }
 
     // Separate dalle altre: finche' su Supabase non esistono ancora le
@@ -2217,6 +2244,24 @@ export default function ProductionPage() {
                             </span>
                           )}
                         </button>
+                        <button
+                          type="button"
+                          className="prod-doc-btn"
+                          title="Documenti PDF battello"
+                          onClick={() =>
+                            setDocsBoat({
+                              id: boat.id,
+                              label: `${boat.order_number} · ${boat.model_boat}`,
+                            })
+                          }
+                        >
+                          <DocumentIcon />
+                          {Boolean(docCountByBoatId[boat.id]) && (
+                            <span className="prod-photo-badge">
+                              {docCountByBoatId[boat.id]}
+                            </span>
+                          )}
+                        </button>
                       </td>
                     </tr>
                   );
@@ -2234,6 +2279,17 @@ export default function ProductionPage() {
           onClose={() => setGalleryBoat(null)}
           onCountChange={(boatId, count) =>
             setPhotoCountByBoatId((current) => ({ ...current, [boatId]: count }))
+          }
+        />
+      )}
+
+      {docsBoat && (
+        <BoatDocumentsModal
+          boatId={docsBoat.id}
+          boatLabel={docsBoat.label}
+          onClose={() => setDocsBoat(null)}
+          onCountChange={(boatId, count) =>
+            setDocCountByBoatId((current) => ({ ...current, [boatId]: count }))
           }
         />
       )}
@@ -3000,6 +3056,26 @@ function Styles() {
         align-items: center;
         justify-content: center;
         line-height: 1;
+      }
+
+      .prod-doc-btn {
+        position: relative;
+        min-width: 32px;
+        min-height: 32px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid rgba(90,74,160,.22);
+        border-radius: 7px;
+        background: rgba(90,74,160,.08);
+        color: #6c56b8;
+        cursor: pointer;
+      }
+
+      .prod-doc-btn:hover {
+        background: rgba(90,74,160,.16);
+        border-color: rgba(90,74,160,.4);
+        color: #6c56b8;
       }
 
       .prod-empty,

@@ -2702,7 +2702,7 @@ export function buildQualityControlPdf(params: {
   // Riquadro intestazione: 2 colonne x 2 righe, come sul modulo
   // cartaceo - modello/N. ordine/matricola gia' compilati,
   // operatore lasciato vuoto da riempire a mano.
-  const headerBoxH = 20;
+  const headerBoxH = 30;
   const headerColW = contentWidth / 2;
 
   doc.setDrawColor(170);
@@ -2711,6 +2711,11 @@ export function buildQualityControlPdf(params: {
   doc.line(margin + headerColW, y, margin + headerColW, y + headerBoxH);
   doc.line(margin, y + headerBoxH / 2, margin + contentWidth, y + headerBoxH / 2);
 
+  // Ogni riga del riquadro e' alta headerBoxH/2 (15mm): l'etichetta
+  // sta vicino al bordo superiore della riga, il valore vicino al
+  // bordo inferiore, cosi' il valore della riga 1 non finisce a
+  // cavallo della riga divisoria e non si sovrappone all'etichetta
+  // della riga 2 sotto.
   function headerField(label: string, value: string, x: number, rowY: number) {
     doc.setFont("helvetica", "bold");
     doc.setFontSize(7.5);
@@ -2719,7 +2724,7 @@ export function buildQualityControlPdf(params: {
     doc.setFont("helvetica", "bold");
     doc.setFontSize(11.5);
     doc.setTextColor(0, 0, 0);
-    doc.text(value || "—", x + 3, rowY + 14);
+    doc.text(value || "—", x + 3, rowY + 13);
   }
 
   const orderLabel = boatProgressiveNo
@@ -2922,82 +2927,96 @@ export function buildQualityControlPdf(params: {
   // -------- Schema gommone, vista dall'alto --------
   const diagramTop = 29 + introLines.length * 4.1 + 9;
   const hullCenterX = pageWidth / 2;
-  const hullLength = 112;
-  const hullHalfWidth = 29;
+  const hullLength = 110;
+  const hullHalfWidth = 32;
   const hullTop = diagramTop;
   const hullBottom = hullTop + hullLength;
   const hullCenterY = hullTop + hullLength / 2;
 
   // Profilo del lato destro, dalla prua alla poppa, come frazioni di
-  // mezza lunghezza/mezza larghezza rispetto al centro - lo scafo si
-  // ottiene specchiando questi punti anche sul lato sinistro.
-  const rightProfile: [number, number][] = [
-    [0, -1.0],
-    [0.3, -0.84],
-    [0.56, -0.6],
-    [0.74, -0.3],
-    [0.82, 0.04],
-    [0.8, 0.4],
-    [0.64, 0.68],
-    [0.46, 0.88],
-    [0.4, 0.98],
+  // mezza lunghezza/mezza larghezza rispetto al centro (fy: -1 prua,
+  // +1 poppa) - lo scafo si ottiene specchiando questi punti anche sul
+  // lato sinistro, con un tratto piatto finale che fa da specchio di
+  // poppa (non arriva a punta come la prua).
+  const hullProfile: [number, number][] = [
+    [0, -1],
+    [0.22, -0.9],
+    [0.44, -0.72],
+    [0.62, -0.48],
+    [0.74, -0.18],
+    [0.78, 0.14],
+    [0.74, 0.46],
+    [0.64, 0.72],
+    [0.54, 0.92],
+    [0.52, 1],
   ];
 
-  const hullPoints: [number, number][] = [
-    ...rightProfile.map(
-      ([fx, fy]) =>
-        [hullCenterX + fx * hullHalfWidth, hullCenterY + fy * (hullLength / 2)] as [
-          number,
-          number,
-        ]
-    ),
-    [hullCenterX - 0.4 * hullHalfWidth, hullCenterY + 0.98 * (hullLength / 2)],
-    ...[...rightProfile]
-      .slice(1)
+  // Disegna lo scafo due volte, a due "taglie" diverse: quella piena
+  // (outerScale) e' il bordo esterno dei tubolari, quella piu' piccola
+  // (innerScale) e' il bordo del ponte/pozzetto - cosi' la fascia tra
+  // le due letture si legge come i tubolari che avvolgono lo scafo,
+  // invece di due tubolari disegnati staccati a lato come prima.
+  function hullOutline(scaleX: number, scaleY: number): [number, number][] {
+    const sternLeft: [number, number] = [
+      -hullProfile[hullProfile.length - 1][0],
+      hullProfile[hullProfile.length - 1][1],
+    ];
+    const leftSide = [...hullProfile]
+      .slice(1, -1)
       .reverse()
-      .map(
-        ([fx, fy]) =>
-          [hullCenterX - fx * hullHalfWidth, hullCenterY + fy * (hullLength / 2)] as [
-            number,
-            number,
-          ]
-      ),
-  ];
+      .map(([fx, fy]) => [-fx, fy] as [number, number]);
+    const loop: [number, number][] = [...hullProfile, sternLeft, ...leftSide];
 
+    return loop.map(
+      ([fx, fy]) =>
+        [
+          hullCenterX + fx * scaleX * hullHalfWidth,
+          hullCenterY + fy * scaleY * (hullLength / 2),
+        ] as [number, number]
+    );
+  }
+
+  function drawHullShape(points: [number, number][]) {
+    doc.lines(
+      points.slice(1).map((p, i) => [p[0] - points[i][0], p[1] - points[i][1]]),
+      points[0][0],
+      points[0][1],
+      [1, 1],
+      "FD",
+      true
+    );
+  }
+
+  const outerHull = hullOutline(1, 1);
+  const innerHull = hullOutline(0.68, 0.86);
+
+  // Tubolari (bordo esterno pieno).
   doc.setDrawColor(70, 70, 70);
   doc.setLineWidth(0.6);
-  doc.setFillColor(233, 241, 247);
-  doc.lines(
-    hullPoints.slice(1).map((p, i) => [p[0] - hullPoints[i][0], p[1] - hullPoints[i][1]]),
-    hullPoints[0][0],
-    hullPoints[0][1],
-    [1, 1],
-    "FD",
-    true
-  );
+  doc.setFillColor(196, 216, 232);
+  drawHullShape(outerHull);
 
-  // Tubolari (le due strisce gonfiabili laterali).
-  doc.setFillColor(203, 221, 233);
-  doc.setDrawColor(70, 70, 70);
+  // Ponte / pozzetto (bordo interno, piu' chiaro, "dentro" ai tubolari).
+  doc.setDrawColor(150, 170, 185);
   doc.setLineWidth(0.4);
-  const tubeY = hullTop + hullLength * 0.14;
-  const tubeH = hullLength * 0.7;
-  doc.roundedRect(hullCenterX - hullHalfWidth * 0.95, tubeY, hullHalfWidth * 0.22, tubeH, 5, 5, "FD");
-  doc.roundedRect(hullCenterX + hullHalfWidth * 0.73, tubeY, hullHalfWidth * 0.22, tubeH, 5, 5, "FD");
+  doc.setFillColor(240, 246, 250);
+  drawHullShape(innerHull);
+
+  doc.setDrawColor(70, 70, 70);
 
   // Consolle di comando.
   doc.setFillColor(255, 255, 255);
-  doc.roundedRect(hullCenterX - 13, hullTop + hullLength * 0.3, 26, 15, 2, 2, "FD");
+  doc.roundedRect(hullCenterX - 12, hullTop + hullLength * 0.32, 24, 13, 2, 2, "FD");
 
   // Pozzetto / sedute.
-  doc.roundedRect(hullCenterX - 15, hullTop + hullLength * 0.52, 30, hullLength * 0.2, 2, 2, "FD");
+  doc.roundedRect(hullCenterX - 13, hullTop + hullLength * 0.52, 26, hullLength * 0.16, 2, 2, "FD");
 
   // Gavoni (prua + poppa dx/sx): rettangoli piu' piccoli, colore
   // diverso per distinguerli a colpo d'occhio dal resto dello scafo.
   const gavoni = [
-    { x: hullCenterX - 7.5, y: hullTop + hullLength * 0.07, w: 15, h: 9 },
-    { x: hullCenterX - hullHalfWidth * 0.6 - 6, y: hullTop + hullLength * 0.8, w: 12, h: 8.5 },
-    { x: hullCenterX + hullHalfWidth * 0.6 - 6, y: hullTop + hullLength * 0.8, w: 12, h: 8.5 },
+    { x: hullCenterX - 6.5, y: hullTop + hullLength * 0.1, w: 13, h: 8 },
+    { x: hullCenterX - 18, y: hullTop + hullLength * 0.78, w: 11, h: 8 },
+    { x: hullCenterX + 7, y: hullTop + hullLength * 0.78, w: 11, h: 8 },
   ];
 
   gavoni.forEach((g) => {
@@ -3016,8 +3035,8 @@ export function buildQualityControlPdf(params: {
     { n: 2, x: hullCenterX + hullHalfWidth + 7, y: hullCenterY, label: "Fianco destro - vista laterale intera" },
     { n: 3, x: hullCenterX - hullHalfWidth - 7, y: hullCenterY, label: "Fianco sinistro - vista laterale intera" },
     { n: 4, x: hullCenterX, y: hullBottom + 5, label: "Poppa / motore - vista posteriore" },
-    { n: 5, x: hullCenterX, y: hullTop + hullLength * 0.375, label: "Consolle e plancia di comando" },
-    { n: 6, x: hullCenterX, y: hullTop + hullLength * 0.62, label: "Pozzetto e sedute - dall'alto" },
+    { n: 5, x: hullCenterX, y: hullTop + hullLength * 0.32 + 6.5, label: "Consolle e plancia di comando" },
+    { n: 6, x: hullCenterX, y: hullTop + hullLength * 0.6, label: "Pozzetto e sedute - dall'alto" },
     {
       n: 7,
       x: gavoni[0].x + gavoni[0].w / 2,
@@ -3026,15 +3045,19 @@ export function buildQualityControlPdf(params: {
     },
     {
       n: 8,
+      // gavoni[1] e' quello con x minore (lato sinistro della pagina):
+      // guardando il battello dall'alto con la prua in su, e' il lato
+      // sinistro (come la mano sinistra di chi e' a bordo rivolto a
+      // prua), non quello destro.
       x: gavoni[1].x + gavoni[1].w / 2,
       y: gavoni[1].y + gavoni[1].h / 2,
-      label: "Gavone di poppa destro - aperto",
+      label: "Gavone di poppa sinistro - aperto",
     },
     {
       n: 9,
       x: gavoni[2].x + gavoni[2].w / 2,
       y: gavoni[2].y + gavoni[2].h / 2,
-      label: "Gavone di poppa sinistro - aperto",
+      label: "Gavone di poppa destro - aperto",
     },
   ];
 

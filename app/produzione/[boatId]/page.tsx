@@ -244,6 +244,24 @@ export default function ProductionBoatDetailPage({
   const [reqSaving, setReqSaving] = useState(false);
   const [reqError, setReqError] = useState("");
 
+  // Modifica di una richiesta tappezzeria gia' inserita (colore,
+  // dettagli, cucitura, trapuntatura, nota): utile per una richiesta
+  // "IN ORDINE" o "DA ORDINARE" inserita per sbaglio, che finora non
+  // si poteva correggere - si poteva solo cancellarla (e solo se "DA
+  // ORDINARE") e reinserirla da capo. Non si puo' modificare una
+  // richiesta gia' "ASSEGNATA": li' il colore vero e' quello del kit
+  // fisico collegato, non questo testo.
+  const [editingReqId, setEditingReqId] = useState("");
+  const [editReqSupplierId, setEditReqSupplierId] = useState("");
+  const [editReqItemId, setEditReqItemId] = useState("");
+  const [editReqColor, setEditReqColor] = useState("");
+  const [editReqDetails, setEditReqDetails] = useState("");
+  const [editReqStitching, setEditReqStitching] = useState("");
+  const [editReqQuilting, setEditReqQuilting] = useState("");
+  const [editReqNote, setEditReqNote] = useState("");
+  const [editReqSaving, setEditReqSaving] = useState(false);
+  const [editReqError, setEditReqError] = useState("");
+
   const [searchingReqId, setSearchingReqId] = useState("");
   const [stockCandidates, setStockCandidates] = useState<
     UpholsteryStockCandidate[]
@@ -416,6 +434,7 @@ export default function ProductionBoatDetailPage({
 
   function openAddUpholstery() {
     setReqError("");
+    setEditingReqId("");
     setNewReqSupplierId(upholsterySuppliers[0]?.id || "");
     setNewReqItemId("");
     setNewReqColor("");
@@ -529,6 +548,109 @@ export default function ProductionBoatDetailPage({
     if (!error) {
       await loadUpholsteryRequirements();
     }
+  }
+
+  function openEditUpholstery(requirement: BoatUpholsteryRequirement) {
+    setEditReqError("");
+    setShowAddUpholstery(false);
+    setSearchingReqId("");
+    setEditingReqId(requirement.id);
+    setEditReqSupplierId(requirement.supplierId);
+    setEditReqItemId(requirement.itemId);
+    setEditReqColor(requirement.color);
+    setEditReqDetails(requirement.detailsLogos);
+    setEditReqStitching(requirement.stitching);
+    setEditReqQuilting(requirement.quilting);
+    setEditReqNote(requirement.note || "");
+  }
+
+  function closeEditUpholstery() {
+    setEditingReqId("");
+  }
+
+  async function saveUpholsteryEdit() {
+    setEditReqError("");
+
+    if (
+      !editReqSupplierId ||
+      !editReqItemId ||
+      !editReqColor ||
+      !editReqDetails ||
+      !editReqStitching ||
+      !editReqQuilting
+    ) {
+      setEditReqError(
+        "Compila fornitore, articolo, colore, dettagli, cucitura e trapuntatura."
+      );
+      return;
+    }
+
+    setEditReqSaving(true);
+
+    const { error } = await supabase
+      .from("production_boat_upholstery")
+      .update({
+        supplier_id: editReqSupplierId,
+        item_id: editReqItemId,
+        color: editReqColor,
+        details_logos: editReqDetails,
+        stitching: editReqStitching,
+        quilting: editReqQuilting,
+        note: editReqNote.trim() || null,
+      })
+      .eq("id", editingReqId);
+
+    if (error) {
+      setEditReqError("Errore salvataggio: " + error.message);
+      setEditReqSaving(false);
+      return;
+    }
+
+    // Stesso abbinamento automatico usato per una richiesta nuova: se il
+    // colore corretto corrisponde gia' a un kit in giacenza lo assegna,
+    // altrimenti prova ad agganciare una riga d'ordine aperta gia'
+    // esistente per lo stesso fornitore + articolo. Se la richiesta era
+    // gia' "IN ORDINE" con un suo abbinamento, questo passaggio non lo
+    // tocca (non trova nulla di nuovo da fare) - serve soprattutto per
+    // una richiesta "DA ORDINARE" appena corretta.
+    const { data: stockMatch } = await supabase
+      .from("upholstery_kits")
+      .select("id")
+      .eq("supplier_id", editReqSupplierId)
+      .eq("item_id", editReqItemId)
+      .eq("status", "stock")
+      .eq("color", editReqColor)
+      .eq("details_logos", editReqDetails)
+      .eq("stitching", editReqStitching)
+      .eq("quilting", editReqQuilting)
+      .limit(1)
+      .maybeSingle();
+
+    if (stockMatch?.id) {
+      try {
+        await supabase.rpc("assign_stock_kit_by_priority", {
+          p_kit_id: stockMatch.id,
+        });
+      } catch (priorityError) {
+        console.error(
+          "Errore assegnazione automatica kit in giacenza:",
+          priorityError
+        );
+      }
+    } else {
+      try {
+        await supabase.rpc("sync_upholstery_order_links", {
+          p_supplier_id: editReqSupplierId,
+          p_item_id: editReqItemId,
+        });
+      } catch (syncError) {
+        console.error("Errore abbinamento automatico tappezzeria:", syncError);
+      }
+    }
+
+    setEditingReqId("");
+    setEditReqSaving(false);
+    await loadUpholsteryRequirements();
   }
 
   async function searchStockFor(requirement: BoatUpholsteryRequirement) {
@@ -1738,6 +1860,148 @@ export default function ProductionBoatDetailPage({
             ? "ordered"
             : "toorder";
 
+          const isEditingThis = editingReqId === requirement.id;
+
+          if (isEditingThis) {
+            return (
+              <div key={requirement.id} className="pbd-upholstery-row pbd-upholstery-editing">
+                <div className="pbd-upholstery-add" style={{ marginTop: 0, paddingTop: 0, borderTop: 0, width: "100%" }}>
+                  {editReqError && (
+                    <div className="pbd-form-error">{editReqError}</div>
+                  )}
+
+                  <div className="pbd-form-grid">
+                    <EditField label="Fornitore">
+                      <select
+                        value={editReqSupplierId}
+                        onChange={(e) => {
+                          setEditReqSupplierId(e.target.value);
+                          setEditReqItemId("");
+                          setEditReqColor("");
+                          setEditReqDetails("");
+                          setEditReqStitching("");
+                          setEditReqQuilting("");
+                        }}
+                      >
+                        {upholsterySuppliers.map((supplier) => (
+                          <option key={supplier.id} value={supplier.id}>
+                            {supplier.name}
+                          </option>
+                        ))}
+                      </select>
+                    </EditField>
+
+                    <EditField label="Articolo">
+                      <select
+                        value={editReqItemId}
+                        onChange={(e) => setEditReqItemId(e.target.value)}
+                      >
+                        <option value="">Seleziona articolo...</option>
+                        {upholsteryItemsFor(editReqSupplierId).map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.description}
+                          </option>
+                        ))}
+                      </select>
+                    </EditField>
+
+                    <EditField label="Colore">
+                      <select
+                        value={editReqColor}
+                        onChange={(e) => setEditReqColor(e.target.value)}
+                      >
+                        <option value="">Seleziona...</option>
+                        {upholsteryOptionsFor(editReqSupplierId, "color").map(
+                          (option) => (
+                            <option key={option.id} value={option.name}>
+                              {option.name}
+                            </option>
+                          )
+                        )}
+                      </select>
+                    </EditField>
+
+                    <EditField label="Dettagli e loghi">
+                      <select
+                        value={editReqDetails}
+                        onChange={(e) => setEditReqDetails(e.target.value)}
+                      >
+                        <option value="">Seleziona...</option>
+                        {upholsteryOptionsFor(
+                          editReqSupplierId,
+                          "details_logos"
+                        ).map((option) => (
+                          <option key={option.id} value={option.name}>
+                            {option.name}
+                          </option>
+                        ))}
+                      </select>
+                    </EditField>
+
+                    <EditField label="Cucitura">
+                      <select
+                        value={editReqStitching}
+                        onChange={(e) => setEditReqStitching(e.target.value)}
+                      >
+                        <option value="">Seleziona...</option>
+                        {upholsteryOptionsFor(editReqSupplierId, "stitching").map(
+                          (option) => (
+                            <option key={option.id} value={option.name}>
+                              {option.name}
+                            </option>
+                          )
+                        )}
+                      </select>
+                    </EditField>
+
+                    <EditField label="Trapuntatura">
+                      <select
+                        value={editReqQuilting}
+                        onChange={(e) => setEditReqQuilting(e.target.value)}
+                      >
+                        <option value="">Seleziona...</option>
+                        {upholsteryOptionsFor(editReqSupplierId, "quilting").map(
+                          (option) => (
+                            <option key={option.id} value={option.name}>
+                              {option.name}
+                            </option>
+                          )
+                        )}
+                      </select>
+                    </EditField>
+
+                    <EditField label="Nota" wide>
+                      <input
+                        value={editReqNote}
+                        onChange={(e) => setEditReqNote(e.target.value)}
+                        placeholder="Facoltativa"
+                      />
+                    </EditField>
+                  </div>
+
+                  <div className="pbd-form-actions">
+                    <button
+                      type="button"
+                      className="pbd-back"
+                      onClick={closeEditUpholstery}
+                      disabled={editReqSaving}
+                    >
+                      Annulla
+                    </button>
+                    <button
+                      type="button"
+                      className="pbd-save-btn"
+                      onClick={saveUpholsteryEdit}
+                      disabled={editReqSaving}
+                    >
+                      {editReqSaving ? "Salvataggio..." : "Salva modifiche"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          }
+
           return (
             <div key={requirement.id} className="pbd-upholstery-row">
               <div className="pbd-upholstery-main">
@@ -1786,13 +2050,22 @@ export default function ProductionBoatDetailPage({
                 )}
 
                 {!requirement.kitId && requirement.openOrderQty > 0 && (
-                  <span className="pbd-upholstery-info">
-                    {requirement.requestedDelivery
-                      ? `Consegna richiesta: ${formatDate(
-                          requirement.requestedDelivery
-                        )}`
-                      : "Nessuna data di consegna indicata"}
-                  </span>
+                  <div className="pbd-upholstery-actions">
+                    <span className="pbd-upholstery-info">
+                      {requirement.requestedDelivery
+                        ? `Consegna richiesta: ${formatDate(
+                            requirement.requestedDelivery
+                          )}`
+                        : "Nessuna data di consegna indicata"}
+                    </span>
+                    <button
+                      type="button"
+                      className="pbd-btn-link"
+                      onClick={() => openEditUpholstery(requirement)}
+                    >
+                      Modifica
+                    </button>
+                  </div>
                 )}
 
                 {!requirement.kitId && requirement.openOrderQty === 0 && (
@@ -1803,6 +2076,13 @@ export default function ProductionBoatDetailPage({
                       onClick={() => searchStockFor(requirement)}
                     >
                       Cerca in giacenza
+                    </button>
+                    <button
+                      type="button"
+                      className="pbd-btn-link"
+                      onClick={() => openEditUpholstery(requirement)}
+                    >
+                      Modifica
                     </button>
                     <button
                       type="button"

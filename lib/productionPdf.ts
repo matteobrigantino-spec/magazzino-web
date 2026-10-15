@@ -2736,14 +2736,14 @@ export function buildQualityControlPdf(params: {
   // Tabella controlli: stessa impaginazione a griglia del modulo
   // cartaceo. Compilazione a mano (checkbox, SI/NO, note, firma): non
   // e' un form interattivo salvato a database.
-  const qcCols = [
-    { key: "n", label: "#", width: 7, align: "center" as const },
+  const qcCols: { key: string; label: string; width: number; align?: "center" }[] = [
+    { key: "n", label: "#", width: 7, align: "center" },
     { key: "desc", label: "DESCRIZIONE DEL CONTROLLO", width: 72 },
-    { key: "esg", label: "ESEG.", width: 13, align: "center" as const },
-    { key: "pass", label: "PASSED", width: 17, align: "center" as const },
+    { key: "esg", label: "ESEG.", width: 13, align: "center" },
+    { key: "pass", label: "PASSED", width: 17, align: "center" },
     { key: "note", label: "NOTE", width: 30 },
-    { key: "op", label: "OPERATORE", width: 23, align: "center" as const },
-    { key: "data", label: "DATA", width: contentWidth - 7 - 72 - 13 - 17 - 30 - 23, align: "center" as const },
+    { key: "op", label: "OPERATORE", width: 23, align: "center" },
+    { key: "data", label: "DATA", width: contentWidth - 7 - 72 - 13 - 17 - 30 - 23, align: "center" },
   ];
 
   function qcColX(index: number) {

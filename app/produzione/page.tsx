@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabaseClient";
 import { fetchCompanyLogo } from "../../lib/pdfLogo";
 import CameraIcon from "../../components/CameraIcon";
+import ChecklistIcon from "../../components/ChecklistIcon";
 import BoatPhotosModal from "../../components/BoatPhotosModal";
 
 type Department = {
@@ -111,6 +112,11 @@ export default function ProductionPage() {
   const [galleryBoat, setGalleryBoat] = useState<{ id: string; label: string } | null>(
     null
   );
+
+  // PDF "Controllo qualita'" (collaudo finale + guida foto): si scarica
+  // un battello alla volta dal bottone sulla riga, quindi il "busy" e'
+  // per singolo battello (id) e non un flag unico come gli altri PDF.
+  const [qcPdfBusyId, setQcPdfBusyId] = useState<string | null>(null);
 
   // Battelli che hanno almeno una richiesta di tappezzeria inserita
   // (indipendentemente da assegnata/in ordine/da ordinare): serve solo a
@@ -1205,6 +1211,36 @@ export default function ProductionPage() {
     await loadData();
   }
 
+  async function downloadQualityControlPdf(boat: Boat) {
+    setErrorMessage("");
+    setQcPdfBusyId(boat.id);
+
+    try {
+      if (!pdfLogo) {
+        throw new Error("Carica il logo aziendale prima di scaricare il PDF.");
+      }
+
+      const { buildQualityControlPdf } = await import("../../lib/productionPdf");
+
+      const { doc, filename } = buildQualityControlPdf({
+        boatOrderNumber: boat.order_number,
+        boatModel: boat.model_boat,
+        boatMatricola: boat.matricola || "",
+        boatProgressiveNo: boat.progressive_no,
+        logo: pdfLogo,
+        generatedDate: formatItDate(todayInputValue()),
+      });
+
+      await doc.save(filename, { returnPromise: true });
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Impossibile creare il PDF. Riprova."
+      );
+    } finally {
+      setQcPdfBusyId(null);
+    }
+  }
+
   async function createBoat() {
     setMessage("");
     setErrorMessage("");
@@ -2156,6 +2192,15 @@ export default function ProductionPage() {
                         </button>
                         <button
                           type="button"
+                          className="prod-qc-btn"
+                          title="Controllo qualita' e guida foto"
+                          disabled={pdfLogoLoading || !pdfLogo || qcPdfBusyId === boat.id}
+                          onClick={() => downloadQualityControlPdf(boat)}
+                        >
+                          <ChecklistIcon />
+                        </button>
+                        <button
+                          type="button"
                           className="prod-photo-btn"
                           title="Archivio foto battello"
                           onClick={() =>
@@ -2892,6 +2937,31 @@ function Styles() {
         display: flex;
         align-items: center;
         gap: 6px;
+      }
+
+      .prod-qc-btn {
+        position: relative;
+        min-width: 32px;
+        min-height: 32px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid rgba(37,99,163,.22);
+        border-radius: 7px;
+        background: rgba(37,99,163,.08);
+        color: #2563a3;
+        cursor: pointer;
+      }
+
+      .prod-qc-btn:hover {
+        background: rgba(37,99,163,.16);
+        border-color: rgba(37,99,163,.4);
+        color: #2563a3;
+      }
+
+      .prod-qc-btn:disabled {
+        opacity: 0.5;
+        cursor: default;
       }
 
       .prod-photo-btn {

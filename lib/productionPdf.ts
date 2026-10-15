@@ -2602,3 +2602,518 @@ export function buildGelcoatStockPdf(params: {
 
   return { doc, filename };
 }
+
+// ============================================================
+// Collaudo finale + guida foto battello
+//
+// Due pagine da stampare insieme, collegate al singolo battello
+// (stesso tasto della "Archivio foto"):
+//   1) COLLAUDO FINALE - digitalizzazione del modulo cartaceo gia'
+//      in uso in reparto, con modello/N. ordine/matricola gia'
+//      compilati in testata (il resto si compila a mano, come il
+//      cartaceo: non e' un modulo interattivo salvato a DB).
+//   2) GUIDA FOTO BATTELLO - schema del gommone visto dall'alto con
+//      i punti numerati da fotografare, piu' il promemoria di
+//      fotografare ogni gavone separatamente, prima dell'imballaggio.
+// ============================================================
+
+const QC_CHECK_ITEMS: { n: number; desc: string }[] = [
+  { n: 1, desc: "Collaudo impianti (scheda COLLAUDO IMPIANTI)" },
+  {
+    n: 2,
+    desc: "Collaudo sistema autosvuotante (serraggio fascette, tubazioni, valvole manuali e valvole di non ritorno)",
+  },
+  {
+    n: 3,
+    desc: "Controllo funzionale cerniere e chiusure di portelli e gavoni (serraggio fascette, tubazioni, valvole manuali e valvole di non ritorno)",
+  },
+  { n: 4, desc: "Controllo bulloneria passante plancia centrale" },
+  { n: 5, desc: "Controllo bulloneria passante/tirafondi plancette" },
+  {
+    n: 6,
+    desc: "Controllo funzionale consolle corrimano, parabrezza, volante (serraggio corrimano, imperfezioni valvole manuali e valvole di non ritorno)",
+  },
+  {
+    n: 7,
+    desc: "Controllo qualità VTR (lucentezza scafo, coperta, consolle ed eventuali rollbar, deflettore, etc..)",
+  },
+  {
+    n: 8,
+    desc: "Controllo qualità TUBOLARE (incollaggio bottazzo, maniglie, scritte - assenza residui di colla)",
+  },
+  {
+    n: 9,
+    desc: "Controllo qualità TAPPEZZERIA (integrità e corretta installazione di tutte le componenti)",
+  },
+  {
+    n: 10,
+    desc: "Controllo inserimento accessori preimballo (pagaie, gonfiatore, componenti timoneria, plancette, bimini, teli, etc..)",
+  },
+  { n: 11, desc: "Controllo presenza e corrispondenza targhette CE e matricole" },
+];
+
+const QC_PACKAGING_ITEMS: { n: number; desc: string }[] = [
+  { n: 1, desc: "Controllo stato di imballaggio finale" },
+  { n: 2, desc: "Controllo completezza compilazione schede" },
+  { n: 3, desc: "Archiviazione schede" },
+];
+
+export function buildQualityControlPdf(params: {
+  boatOrderNumber: string;
+  boatModel: string;
+  boatMatricola: string;
+  boatProgressiveNo: number | null;
+  logo: string;
+  generatedDate: string;
+}) {
+  const { boatOrderNumber, boatModel, boatMatricola, boatProgressiveNo, logo, generatedDate } =
+    params;
+
+  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  doc.setProperties({
+    title: `Collaudo finale - ${boatOrderNumber}`,
+    subject: "Collaudo finale e guida foto battello",
+  });
+
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const margin = 14;
+  const contentWidth = pageWidth - margin * 2;
+
+  /* ============================================================
+     PAGINA 1 - COLLAUDO FINALE
+     ============================================================ */
+
+  drawCompanyLogoTopRight(doc, logo);
+
+  doc.setTextColor(0, 0, 0);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(16);
+  doc.text("COLLAUDO FINALE", margin, 16);
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9.5);
+  doc.setTextColor(120, 120, 120);
+  doc.text(`Generato il ${generatedDate}`, margin, 22);
+  doc.setTextColor(0, 0, 0);
+
+  let y = 29;
+
+  // Riquadro intestazione: 2 colonne x 2 righe, come sul modulo
+  // cartaceo - modello/N. ordine/matricola gia' compilati,
+  // operatore lasciato vuoto da riempire a mano.
+  const headerBoxH = 20;
+  const headerColW = contentWidth / 2;
+
+  doc.setDrawColor(170);
+  doc.setLineWidth(0.35);
+  doc.rect(margin, y, contentWidth, headerBoxH);
+  doc.line(margin + headerColW, y, margin + headerColW, y + headerBoxH);
+  doc.line(margin, y + headerBoxH / 2, margin + contentWidth, y + headerBoxH / 2);
+
+  function headerField(label: string, value: string, x: number, rowY: number) {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.5);
+    doc.setTextColor(120, 120, 120);
+    doc.text(label, x + 3, rowY + 5.5);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11.5);
+    doc.setTextColor(0, 0, 0);
+    doc.text(value || "—", x + 3, rowY + 14);
+  }
+
+  const orderLabel = boatProgressiveNo
+    ? `${boatOrderNumber}  (Prog. ${boatProgressiveNo})`
+    : boatOrderNumber;
+
+  headerField("MODELLO BATTELLO", boatModel, margin, y);
+  headerField("N. ORDINE", orderLabel, margin + headerColW, y);
+  headerField("MATRICOLA", boatMatricola || "—", margin, y + headerBoxH / 2);
+  headerField("OPERATORE", "", margin + headerColW, y + headerBoxH / 2);
+
+  y += headerBoxH + 9;
+
+  // Tabella controlli: stessa impaginazione a griglia del modulo
+  // cartaceo. Compilazione a mano (checkbox, SI/NO, note, firma): non
+  // e' un form interattivo salvato a database.
+  const qcCols = [
+    { key: "n", label: "#", width: 7, align: "center" as const },
+    { key: "desc", label: "DESCRIZIONE DEL CONTROLLO", width: 72 },
+    { key: "esg", label: "ESEG.", width: 13, align: "center" as const },
+    { key: "pass", label: "PASSED", width: 17, align: "center" as const },
+    { key: "note", label: "NOTE", width: 30 },
+    { key: "op", label: "OPERATORE", width: 23, align: "center" as const },
+    { key: "data", label: "DATA", width: contentWidth - 7 - 72 - 13 - 17 - 30 - 23, align: "center" as const },
+  ];
+
+  function qcColX(index: number) {
+    let x = margin;
+    for (let i = 0; i < index; i++) x += qcCols[i].width;
+    return x;
+  }
+
+  function drawQcTableHeader(topY: number) {
+    const h = 9;
+
+    doc.setFillColor(238, 238, 238);
+    doc.rect(margin, topY, contentWidth, h, "F");
+
+    doc.setDrawColor(170);
+    doc.setLineWidth(0.3);
+    doc.rect(margin, topY, contentWidth, h);
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7);
+    doc.setTextColor(60, 60, 60);
+
+    qcCols.forEach((col, i) => {
+      const x = qcColX(i);
+      doc.line(x, topY, x, topY + h);
+      if (col.align === "center") {
+        doc.text(col.label, x + col.width / 2, topY + h - 3, { align: "center" });
+      } else {
+        doc.text(col.label, x + 2, topY + h - 3);
+      }
+    });
+    doc.line(margin + contentWidth, topY, margin + contentWidth, topY + h);
+
+    doc.setTextColor(0, 0, 0);
+    return topY + h;
+  }
+
+  function drawQcRow(topY: number, item: { n: number; desc: string }) {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.6);
+
+    const descLines = doc.splitTextToSize(item.desc, qcCols[1].width - 4);
+    const rowH = Math.max(14, descLines.length * 3.6 + 6);
+
+    doc.setDrawColor(190);
+    doc.setLineWidth(0.25);
+    doc.rect(margin, topY, contentWidth, rowH);
+
+    qcCols.forEach((col, i) => {
+      const x = qcColX(i);
+      if (i > 0) doc.line(x, topY, x, topY + rowH);
+    });
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8);
+    doc.setTextColor(0, 0, 0);
+    doc.text(String(item.n), qcColX(0) + qcCols[0].width / 2, topY + 5, { align: "center" });
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.6);
+    doc.text(descLines, qcColX(1) + 2, topY + 5);
+
+    // Casella "Eseguito" da spuntare a mano.
+    const esgX = qcColX(2) + qcCols[2].width / 2;
+    doc.setDrawColor(120);
+    doc.setLineWidth(0.3);
+    doc.rect(esgX - 2.2, topY + rowH / 2 - 2.2, 4.4, 4.4);
+
+    // "SI / NO" da cerchiare a mano.
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.5);
+    doc.setTextColor(90, 90, 90);
+    doc.text("SI", qcColX(3) + qcCols[3].width / 2 - 5, topY + rowH / 2 + 1, { align: "center" });
+    doc.text("NO", qcColX(3) + qcCols[3].width / 2 + 5, topY + rowH / 2 + 1, { align: "center" });
+    doc.setTextColor(0, 0, 0);
+
+    return topY + rowH;
+  }
+
+  y = drawQcTableHeader(y);
+
+  QC_CHECK_ITEMS.forEach((item) => {
+    if (y + 16 > pageHeight - 20) {
+      doc.addPage();
+      y = 20;
+      y = drawQcTableHeader(y);
+    }
+    y = drawQcRow(y, item);
+  });
+
+  y += 9;
+
+  if (y + 26 > pageHeight - 20) {
+    doc.addPage();
+    y = 20;
+  }
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9.5);
+  doc.setTextColor(0, 0, 0);
+  doc.text(
+    "Visto l'esito dei controlli, l'imbarcazione può essere imballata.",
+    margin,
+    y
+  );
+  y += 9;
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8.5);
+  doc.setTextColor(90, 90, 90);
+  doc.text("Data", margin, y);
+  doc.text("___ / ___ / 20___", margin + 14, y);
+  doc.text("Firma dell'operatore", margin + 70, y);
+  doc.setDrawColor(150);
+  doc.setLineWidth(0.3);
+  doc.line(margin + 70, y + 10, margin + contentWidth, y + 10);
+  doc.setTextColor(0, 0, 0);
+
+  y += 20;
+
+  if (y + 16 + QC_PACKAGING_ITEMS.length * 14 > pageHeight - 20) {
+    doc.addPage();
+    y = 20;
+  }
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(12);
+  doc.text("IMBALLAGGIO IMBARCAZIONE", margin, y);
+  y += 7;
+
+  y = drawQcTableHeader(y);
+
+  QC_PACKAGING_ITEMS.forEach((item) => {
+    if (y + 16 > pageHeight - 20) {
+      doc.addPage();
+      y = 20;
+      y = drawQcTableHeader(y);
+    }
+    y = drawQcRow(y, item);
+  });
+
+  /* ============================================================
+     PAGINA 2 - GUIDA FOTO BATTELLO
+     ============================================================ */
+
+  doc.addPage();
+
+  drawCompanyLogoTopRight(doc, logo);
+
+  doc.setTextColor(0, 0, 0);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(16);
+  doc.text("GUIDA FOTO BATTELLO", margin, 16);
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9.5);
+  doc.setTextColor(120, 120, 120);
+  const subtitleParts = [
+    boatProgressiveNo ? `Prog. ${boatProgressiveNo}` : null,
+    boatOrderNumber,
+    boatModel,
+  ].filter(Boolean);
+  doc.text(subtitleParts.join(" · "), margin, 22);
+  doc.setTextColor(0, 0, 0);
+
+  doc.setFont("helvetica", "italic");
+  doc.setFontSize(8.8);
+  doc.setTextColor(90, 90, 90);
+  const introLines = doc.splitTextToSize(
+    "Prima di imballare: battello pulito e completo di accessori, buona luce, nessun ingombro intorno. Una foto per ogni punto numerato qui sotto, poi caricarle nell'Archivio foto di questo battello (icona fotocamera nella pagina Produzione).",
+    contentWidth
+  );
+  doc.text(introLines, margin, 29);
+  doc.setTextColor(0, 0, 0);
+
+  // -------- Schema gommone, vista dall'alto --------
+  const diagramTop = 29 + introLines.length * 4.1 + 9;
+  const hullCenterX = pageWidth / 2;
+  const hullLength = 112;
+  const hullHalfWidth = 29;
+  const hullTop = diagramTop;
+  const hullBottom = hullTop + hullLength;
+  const hullCenterY = hullTop + hullLength / 2;
+
+  // Profilo del lato destro, dalla prua alla poppa, come frazioni di
+  // mezza lunghezza/mezza larghezza rispetto al centro - lo scafo si
+  // ottiene specchiando questi punti anche sul lato sinistro.
+  const rightProfile: [number, number][] = [
+    [0, -1.0],
+    [0.3, -0.84],
+    [0.56, -0.6],
+    [0.74, -0.3],
+    [0.82, 0.04],
+    [0.8, 0.4],
+    [0.64, 0.68],
+    [0.46, 0.88],
+    [0.4, 0.98],
+  ];
+
+  const hullPoints: [number, number][] = [
+    ...rightProfile.map(
+      ([fx, fy]) =>
+        [hullCenterX + fx * hullHalfWidth, hullCenterY + fy * (hullLength / 2)] as [
+          number,
+          number,
+        ]
+    ),
+    [hullCenterX - 0.4 * hullHalfWidth, hullCenterY + 0.98 * (hullLength / 2)],
+    ...[...rightProfile]
+      .slice(1)
+      .reverse()
+      .map(
+        ([fx, fy]) =>
+          [hullCenterX - fx * hullHalfWidth, hullCenterY + fy * (hullLength / 2)] as [
+            number,
+            number,
+          ]
+      ),
+  ];
+
+  doc.setDrawColor(70, 70, 70);
+  doc.setLineWidth(0.6);
+  doc.setFillColor(233, 241, 247);
+  doc.lines(
+    hullPoints.slice(1).map((p, i) => [p[0] - hullPoints[i][0], p[1] - hullPoints[i][1]]),
+    hullPoints[0][0],
+    hullPoints[0][1],
+    [1, 1],
+    "FD",
+    true
+  );
+
+  // Tubolari (le due strisce gonfiabili laterali).
+  doc.setFillColor(203, 221, 233);
+  doc.setDrawColor(70, 70, 70);
+  doc.setLineWidth(0.4);
+  const tubeY = hullTop + hullLength * 0.14;
+  const tubeH = hullLength * 0.7;
+  doc.roundedRect(hullCenterX - hullHalfWidth * 0.95, tubeY, hullHalfWidth * 0.22, tubeH, 5, 5, "FD");
+  doc.roundedRect(hullCenterX + hullHalfWidth * 0.73, tubeY, hullHalfWidth * 0.22, tubeH, 5, 5, "FD");
+
+  // Consolle di comando.
+  doc.setFillColor(255, 255, 255);
+  doc.roundedRect(hullCenterX - 13, hullTop + hullLength * 0.3, 26, 15, 2, 2, "FD");
+
+  // Pozzetto / sedute.
+  doc.roundedRect(hullCenterX - 15, hullTop + hullLength * 0.52, 30, hullLength * 0.2, 2, 2, "FD");
+
+  // Gavoni (prua + poppa dx/sx): rettangoli piu' piccoli, colore
+  // diverso per distinguerli a colpo d'occhio dal resto dello scafo.
+  const gavoni = [
+    { x: hullCenterX - 7.5, y: hullTop + hullLength * 0.07, w: 15, h: 9 },
+    { x: hullCenterX - hullHalfWidth * 0.6 - 6, y: hullTop + hullLength * 0.8, w: 12, h: 8.5 },
+    { x: hullCenterX + hullHalfWidth * 0.6 - 6, y: hullTop + hullLength * 0.8, w: 12, h: 8.5 },
+  ];
+
+  gavoni.forEach((g) => {
+    doc.setFillColor(255, 248, 229);
+    doc.setDrawColor(188, 148, 68);
+    doc.setLineWidth(0.4);
+    doc.roundedRect(g.x, g.y, g.w, g.h, 1.3, 1.3, "FD");
+  });
+
+  doc.setDrawColor(70, 70, 70);
+
+  type Callout = { n: number; x: number; y: number; label: string };
+
+  const callouts: Callout[] = [
+    { n: 1, x: hullCenterX, y: hullTop - 5, label: "Prua - vista frontale" },
+    { n: 2, x: hullCenterX + hullHalfWidth + 7, y: hullCenterY, label: "Fianco destro - vista laterale intera" },
+    { n: 3, x: hullCenterX - hullHalfWidth - 7, y: hullCenterY, label: "Fianco sinistro - vista laterale intera" },
+    { n: 4, x: hullCenterX, y: hullBottom + 5, label: "Poppa / motore - vista posteriore" },
+    { n: 5, x: hullCenterX, y: hullTop + hullLength * 0.375, label: "Consolle e plancia di comando" },
+    { n: 6, x: hullCenterX, y: hullTop + hullLength * 0.62, label: "Pozzetto e sedute - dall'alto" },
+    {
+      n: 7,
+      x: gavoni[0].x + gavoni[0].w / 2,
+      y: gavoni[0].y + gavoni[0].h / 2,
+      label: "Gavone di prua - aperto, un gavone per foto",
+    },
+    {
+      n: 8,
+      x: gavoni[1].x + gavoni[1].w / 2,
+      y: gavoni[1].y + gavoni[1].h / 2,
+      label: "Gavone di poppa destro - aperto",
+    },
+    {
+      n: 9,
+      x: gavoni[2].x + gavoni[2].w / 2,
+      y: gavoni[2].y + gavoni[2].h / 2,
+      label: "Gavone di poppa sinistro - aperto",
+    },
+  ];
+
+  callouts.forEach((c) => {
+    doc.setFillColor(31, 78, 121);
+    doc.setDrawColor(255, 255, 255);
+    doc.setLineWidth(0.5);
+    doc.circle(c.x, c.y, 3.6, "FD");
+
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.2);
+    doc.text(String(c.n), c.x, c.y + 1.3, { align: "center" });
+  });
+
+  doc.setTextColor(0, 0, 0);
+
+  // -------- Legenda --------
+  let legendY = hullBottom + 15;
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10.5);
+  doc.text("COSA FOTOGRAFARE", margin, legendY);
+  legendY += 6.5;
+
+  callouts.forEach((c) => {
+    doc.setFillColor(31, 78, 121);
+    doc.circle(margin + 2.6, legendY - 1.2, 2.6, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(6.4);
+    doc.text(String(c.n), margin + 2.6, legendY - 0.3, { align: "center" });
+
+    doc.setTextColor(0, 0, 0);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.6);
+    doc.text(c.label, margin + 8, legendY);
+
+    legendY += 5.6;
+  });
+
+  legendY += 3;
+  doc.setDrawColor(210);
+  doc.setLineWidth(0.3);
+  doc.line(margin, legendY, pageWidth - margin, legendY);
+  legendY += 8;
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9.5);
+  doc.text("OGNI GAVONE SI FOTOGRAFA A PARTE", margin, legendY);
+  legendY += 5.5;
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8.6);
+  doc.setTextColor(60, 60, 60);
+  const gavoniNote = doc.splitTextToSize(
+    "Aprire un gavone alla volta, fare la foto con il portello alzato e il contenuto visibile, poi richiuderlo prima di passare al successivo. Ripetere per ogni gavone presente sul battello, anche quelli non disegnati qui sopra.",
+    contentWidth
+  );
+  doc.text(gavoniNote, margin, legendY);
+  doc.setTextColor(0, 0, 0);
+
+  /* ============================================================
+     PIE' DI PAGINA
+     ============================================================ */
+
+  const totalPages = doc.getNumberOfPages();
+  for (let page = 1; page <= totalPages; page++) {
+    doc.setPage(page);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(130, 130, 130);
+    doc.text(`Pagina ${page} di ${totalPages}`, pageWidth - margin, pageHeight - 8, {
+      align: "right",
+    });
+  }
+
+  const safeOrder = boatOrderNumber.replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  const filename = `Collaudo_finale_${safeOrder || "battello"}.pdf`;
+
+  return { doc, filename };
+}

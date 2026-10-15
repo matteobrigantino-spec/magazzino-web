@@ -278,6 +278,12 @@ export default function ProductionBoatDetailPage({
   const [editOrigQuilting, setEditOrigQuilting] = useState("");
   const [editOrderItemId, setEditOrderItemId] = useState<string | null>(null);
 
+  // Avviso (non bloccante) se la richiesta e' stata corretta ma non
+  // siamo riusciti ad aggiornare anche la riga d'ordine collegata -
+  // resta visibile anche dopo aver chiuso il modulo di modifica, cosi'
+  // non passa inosservato.
+  const [orderSyncWarning, setOrderSyncWarning] = useState("");
+
   const [searchingReqId, setSearchingReqId] = useState("");
   const [stockCandidates, setStockCandidates] = useState<
     UpholsteryStockCandidate[]
@@ -604,6 +610,10 @@ export default function ProductionBoatDetailPage({
   // battelli con la stessa combinazione ne stacca 1 pezzo e lo sposta
   // su una variante (nuova o gia' esistente) con i valori corretti, per
   // non cambiare colore anche alle quantita' degli altri battelli.
+  // Ritorna null se e' andato tutto bene (o non c'era niente da fare),
+  // altrimenti un messaggio da far vedere all'utente - finora questi
+  // problemi finivano solo in console, invisibili, e sembrava che "non
+  // avesse fatto niente" senza modo di capire perche'.
   async function syncOrderVariantForEdit(params: {
     orderItemId: string;
     oldColor: string;
@@ -614,7 +624,7 @@ export default function ProductionBoatDetailPage({
     newDetails: string;
     newStitching: string;
     newQuilting: string;
-  }) {
+  }): Promise<string | null> {
     const {
       orderItemId,
       oldColor,
@@ -633,18 +643,28 @@ export default function ProductionBoatDetailPage({
       oldStitching === newStitching &&
       oldQuilting === newQuilting
     ) {
-      return;
+      return null;
     }
 
-    const { data: variantRows } = await supabase
+    const { data: variantRows, error: fetchError } = await supabase
       .from("order_item_variants")
       .select("id,qty,color,details_logos,stitching,quilting")
       .eq("order_item_id", orderItemId);
 
+    if (fetchError) {
+      return (
+        "richiesta corretta, ma non sono riuscito a leggere la riga d'ordine collegata per aggiornarla anche li' (" +
+        fetchError.message +
+        "). Correggila a mano sull'ordine."
+      );
+    }
+
     if (!variantRows || variantRows.length === 0) {
       // Ordine creato prima che esistessero le varianti per colore:
       // non c'e' niente da correggere sulla riga d'ordine.
-      return;
+      return (
+        "richiesta corretta, ma la riga d'ordine collegata non ha colori salvati separatamente (ordine creato prima di questa funzione): correggila a mano sull'ordine."
+      );
     }
 
     const oldMatch = variantRows.find(
@@ -656,14 +676,17 @@ export default function ProductionBoatDetailPage({
     );
 
     if (!oldMatch) {
-      // Non troviamo a quale variante corrispondeva prima: meglio non
-      // toccare l'ordine piuttosto che rischiare di correggere quella
-      // sbagliata.
-      return;
+      // Non troviamo a quale variante corrispondeva prima (magari era
+      // gia' stata corretta a meta' in un tentativo precedente): meglio
+      // non toccare l'ordine piuttosto che rischiare di correggere
+      // quella sbagliata.
+      return (
+        "richiesta corretta, ma non ho trovato sulla riga d'ordine collegata il colore/dettagli che questa richiesta aveva prima della modifica: correggila a mano sull'ordine."
+      );
     }
 
     if (Number(oldMatch.qty || 0) <= 1) {
-      await supabase
+      const { error: updateError } = await supabase
         .from("order_item_variants")
         .update({
           color: newColor,
@@ -672,13 +695,30 @@ export default function ProductionBoatDetailPage({
           quilting: newQuilting,
         })
         .eq("id", oldMatch.id);
-      return;
+
+      if (updateError) {
+        return (
+          "richiesta corretta, ma l'aggiornamento della riga d'ordine e' fallito (" +
+          updateError.message +
+          "). Correggila a mano sull'ordine."
+        );
+      }
+
+      return null;
     }
 
-    await supabase
+    const { error: decrementError } = await supabase
       .from("order_item_variants")
       .update({ qty: Number(oldMatch.qty || 0) - 1 })
       .eq("id", oldMatch.id);
+
+    if (decrementError) {
+      return (
+        "richiesta corretta, ma l'aggiornamento della riga d'ordine e' fallito (" +
+        decrementError.message +
+        "). Correggila a mano sull'ordine."
+      );
+    }
 
     const newMatch = variantRows.find(
       (v: any) =>
@@ -690,27 +730,48 @@ export default function ProductionBoatDetailPage({
     );
 
     if (newMatch) {
-      await supabase
+      const { error: mergeError } = await supabase
         .from("order_item_variants")
         .update({ qty: Number(newMatch.qty || 0) + 1 })
         .eq("id", newMatch.id);
+
+      if (mergeError) {
+        return (
+          "richiesta corretta, ma l'aggiornamento della riga d'ordine e' fallito (" +
+          mergeError.message +
+          "). Correggila a mano sull'ordine."
+        );
+      }
     } else {
-      await supabase.from("order_item_variants").insert({
-        order_item_id: orderItemId,
-        qty: 1,
-        color: newColor,
-        details_logos: newDetails,
-        stitching: newStitching,
-        quilting: newQuilting,
-        coverage: null,
-        note: null,
-        requested_delivery_date: null,
-      });
+      const { error: insertError } = await supabase
+        .from("order_item_variants")
+        .insert({
+          order_item_id: orderItemId,
+          qty: 1,
+          color: newColor,
+          details_logos: newDetails,
+          stitching: newStitching,
+          quilting: newQuilting,
+          coverage: null,
+          note: null,
+          requested_delivery_date: null,
+        });
+
+      if (insertError) {
+        return (
+          "richiesta corretta, ma l'aggiornamento della riga d'ordine e' fallito (" +
+          insertError.message +
+          "). Correggila a mano sull'ordine."
+        );
+      }
     }
+
+    return null;
   }
 
   async function saveUpholsteryEdit() {
     setEditReqError("");
+    setOrderSyncWarning("");
 
     if (
       !editReqSupplierId ||
@@ -757,7 +818,7 @@ export default function ProductionBoatDetailPage({
       editReqItemId === editOrigItemId
     ) {
       try {
-        await syncOrderVariantForEdit({
+        const warning = await syncOrderVariantForEdit({
           orderItemId: editOrderItemId,
           oldColor: editOrigColor,
           oldDetails: editOrigDetails,
@@ -768,10 +829,17 @@ export default function ProductionBoatDetailPage({
           newStitching: editReqStitching,
           newQuilting: editReqQuilting,
         });
+
+        if (warning) {
+          setOrderSyncWarning(warning);
+        }
       } catch (orderSyncError) {
         console.error(
           "Errore aggiornamento riga d'ordine collegata:",
           orderSyncError
+        );
+        setOrderSyncWarning(
+          "richiesta corretta, ma l'aggiornamento della riga d'ordine e' fallito. Correggila a mano sull'ordine."
         );
       }
     }
@@ -2011,6 +2079,19 @@ export default function ProductionBoatDetailPage({
           </button>
         </div>
 
+        {orderSyncWarning && (
+          <div className="pbd-form-warning">
+            ⚠ {orderSyncWarning}
+            <button
+              type="button"
+              className="pbd-btn-link"
+              onClick={() => setOrderSyncWarning("")}
+            >
+              Ho capito
+            </button>
+          </div>
+        )}
+
         {upholsteryRequirements.length === 0 && !showAddUpholstery && (
           <div className="pbd-note">
             Nessuna tappezzeria collegata a questo battello.
@@ -2907,6 +2988,7 @@ function Styles() {
       .pbd-card { margin-top:11px; padding:16px; border:1px solid rgba(148,163,184,.15); border-radius:13px; background:#0b1828; }
       .pbd-note { margin-top:9px; padding:12px; border:1px solid rgba(96,165,250,.15); border-radius:9px; background:rgba(59,130,246,.04); color:#d9e6f5; font-size:11px; line-height:1.6; white-space:pre-wrap; }
       .pbd-form-error { margin-top:10px; padding:10px 12px; border:1px solid rgba(239,68,68,.28); border-radius:9px; background:rgba(239,68,68,.08); color:#fca5a5; font-size:10px; font-weight:800; }
+      .pbd-form-warning { margin-bottom:12px; padding:10px 12px; border:1px solid rgba(217,163,56,.35); border-radius:9px; background:rgba(217,163,56,.1); color:#d9a338; font-size:10.5px; font-weight:700; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
       .pbd-edit-grid { margin-top:14px; display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }
       .pbd-field { min-width:0; }
       .pbd-field.wide { grid-column:span 2; }

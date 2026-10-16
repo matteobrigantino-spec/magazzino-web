@@ -2,10 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import { supabase } from "../../../lib/supabaseClient";
 import CameraIcon from "../../../components/CameraIcon";
-import BoatPhotosModal from "../../../components/BoatPhotosModal";
+import BoatArchiveModal from "../../../components/BoatArchiveModal";
 
 /*
   BATTELLI CONSEGNATI (STEP 54)
@@ -39,20 +38,23 @@ function formatItDateTime(value: string) {
 }
 
 export default function ConsegnatiPage() {
-  const router = useRouter();
   const [boats, setBoats] = useState<Boat[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [message, setMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
 
-  // Archivio foto battello (STEP 56): stesso tasto fotocamera della
-  // pagina Produzione, cosi' le foto restano consultabili anche dopo
-  // la consegna, a distanza di tempo.
+  // Archivio foto + documenti battello (STEP 56/57): un battello
+  // consegnato non ha piu' senso vederlo come se fosse in produzione
+  // (percorso reparti), quindi sia il click sulla riga sia il tasto
+  // fotocamera aprono questo archivio invece della scheda produzione.
   const [photoCountByBoatId, setPhotoCountByBoatId] = useState<
     Record<string, number>
   >({});
-  const [galleryBoat, setGalleryBoat] = useState<{ id: string; label: string } | null>(
+  const [docCountByBoatId, setDocCountByBoatId] = useState<
+    Record<string, number>
+  >({});
+  const [archiveBoat, setArchiveBoat] = useState<{ id: string; label: string } | null>(
     null
   );
 
@@ -91,10 +93,15 @@ export default function ConsegnatiPage() {
       }))
     );
 
-    // Conteggio foto per battello (STEP 56), sola lettura: se la
-    // tabella non esiste ancora su Supabase la query fallisce da sola
-    // e i conteggi restano a zero, senza bloccare il resto della pagina.
-    const photoCountRes = await supabase.from("production_boat_photos").select("boat_id");
+    // Conteggio foto e documenti per battello (STEP 56/57), sola
+    // lettura: se una tabella non esiste ancora su Supabase quella
+    // query fallisce da sola e il relativo conteggio resta a zero,
+    // senza bloccare il resto della pagina.
+    const [photoCountRes, docCountRes] = await Promise.all([
+      supabase.from("production_boat_photos").select("boat_id"),
+      supabase.from("production_boat_documents").select("boat_id"),
+    ]);
+
     if (!photoCountRes.error) {
       const counts: Record<string, number> = {};
       (photoCountRes.data || []).forEach((row: any) => {
@@ -102,6 +109,15 @@ export default function ConsegnatiPage() {
         counts[id] = (counts[id] || 0) + 1;
       });
       setPhotoCountByBoatId(counts);
+    }
+
+    if (!docCountRes.error) {
+      const counts: Record<string, number> = {};
+      (docCountRes.data || []).forEach((row: any) => {
+        const id = String(row.boat_id);
+        counts[id] = (counts[id] || 0) + 1;
+      });
+      setDocCountByBoatId(counts);
     }
 
     setLoading(false);
@@ -216,7 +232,12 @@ export default function ConsegnatiPage() {
                 filteredBoats.map((boat) => (
                   <tr
                     key={boat.id}
-                    onClick={() => router.push(`/produzione/${boat.id}`)}
+                    onClick={() =>
+                      setArchiveBoat({
+                        id: boat.id,
+                        label: `${boat.order_number} · ${boat.model_boat}`,
+                      })
+                    }
                     className="pdl-click-row"
                   >
                     <td>{boat.progressive_no ?? "—"}</td>
@@ -236,18 +257,22 @@ export default function ConsegnatiPage() {
                       <button
                         type="button"
                         className="pdl-photo-btn"
-                        title="Archivio foto battello"
+                        title="Foto e documenti battello"
                         onClick={() =>
-                          setGalleryBoat({
+                          setArchiveBoat({
                             id: boat.id,
                             label: `${boat.order_number} · ${boat.model_boat}`,
                           })
                         }
                       >
                         <CameraIcon />
-                        {Boolean(photoCountByBoatId[boat.id]) && (
+                        {Boolean(
+                          (photoCountByBoatId[boat.id] || 0) +
+                            (docCountByBoatId[boat.id] || 0)
+                        ) && (
                           <span className="pdl-photo-badge">
-                            {photoCountByBoatId[boat.id]}
+                            {(photoCountByBoatId[boat.id] || 0) +
+                              (docCountByBoatId[boat.id] || 0)}
                           </span>
                         )}
                       </button>
@@ -260,13 +285,16 @@ export default function ConsegnatiPage() {
         </div>
       </section>
 
-      {galleryBoat && (
-        <BoatPhotosModal
-          boatId={galleryBoat.id}
-          boatLabel={galleryBoat.label}
-          onClose={() => setGalleryBoat(null)}
-          onCountChange={(boatId, count) =>
+      {archiveBoat && (
+        <BoatArchiveModal
+          boatId={archiveBoat.id}
+          boatLabel={archiveBoat.label}
+          onClose={() => setArchiveBoat(null)}
+          onPhotoCountChange={(boatId, count) =>
             setPhotoCountByBoatId((current) => ({ ...current, [boatId]: count }))
+          }
+          onDocCountChange={(boatId, count) =>
+            setDocCountByBoatId((current) => ({ ...current, [boatId]: count }))
           }
         />
       )}

@@ -4,16 +4,20 @@ import { useEffect, useRef, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
 
 /*
-  ARCHIVIO BATTELLO (foto + documenti insieme)
+  ARCHIVIO BATTELLO (dettagli + foto + documenti insieme)
 
-  Pannello unico che mostra, per un battello, sia le foto (griglia di
-  miniature in formato medio-piccolo) sia i documenti PDF caricati,
-  uno sotto l'altro nella stessa vista: usato principalmente per i
-  battelli consegnati, dove non ha senso aprire la scheda di
+  Pannello unico che mostra, per un battello, i dettagli di sola
+  lettura (colori carena/ragno-longheroni/coperta/tubolare, optional
+  scelti, note), poi le foto (griglia di miniature in formato
+  medio-piccolo) e i documenti PDF caricati: usato principalmente per
+  i battelli consegnati, dove non ha senso aprire la scheda di
   produzione (percorso lavorazione reparti) ma serve solo consultare
-  quello che e' stato caricato. Stessa logica di upload/eliminazione
-  di BoatPhotosModal e BoatDocumentsModal, solo unite in un unico
-  pannello invece di due separati.
+  quello che e' stato caricato/configurato. Stessa logica di
+  upload/eliminazione di BoatPhotosModal e BoatDocumentsModal, solo
+  unite in un unico pannello invece di due separati, con in piu' la
+  lettura (sola lettura, nessuna modifica da qui) di
+  production_boats, production_tubolari e production_bom_sections /
+  production_boat_bom_sections gia' usate nella scheda di produzione.
 */
 
 type BoatPhoto = {
@@ -34,6 +38,35 @@ type BoatDocument = {
   uploaded_by: string | null;
 };
 
+type BoatDetails = {
+  hull: string;
+  stringers: string;
+  deck: string;
+  accessories: string;
+  note: string | null;
+  tubeColor: string;
+  optionalSections: string[];
+};
+
+const EMPTY_DETAILS: BoatDetails = {
+  hull: "",
+  stringers: "",
+  deck: "",
+  accessories: "",
+  note: null,
+  tubeColor: "",
+  optionalSections: [],
+};
+
+function DetailItem({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="bam-detail-item">
+      <div className="bam-detail-label">{label}</div>
+      <div className="bam-detail-value">{value || "—"}</div>
+    </div>
+  );
+}
+
 export default function BoatArchiveModal({
   boatId,
   boatLabel,
@@ -49,6 +82,8 @@ export default function BoatArchiveModal({
 }) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
+
+  const [details, setDetails] = useState<BoatDetails>(EMPTY_DETAILS);
 
   const [photos, setPhotos] = useState<BoatPhoto[]>([]);
   const [uploadingPhotos, setUploadingPhotos] = useState(false);
@@ -71,18 +106,39 @@ export default function BoatArchiveModal({
     setLoading(true);
     setLoadError("");
 
-    const [photosResult, documentsResult] = await Promise.all([
-      supabase
-        .from("production_boat_photos")
-        .select("id,storage_path,url,file_name,uploaded_at,uploaded_by")
-        .eq("boat_id", boatId)
-        .order("uploaded_at", { ascending: false }),
-      supabase
-        .from("production_boat_documents")
-        .select("id,storage_path,url,file_name,uploaded_at,uploaded_by")
-        .eq("boat_id", boatId)
-        .order("uploaded_at", { ascending: false }),
-    ]);
+    const [photosResult, documentsResult, boatResult, tubeResult, boatSectionsResult] =
+      await Promise.all([
+        supabase
+          .from("production_boat_photos")
+          .select("id,storage_path,url,file_name,uploaded_at,uploaded_by")
+          .eq("boat_id", boatId)
+          .order("uploaded_at", { ascending: false }),
+        supabase
+          .from("production_boat_documents")
+          .select("id,storage_path,url,file_name,uploaded_at,uploaded_by")
+          .eq("boat_id", boatId)
+          .order("uploaded_at", { ascending: false }),
+        supabase
+          .from("production_boats")
+          .select("model_boat,hull,stringers,deck,accessories,note")
+          .eq("id", boatId)
+          .maybeSingle(),
+        // Colore tubolare (solo per i gommoni): tabella a parte,
+        // una riga per battello. Se non esiste nessuna riga (battello
+        // senza tubolare) non e' un errore, resta semplicemente vuoto.
+        supabase
+          .from("production_tubolari")
+          .select("tube_color")
+          .eq("boat_id", boatId)
+          .maybeSingle(),
+        // Optional scelti per QUESTO battello: qui prendiamo solo gli
+        // id delle sezioni scelte, i nomi arrivano nel secondo giro
+        // sotto (serve prima sapere il modello del battello).
+        supabase
+          .from("production_boat_bom_sections")
+          .select("section_id")
+          .eq("boat_id", boatId),
+      ]);
 
     if (photosResult.error && documentsResult.error) {
       setLoadError("Errore caricamento archivio: " + photosResult.error.message);
@@ -99,6 +155,44 @@ export default function BoatArchiveModal({
         onDocCountChange?.(boatId, rows.length);
       }
     }
+
+    const boatRow = !boatResult.error ? (boatResult.data as any) : null;
+
+    let optionalSections: string[] = [];
+
+    const selectedSectionIds = !boatSectionsResult.error
+      ? new Set(
+          (boatSectionsResult.data || []).map((row: any) => String(row.section_id))
+        )
+      : new Set<string>();
+
+    if (boatRow?.model_boat && selectedSectionIds.size > 0) {
+      const sectionsRes = await supabase
+        .from("production_bom_sections")
+        .select("id,name")
+        .eq("model_boat", boatRow.model_boat)
+        .eq("kind", "optional")
+        .order("sort_order", { ascending: true });
+
+      if (!sectionsRes.error) {
+        optionalSections = (sectionsRes.data || [])
+          .filter((section: any) => selectedSectionIds.has(String(section.id)))
+          .map((section: any) => String(section.name));
+      }
+    }
+
+    setDetails({
+      hull: boatRow?.hull ? String(boatRow.hull) : "",
+      stringers: boatRow?.stringers ? String(boatRow.stringers) : "",
+      deck: boatRow?.deck ? String(boatRow.deck) : "",
+      accessories: boatRow?.accessories ? String(boatRow.accessories) : "",
+      note: boatRow?.note ? String(boatRow.note) : null,
+      tubeColor:
+        !tubeResult.error && tubeResult.data?.tube_color
+          ? String(tubeResult.data.tube_color)
+          : "",
+      optionalSections,
+    });
 
     setLoading(false);
   }
@@ -280,6 +374,44 @@ export default function BoatArchiveModal({
             <div className="bam-hint">Caricamento...</div>
           ) : (
             <>
+              {/* DETTAGLI BATTELLO: colori, optional, note */}
+
+              <div className="bam-section">
+                <div className="bam-section-head">
+                  <span className="bam-section-title">Dettagli battello</span>
+                </div>
+
+                <div className="bam-details-grid">
+                  <DetailItem label="Carena" value={details.hull} />
+                  <DetailItem label="Ragno / Longheroni" value={details.stringers} />
+                  <DetailItem label="Coperta" value={details.deck} />
+                  <DetailItem label="Colore tubolare" value={details.tubeColor} />
+                  <DetailItem label="Accessori" value={details.accessories} />
+                </div>
+
+                {details.optionalSections.length > 0 && (
+                  <div className="bam-optional-block">
+                    <div className="bam-detail-label">Optional</div>
+                    <div className="bam-tags">
+                      {details.optionalSections.map((name) => (
+                        <span key={name} className="bam-tag">
+                          {name}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="bam-optional-block">
+                  <div className="bam-detail-label">Note</div>
+                  <div className="bam-note">
+                    {details.note || "Nessuna nota inserita."}
+                  </div>
+                </div>
+              </div>
+
+              <div className="bam-divider" />
+
               {/* FOTO */}
 
               <div className="bam-section">
@@ -485,6 +617,60 @@ export default function BoatArchiveModal({
         .bam-divider {
           margin: 18px 0;
           border-top: 1px solid rgba(148, 163, 184, 0.14);
+        }
+        .bam-details-grid {
+          margin-top: 12px;
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+          gap: 12px;
+        }
+        .bam-detail-item {
+          min-width: 0;
+        }
+        .bam-detail-label {
+          color: #7388a3;
+          font-size: 9.5px;
+          font-weight: 850;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+        }
+        .bam-detail-value {
+          margin-top: 3px;
+          color: #f8fafc;
+          font-size: 13px;
+          font-weight: 750;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .bam-optional-block {
+          margin-top: 16px;
+        }
+        .bam-tags {
+          margin-top: 6px;
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+        }
+        .bam-tag {
+          padding: 5px 10px;
+          border-radius: 999px;
+          border: 1px solid rgba(96, 165, 250, 0.3);
+          background: rgba(59, 130, 246, 0.1);
+          color: #93c5fd;
+          font-size: 11px;
+          font-weight: 750;
+        }
+        .bam-note {
+          margin-top: 6px;
+          padding: 10px 12px;
+          border: 1px solid rgba(148, 163, 184, 0.18);
+          border-radius: 9px;
+          background: rgba(255, 255, 255, 0.02);
+          color: #cbd5f5;
+          font-size: 12.5px;
+          line-height: 1.55;
+          white-space: pre-wrap;
         }
         .bam-add-btn {
           min-height: 34px;

@@ -352,163 +352,80 @@ export default function Home() {
       return;
     }
 
-    const {
-      data: suppliersData,
-      error: suppliersError,
-    } = await supabase
-      .from("suppliers")
-      .select("id,name")
-      .order("name");
-
-    if (suppliersError) {
+    if (
+      currentPermissions.reminders === true &&
+      !currentUserId
+    ) {
       setErrorMessage(
-        "Errore caricamento fornitori: " +
-          suppliersError.message
+        "Utente non riconosciuto. Esci e accedi nuovamente."
       );
 
       setLoading(false);
       return;
     }
 
-    let itemsData: ItemDbRow[] = [];
+    /*
+      PERFORMANCE: tutte le query qui sotto sono indipendenti tra
+      loro (nessuna ha bisogno del risultato di un'altra prima di
+      poter partire), quindi le avviamo tutte insieme con
+      Promise.all invece che una dopo l'altra con tanti "await" in
+      fila. Prima il tempo di apertura della dashboard era la SOMMA
+      di ogni richiesta; ora è solo il tempo della più lenta.
+    */
+    const suppliersPromise = supabase
+      .from("suppliers")
+      .select("id,name")
+      .order("name");
 
-    if (
+    const itemsPromise =
       currentPermissions
         .view_inventory_value === true
-    ) {
-      const {
-        data,
-        error,
-      } = await supabase
-        .from("items")
-        .select(
-          "id,supplier_id,code,supplier_code,description,price,stock,min_stock,on_order"
-        );
+        ? supabase
+            .from("items")
+            .select(
+              "id,supplier_id,code,supplier_code,description,price,stock,min_stock,on_order"
+            )
+        : supabase
+            .from("items")
+            .select(
+              "id,supplier_id,code,supplier_code,description,stock,min_stock,on_order"
+            );
 
-      if (error) {
-        setErrorMessage(
-          "Errore caricamento articoli: " +
-            error.message
-        );
+    const ordersPromise =
+      currentPermissions.orders === true
+        ? supabase
+            .from("orders")
+            .select(
+              "id,supplier_id,status,order_date,created_at"
+            )
+            .order("created_at", {
+              ascending: false,
+            })
+        : null;
 
-        setLoading(false);
-        return;
-      }
-
-      itemsData =
-        (data || []) as ItemDbRow[];
-    } else {
-      const {
-        data,
-        error,
-      } = await supabase
-        .from("items")
-        .select(
-          "id,supplier_id,code,supplier_code,description,stock,min_stock,on_order"
-        );
-
-      if (error) {
-        setErrorMessage(
-          "Errore caricamento articoli: " +
-            error.message
-        );
-
-        setLoading(false);
-        return;
-      }
-
-      itemsData =
-        (data || []) as ItemDbRow[];
-    }
-
-    let ordersData: Order[] = [];
-
-    if (
-      currentPermissions.orders ===
-      true
-    ) {
-      const {
-        data,
-        error,
-      } = await supabase
-        .from("orders")
-        .select(
-          "id,supplier_id,status,order_date,created_at"
-        )
-        .order("created_at", {
-          ascending: false,
-        });
-
-      if (error) {
-        setErrorMessage(
-          "Errore caricamento ordini: " +
-            error.message
-        );
-
-        setLoading(false);
-        return;
-      }
-
-      ordersData =
-        (data || []) as Order[];
-    }
-
-    let remindersData:
-      Reminder[] = [];
-
-    if (
-      currentPermissions.reminders ===
-      true
-    ) {
-      if (!currentUserId) {
-        setErrorMessage(
-          "Utente non riconosciuto. Esci e accedi nuovamente."
-        );
-
-        setLoading(false);
-        return;
-      }
-
-      const {
-        data,
-        error,
-      } = await supabase
-        .from("reminders")
-        .select(
-          "id,user_id,title,reminder_date,note,is_done,completed_at,created_at"
-        )
-        .eq("user_id", currentUserId)
-        .eq("is_done", false)
-        .order("reminder_date", {
-          ascending: true,
-        })
-        .order("created_at", {
-          ascending: true,
-        });
-
-      if (error) {
-        setErrorMessage(
-          "Errore caricamento promemoria: " +
-            error.message
-        );
-
-        setLoading(false);
-        return;
-      }
-
-      remindersData =
-        (data || []) as Reminder[];
-    }
+    const remindersPromise =
+      currentPermissions.reminders === true
+        ? supabase
+            .from("reminders")
+            .select(
+              "id,user_id,title,reminder_date,note,is_done,completed_at,created_at"
+            )
+            .eq("user_id", currentUserId)
+            .eq("is_done", false)
+            .order("reminder_date", {
+              ascending: true,
+            })
+            .order("created_at", {
+              ascending: true,
+            })
+        : null;
 
     /*
       Note condivise non lette: non blocca mai la dashboard,
       è solo un'informazione in più.
     */
-    let unreadNotesData: UnreadNote[] = [];
-
-    if (currentUserId) {
-      const { data: unreadData, error: unreadError } =
-        await supabase
+    const unreadNotesPromise = currentUserId
+      ? supabase
           .from("shared_notes")
           .select(
             "id,sender_name,title,message,created_at"
@@ -516,193 +433,104 @@ export default function Home() {
           .eq("recipient_user_id", currentUserId)
           .eq("status", "new")
           .order("created_at", { ascending: false })
-          .limit(50);
-
-      if (!unreadError) {
-        unreadNotesData =
-          (unreadData || []) as UnreadNote[];
-      }
-    }
+          .limit(50)
+      : null;
 
     /*
-      Battelli a rischio consegna: battelli attivi con una data di
-      consegna richiesta ancora senza parabrezza o tappezzeria
-      assegnati. Anche questo non blocca mai la dashboard: se la
-      produzione non è configurata semplicemente non mostra nulla.
+      Battelli a rischio consegna e ordini fornitore in ritardo:
+      stessa logica di prima (non bloccano mai la dashboard in
+      caso di errore), spostata in due funzioni a parte così
+      possono partire insieme a tutto il resto invece che per
+      ultime.
     */
-    let boatsAtRiskData: BoatAtRisk[] = [];
+    const boatsAtRiskPromise = fetchBoatsAtRiskData();
 
-    try {
-      const { data: riskBoatsData, error: riskBoatsError } =
-        await supabase
-          .from("production_boats")
-          .select(
-            "id,order_number,model_boat,requested_delivery_date"
-          )
-          .eq("status", "active")
-          .not("requested_delivery_date", "is", null)
-          .order("requested_delivery_date", {
-            ascending: true,
-          })
-          .limit(40);
+    const overdueRawPromise = fetchOverdueOrdersRaw(
+      currentPermissions.orders === true
+    );
 
-      if (
-        !riskBoatsError &&
-        riskBoatsData &&
-        riskBoatsData.length > 0
-      ) {
-        const boatIds = riskBoatsData.map((row) =>
-          String(row.id)
-        );
+    const [
+      suppliersResult,
+      itemsResult,
+      ordersResult,
+      remindersResult,
+      unreadNotesResult,
+      boatsAtRiskData,
+      overdueRaw,
+    ] = await Promise.all([
+      suppliersPromise,
+      itemsPromise,
+      ordersPromise ??
+        Promise.resolve({ data: [] as any[], error: null as any }),
+      remindersPromise ??
+        Promise.resolve({ data: [] as any[], error: null as any }),
+      unreadNotesPromise ??
+        Promise.resolve({ data: [] as any[], error: null as any }),
+      boatsAtRiskPromise,
+      overdueRawPromise,
+    ]);
 
-        const [windshieldResult, upholsteryResult] =
-          await Promise.all([
-            supabase
-              .from("production_boat_windshield")
-              .select("boat_id")
-              .in("boat_id", boatIds)
-              .is("kit_id", null),
-            supabase
-              .from("production_boat_upholstery")
-              .select("boat_id")
-              .in("boat_id", boatIds)
-              .is("kit_id", null),
-          ]);
+    if (suppliersResult.error) {
+      setErrorMessage(
+        "Errore caricamento fornitori: " +
+          suppliersResult.error.message
+      );
 
-        const missingWindshieldSet = new Set(
-          (
-            (windshieldResult.data || []) as {
-              boat_id: string;
-            }[]
-          ).map((row) => String(row.boat_id))
-        );
-
-        const missingUpholsterySet = new Set(
-          (
-            (upholsteryResult.data || []) as {
-              boat_id: string;
-            }[]
-          ).map((row) => String(row.boat_id))
-        );
-
-        boatsAtRiskData = riskBoatsData
-          .filter(
-            (row) =>
-              missingWindshieldSet.has(String(row.id)) ||
-              missingUpholsterySet.has(String(row.id))
-          )
-          .map((row) => ({
-            id: String(row.id),
-            order_number: String(
-              row.order_number || ""
-            ),
-            model_boat: String(row.model_boat || ""),
-            requested_delivery_date: String(
-              row.requested_delivery_date || ""
-            ),
-            missingWindshield:
-              missingWindshieldSet.has(String(row.id)),
-            missingUpholstery:
-              missingUpholsterySet.has(String(row.id)),
-          }))
-          .slice(0, 8);
-      }
-    } catch {
-      // Non blocca mai la dashboard.
+      setLoading(false);
+      return;
     }
 
-    /*
-      ORDINI FORNITORE IN RITARDO: righe d'ordine ancora da
-      ricevere (in tutto o in parte) la cui consegna richiesta
-      è già passata. La data si legge dalla riga se impostata,
-      altrimenti da quella generale dell'ordine. Come per i
-      battelli a rischio, non blocca mai la dashboard.
-    */
-    let overdueLinesData: OverdueOrderLine[] = [];
+    if (itemsResult.error) {
+      setErrorMessage(
+        "Errore caricamento articoli: " +
+          itemsResult.error.message
+      );
 
-    try {
-      if (currentPermissions.orders === true) {
-        const { data: openOrdersData, error: openOrdersError } =
-          await supabase
-            .from("orders")
-            .select(
-              "id,order_number,supplier_id,status,requested_delivery_date"
-            )
-            .in("status", ["draft", "ordered", "partial"]);
-
-        if (
-          !openOrdersError &&
-          openOrdersData &&
-          openOrdersData.length > 0
-        ) {
-          const openOrderIds = openOrdersData.map((row) =>
-            String(row.id)
-          );
-
-          const { data: openOrderItemsData, error: openOrderItemsError } =
-            await supabase
-              .from("order_items")
-              .select(
-                "id,order_id,item_id,qty,received_qty,requested_delivery_date"
-              )
-              .in("order_id", openOrderIds);
-
-          if (!openOrderItemsError && openOrderItemsData) {
-            const today = currentLocalDate();
-
-            const orderById = new Map(
-              openOrdersData.map((row) => [String(row.id), row])
-            );
-
-            const itemById = new Map(
-              itemsData.map((row) => [String(row.id), row])
-            );
-
-            overdueLinesData = openOrderItemsData
-              .map((row) => {
-                const order = orderById.get(String(row.order_id));
-                const item = itemById.get(String(row.item_id));
-
-                const qty = Number(row.qty || 0);
-                const receivedQty = Number(row.received_qty || 0);
-                const remainingQty = qty - receivedQty;
-
-                const deliveryDate =
-                  String(row.requested_delivery_date || "") ||
-                  String(order?.requested_delivery_date || "");
-
-                return {
-                  id: String(row.id),
-                  orderId: String(row.order_id),
-                  orderNumber: String(order?.order_number || ""),
-                  supplierId: String(order?.supplier_id || ""),
-                  itemDescription: String(item?.description || "-"),
-                  itemCode: String(
-                    item?.supplier_code || item?.code || "-"
-                  ),
-                  qtyRemaining: remainingQty,
-                  deliveryDate,
-                  daysLate: deliveryDate
-                    ? daysBetweenLocalDates(deliveryDate, today)
-                    : 0,
-                };
-              })
-              .filter(
-                (line) =>
-                  line.qtyRemaining > 0 &&
-                  line.deliveryDate &&
-                  line.deliveryDate < today
-              )
-              .sort((a, b) =>
-                a.deliveryDate < b.deliveryDate ? -1 : 1
-              )
-              .slice(0, 8);
-          }
-        }
-      }
-    } catch {
-      // Non blocca mai la dashboard.
+      setLoading(false);
+      return;
     }
+
+    if (ordersResult.error) {
+      setErrorMessage(
+        "Errore caricamento ordini: " +
+          ordersResult.error.message
+      );
+
+      setLoading(false);
+      return;
+    }
+
+    if (remindersResult.error) {
+      setErrorMessage(
+        "Errore caricamento promemoria: " +
+          remindersResult.error.message
+      );
+
+      setLoading(false);
+      return;
+    }
+
+    const suppliersData = suppliersResult.data;
+
+    const itemsData =
+      (itemsResult.data || []) as ItemDbRow[];
+
+    const ordersData =
+      (ordersResult.data || []) as Order[];
+
+    const remindersData =
+      (remindersResult.data || []) as Reminder[];
+
+    const unreadNotesData = (
+      !unreadNotesResult.error
+        ? unreadNotesResult.data || []
+        : []
+    ) as UnreadNote[];
+
+    const overdueLinesData = buildOverdueOrderLines(
+      overdueRaw,
+      itemsData
+    );
 
     const cleanSuppliers: Supplier[] =
       (suppliersData || []).map(
@@ -4080,6 +3908,222 @@ function sharedNoteRecipientLabel(
     recipient.username ||
     "Utente"
   );
+}
+
+/*
+  Battelli a rischio consegna: stessa logica di prima, isolata qui
+  così la query può partire in parallelo con tutte le altre della
+  dashboard invece che per ultima. Non lancia mai un'eccezione
+  verso chi la chiama: in caso di errore o tabelle non ancora
+  configurate restituisce semplicemente un elenco vuoto.
+*/
+async function fetchBoatsAtRiskData(): Promise<BoatAtRisk[]> {
+  try {
+    const { data: riskBoatsData, error: riskBoatsError } =
+      await supabase
+        .from("production_boats")
+        .select(
+          "id,order_number,model_boat,requested_delivery_date"
+        )
+        .eq("status", "active")
+        .not("requested_delivery_date", "is", null)
+        .order("requested_delivery_date", {
+          ascending: true,
+        })
+        .limit(40);
+
+    if (
+      !riskBoatsError &&
+      riskBoatsData &&
+      riskBoatsData.length > 0
+    ) {
+      const boatIds = riskBoatsData.map((row) =>
+        String(row.id)
+      );
+
+      const [windshieldResult, upholsteryResult] =
+        await Promise.all([
+          supabase
+            .from("production_boat_windshield")
+            .select("boat_id")
+            .in("boat_id", boatIds)
+            .is("kit_id", null),
+          supabase
+            .from("production_boat_upholstery")
+            .select("boat_id")
+            .in("boat_id", boatIds)
+            .is("kit_id", null),
+        ]);
+
+      const missingWindshieldSet = new Set(
+        (
+          (windshieldResult.data || []) as {
+            boat_id: string;
+          }[]
+        ).map((row) => String(row.boat_id))
+      );
+
+      const missingUpholsterySet = new Set(
+        (
+          (upholsteryResult.data || []) as {
+            boat_id: string;
+          }[]
+        ).map((row) => String(row.boat_id))
+      );
+
+      return riskBoatsData
+        .filter(
+          (row) =>
+            missingWindshieldSet.has(String(row.id)) ||
+            missingUpholsterySet.has(String(row.id))
+        )
+        .map((row) => ({
+          id: String(row.id),
+          order_number: String(
+            row.order_number || ""
+          ),
+          model_boat: String(row.model_boat || ""),
+          requested_delivery_date: String(
+            row.requested_delivery_date || ""
+          ),
+          missingWindshield:
+            missingWindshieldSet.has(String(row.id)),
+          missingUpholstery:
+            missingUpholsterySet.has(String(row.id)),
+        }))
+        .slice(0, 8);
+    }
+
+    return [];
+  } catch {
+    // Non blocca mai la dashboard.
+    return [];
+  }
+}
+
+type OverdueRawData = {
+  openOrdersData: any[];
+  openOrderItemsData: any[];
+};
+
+/*
+  Ordini fornitore in ritardo - parte di rete: righe d'ordine
+  ancora da ricevere e i relativi ordini aperti. Isolata qui così
+  può partire in parallelo con tutte le altre query della
+  dashboard. Non dipende dagli articoli: quella parte (che ha
+  bisogno di itemsData) resta nella funzione buildOverdueOrderLines
+  qui sotto, eseguita dopo che tutte le query sono tornate.
+*/
+async function fetchOverdueOrdersRaw(
+  shouldLoad: boolean
+): Promise<OverdueRawData | null> {
+  if (!shouldLoad) {
+    return null;
+  }
+
+  try {
+    const { data: openOrdersData, error: openOrdersError } =
+      await supabase
+        .from("orders")
+        .select(
+          "id,order_number,supplier_id,status,requested_delivery_date"
+        )
+        .in("status", ["draft", "ordered", "partial"]);
+
+    if (
+      openOrdersError ||
+      !openOrdersData ||
+      openOrdersData.length === 0
+    ) {
+      return null;
+    }
+
+    const openOrderIds = openOrdersData.map((row) =>
+      String(row.id)
+    );
+
+    const { data: openOrderItemsData, error: openOrderItemsError } =
+      await supabase
+        .from("order_items")
+        .select(
+          "id,order_id,item_id,qty,received_qty,requested_delivery_date"
+        )
+        .in("order_id", openOrderIds);
+
+    if (openOrderItemsError || !openOrderItemsData) {
+      return null;
+    }
+
+    return { openOrdersData, openOrderItemsData };
+  } catch {
+    // Non blocca mai la dashboard.
+    return null;
+  }
+}
+
+/*
+  Ordini fornitore in ritardo - elaborazione: qui serve itemsData
+  (per mostrare codice/descrizione articolo), quindi gira dopo che
+  tutte le query della dashboard sono tornate. È solo calcolo in
+  memoria, nessuna chiamata di rete, quindi è comunque istantanea.
+*/
+function buildOverdueOrderLines(
+  raw: OverdueRawData | null,
+  itemsData: ItemDbRow[]
+): OverdueOrderLine[] {
+  if (!raw) {
+    return [];
+  }
+
+  const today = currentLocalDate();
+
+  const orderById = new Map(
+    raw.openOrdersData.map((row) => [String(row.id), row])
+  );
+
+  const itemById = new Map(
+    itemsData.map((row) => [String(row.id), row])
+  );
+
+  return raw.openOrderItemsData
+    .map((row) => {
+      const order = orderById.get(String(row.order_id));
+      const item = itemById.get(String(row.item_id));
+
+      const qty = Number(row.qty || 0);
+      const receivedQty = Number(row.received_qty || 0);
+      const remainingQty = qty - receivedQty;
+
+      const deliveryDate =
+        String(row.requested_delivery_date || "") ||
+        String(order?.requested_delivery_date || "");
+
+      return {
+        id: String(row.id),
+        orderId: String(row.order_id),
+        orderNumber: String(order?.order_number || ""),
+        supplierId: String(order?.supplier_id || ""),
+        itemDescription: String(item?.description || "-"),
+        itemCode: String(
+          item?.supplier_code || item?.code || "-"
+        ),
+        qtyRemaining: remainingQty,
+        deliveryDate,
+        daysLate: deliveryDate
+          ? daysBetweenLocalDates(deliveryDate, today)
+          : 0,
+      };
+    })
+    .filter(
+      (line) =>
+        line.qtyRemaining > 0 &&
+        line.deliveryDate &&
+        line.deliveryDate < today
+    )
+    .sort((a, b) =>
+      a.deliveryDate < b.deliveryDate ? -1 : 1
+    )
+    .slice(0, 8);
 }
 
 function readLocalPermissions(): Permissions {

@@ -201,11 +201,118 @@ export default function SupplierDetail({
     async function loadData() {
       setLoading(true);
 
-      const { data: supplier } = await supabase
-        .from("suppliers")
-        .select("name,upholstery_enabled")
-        .eq("id", supplierId)
-        .maybeSingle();
+      /*
+        PERFORMANCE: queste quattro query sono indipendenti tra
+        loro (nessuna ha bisogno del risultato di un'altra), quindi
+        le avviamo tutte insieme invece che una dopo l'altra. Prima
+        il tempo di apertura della pagina era la SOMMA del tempo di
+        ognuna di queste richieste più quella degli articoli più in
+        basso; ora gira tutto in parallelo. Restano comunque
+        isolate l'una dall'altra (ognuna controlla il proprio
+        errore per conto suo): se windshield_enabled o teak_enabled
+        non esistono ancora (migrazione non ancora eseguita su
+        Supabase) non bloccano le altre.
+      */
+      const otherQueriesPromise = Promise.all([
+        supabase
+          .from("suppliers")
+          .select("name,upholstery_enabled")
+          .eq("id", supplierId)
+          .maybeSingle(),
+        supabase
+          .from("suppliers")
+          .select("windshield_enabled")
+          .eq("id", supplierId)
+          .maybeSingle(),
+        supabase
+          .from("suppliers")
+          .select("teak_enabled")
+          .eq("id", supplierId)
+          .maybeSingle(),
+        supabase
+          .from("orders")
+          .select("order_date,received_at")
+          .eq("supplier_id", supplierId)
+          .eq("status", "received"),
+      ]);
+
+      const shouldLoadPriceForItems =
+        canViewPrices || canViewInventoryValue;
+
+      let itemsData: Item[] = [];
+      let itemsError: { message: string } | null = null;
+
+      if (shouldLoadPriceForItems) {
+        const response = await supabase
+          .from("items")
+          .select(
+            "id,code,supplier_code,description,unit,stock,min_stock,price,on_order,image_url"
+          )
+          .eq("supplier_id", supplierId)
+          .order("description");
+
+        itemsError = response.error;
+
+        itemsData = (response.data || []).map((item) => ({
+          id: String(item.id),
+          code: String(item.code || ""),
+          supplier_code: item.supplier_code
+            ? String(item.supplier_code)
+            : null,
+          description: String(item.description || ""),
+          unit: item.unit ? String(item.unit) : null,
+          stock: Number(item.stock || 0),
+          min_stock: Number(item.min_stock || 0),
+          price: Number(item.price || 0),
+          on_order: Number(item.on_order || 0),
+          image_url: item.image_url
+            ? String(item.image_url)
+            : null,
+        }));
+      } else {
+        const response = await supabase
+          .from("items")
+          .select(
+            "id,code,supplier_code,description,unit,stock,min_stock,on_order,image_url"
+          )
+          .eq("supplier_id", supplierId)
+          .order("description");
+
+        itemsError = response.error;
+
+        itemsData = (response.data || []).map((item) => ({
+          id: String(item.id),
+          code: String(item.code || ""),
+          supplier_code: item.supplier_code
+            ? String(item.supplier_code)
+            : null,
+          description: String(item.description || ""),
+          unit: item.unit ? String(item.unit) : null,
+          stock: Number(item.stock || 0),
+          min_stock: Number(item.min_stock || 0),
+          price: 0,
+          on_order: Number(item.on_order || 0),
+          image_url: item.image_url
+            ? String(item.image_url)
+            : null,
+        }));
+      }
+
+      if (itemsError) {
+        console.error(
+          "Errore caricamento articoli:",
+          itemsError.message
+        );
+      } else {
+        setItems(itemsData);
+      }
+
+      const [
+        { data: supplier },
+        { data: windshieldRow, error: windshieldError },
+        { data: teakRow, error: teakError },
+        { data: deliveredOrders, error: deliveredOrdersError },
+      ] = await otherQueriesPromise;
 
       if (supplier?.name) {
         setSupplierName(supplier.name);
@@ -215,48 +322,14 @@ export default function SupplierDetail({
         supplier?.upholstery_enabled === true
       );
 
-      // Query separata e isolata: se la colonna windshield_enabled non
-      // esiste ancora (STEP26 non ancora eseguito su Supabase), fallisce
-      // da sola senza bloccare il resto della pagina.
-      const { data: windshieldRow, error: windshieldError } =
-        await supabase
-          .from("suppliers")
-          .select("windshield_enabled")
-          .eq("id", supplierId)
-          .maybeSingle();
-
       setWindshieldEnabled(
         !windshieldError &&
           windshieldRow?.windshield_enabled === true
       );
 
-      // Stessa query isolata, questa volta per teak_enabled (STEP71).
-      const { data: teakRow, error: teakError } =
-        await supabase
-          .from("suppliers")
-          .select("teak_enabled")
-          .eq("id", supplierId)
-          .maybeSingle();
-
       setTeakEnabled(
         !teakError && teakRow?.teak_enabled === true
       );
-
-      /*
-        TEMPI DI CONSEGNA (STEP 36)
-
-        Query separata e isolata come quella sopra per
-        windshield_enabled: se received_at non esiste ancora
-        (STEP36 non ancora eseguito su Supabase) fallisce da sola
-        senza bloccare il resto della pagina, e il pannello con i
-        tempi di consegna semplicemente non compare.
-      */
-      const { data: deliveredOrders, error: deliveredOrdersError } =
-        await supabase
-          .from("orders")
-          .select("order_date,received_at")
-          .eq("supplier_id", supplierId)
-          .eq("status", "received");
 
       if (!deliveredOrdersError && deliveredOrders) {
         const leadTimes = deliveredOrders
@@ -292,148 +365,6 @@ export default function SupplierDetail({
         );
       } else {
         setLeadTimeStats(null);
-      }
-
-      const shouldLoadPrice =
-        canViewPrices ||
-        canViewInventoryValue;
-
-      let itemsData: Item[] = [];
-      let itemsError:
-        { message: string } | null = null;
-
-      if (shouldLoadPrice) {
-        const response = await supabase
-          .from("items")
-          .select(
-            "id,code,supplier_code,description,unit,stock,min_stock,price,on_order,image_url"
-          )
-          .eq(
-            "supplier_id",
-            supplierId
-          )
-          .order("description");
-
-        itemsError = response.error;
-
-        itemsData =
-          (response.data || []).map(
-            (item) => ({
-              id:
-                String(item.id),
-              code:
-                String(
-                  item.code || ""
-                ),
-              supplier_code:
-                item.supplier_code
-                  ? String(
-                      item.supplier_code
-                    )
-                  : null,
-              description:
-                String(
-                  item.description || ""
-                ),
-              unit:
-                item.unit
-                  ? String(
-                      item.unit
-                    )
-                  : null,
-              stock:
-                Number(
-                  item.stock || 0
-                ),
-              min_stock:
-                Number(
-                  item.min_stock || 0
-                ),
-              price:
-                Number(
-                  item.price || 0
-                ),
-              on_order:
-                Number(
-                  item.on_order || 0
-                ),
-              image_url:
-                item.image_url
-                  ? String(
-                      item.image_url
-                    )
-                  : null,
-            })
-          );
-      } else {
-        const response = await supabase
-          .from("items")
-          .select(
-            "id,code,supplier_code,description,unit,stock,min_stock,on_order,image_url"
-          )
-          .eq(
-            "supplier_id",
-            supplierId
-          )
-          .order("description");
-
-        itemsError = response.error;
-
-        itemsData =
-          (response.data || []).map(
-            (item) => ({
-              id:
-                String(item.id),
-              code:
-                String(
-                  item.code || ""
-                ),
-              supplier_code:
-                item.supplier_code
-                  ? String(
-                      item.supplier_code
-                    )
-                  : null,
-              description:
-                String(
-                  item.description || ""
-                ),
-              unit:
-                item.unit
-                  ? String(
-                      item.unit
-                    )
-                  : null,
-              stock:
-                Number(
-                  item.stock || 0
-                ),
-              min_stock:
-                Number(
-                  item.min_stock || 0
-                ),
-              price: 0,
-              on_order:
-                Number(
-                  item.on_order || 0
-                ),
-              image_url:
-                item.image_url
-                  ? String(
-                      item.image_url
-                    )
-                  : null,
-            })
-          );
-      }
-
-      if (itemsError) {
-        console.error(
-          "Errore caricamento articoli:",
-          itemsError.message
-        );
-      } else {
-        setItems(itemsData);
       }
 
       setLoading(false);

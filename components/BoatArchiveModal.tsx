@@ -38,6 +38,28 @@ type BoatDocument = {
   uploaded_by: string | null;
 };
 
+type UpholsteryRow = {
+  id: string;
+  itemDescription: string;
+  supplierName: string;
+  color: string;
+  detailsLogos: string;
+  stitching: string;
+  quilting: string;
+  note: string | null;
+  kitMatricola: number | null;
+};
+
+type TeakRow = {
+  id: string;
+  itemDescription: string;
+  supplierName: string;
+  color: string;
+  coverage: string;
+  note: string | null;
+  kitMatricola: number | null;
+};
+
 type BoatDetails = {
   hull: string;
   stringers: string;
@@ -46,6 +68,8 @@ type BoatDetails = {
   note: string | null;
   tubeColor: string;
   optionalSections: string[];
+  upholsteryRows: UpholsteryRow[];
+  teakRows: TeakRow[];
 };
 
 const EMPTY_DETAILS: BoatDetails = {
@@ -56,6 +80,8 @@ const EMPTY_DETAILS: BoatDetails = {
   note: null,
   tubeColor: "",
   optionalSections: [],
+  upholsteryRows: [],
+  teakRows: [],
 };
 
 function DetailItem({ label, value }: { label: string; value: string }) {
@@ -106,39 +132,65 @@ export default function BoatArchiveModal({
     setLoading(true);
     setLoadError("");
 
-    const [photosResult, documentsResult, boatResult, tubeResult, boatSectionsResult] =
-      await Promise.all([
-        supabase
-          .from("production_boat_photos")
-          .select("id,storage_path,url,file_name,uploaded_at,uploaded_by")
-          .eq("boat_id", boatId)
-          .order("uploaded_at", { ascending: false }),
-        supabase
-          .from("production_boat_documents")
-          .select("id,storage_path,url,file_name,uploaded_at,uploaded_by")
-          .eq("boat_id", boatId)
-          .order("uploaded_at", { ascending: false }),
-        supabase
-          .from("production_boats")
-          .select("model_boat,hull,stringers,deck,accessories,note")
-          .eq("id", boatId)
-          .maybeSingle(),
-        // Colore tubolare (solo per i gommoni): tabella a parte,
-        // una riga per battello. Se non esiste nessuna riga (battello
-        // senza tubolare) non e' un errore, resta semplicemente vuoto.
-        supabase
-          .from("production_tubolari")
-          .select("tube_color")
-          .eq("boat_id", boatId)
-          .maybeSingle(),
-        // Optional scelti per QUESTO battello: qui prendiamo solo gli
-        // id delle sezioni scelte, i nomi arrivano nel secondo giro
-        // sotto (serve prima sapere il modello del battello).
-        supabase
-          .from("production_boat_bom_sections")
-          .select("section_id")
-          .eq("boat_id", boatId),
-      ]);
+    const [
+      photosResult,
+      documentsResult,
+      boatResult,
+      tubeResult,
+      boatSectionsResult,
+      upholsteryResult,
+      teakResult,
+    ] = await Promise.all([
+      supabase
+        .from("production_boat_photos")
+        .select("id,storage_path,url,file_name,uploaded_at,uploaded_by")
+        .eq("boat_id", boatId)
+        .order("uploaded_at", { ascending: false }),
+      supabase
+        .from("production_boat_documents")
+        .select("id,storage_path,url,file_name,uploaded_at,uploaded_by")
+        .eq("boat_id", boatId)
+        .order("uploaded_at", { ascending: false }),
+      supabase
+        .from("production_boats")
+        .select("model_boat,hull,stringers,deck,accessories,note")
+        .eq("id", boatId)
+        .maybeSingle(),
+      // Colore tubolare (solo per i gommoni): tabella a parte,
+      // una riga per battello. Se non esiste nessuna riga (battello
+      // senza tubolare) non e' un errore, resta semplicemente vuoto.
+      supabase
+        .from("production_tubolari")
+        .select("tube_color")
+        .eq("boat_id", boatId)
+        .maybeSingle(),
+      // Optional scelti per QUESTO battello: qui prendiamo solo gli
+      // id delle sezioni scelte, i nomi arrivano nel secondo giro
+      // sotto (serve prima sapere il modello del battello).
+      supabase
+        .from("production_boat_bom_sections")
+        .select("section_id")
+        .eq("boat_id", boatId),
+      // Tappezzeria e teak: un battello puo' averne piu' richieste
+      // (colori/articoli diversi), o nessuna se non previste. Stesso
+      // schema gia' usato dalla scheda di produzione, qui solo in
+      // lettura: niente stato ordine/assegnazione, solo cosa risulta
+      // gia' collegato e con che colore.
+      supabase
+        .from("production_boat_upholstery")
+        .select(
+          "id,supplier_id,item_id,color,details_logos,stitching,quilting,note,upholstery_kits(matricola)"
+        )
+        .eq("boat_id", boatId)
+        .order("created_at", { ascending: true }),
+      supabase
+        .from("production_boat_teak")
+        .select(
+          "id,supplier_id,item_id,color,coverage,note,teak_kits(matricola)"
+        )
+        .eq("boat_id", boatId)
+        .order("created_at", { ascending: true }),
+    ]);
 
     if (photosResult.error && documentsResult.error) {
       setLoadError("Errore caricamento archivio: " + photosResult.error.message);
@@ -166,20 +218,90 @@ export default function BoatArchiveModal({
         )
       : new Set<string>();
 
-    if (boatRow?.model_boat && selectedSectionIds.size > 0) {
-      const sectionsRes = await supabase
-        .from("production_bom_sections")
-        .select("id,name")
-        .eq("model_boat", boatRow.model_boat)
-        .eq("kind", "optional")
-        .order("sort_order", { ascending: true });
+    const upholsteryRawRows = !upholsteryResult.error
+      ? ((upholsteryResult.data || []) as any[])
+      : [];
 
-      if (!sectionsRes.error) {
-        optionalSections = (sectionsRes.data || [])
-          .filter((section: any) => selectedSectionIds.has(String(section.id)))
-          .map((section: any) => String(section.name));
-      }
+    const teakRawRows = !teakResult.error ? ((teakResult.data || []) as any[]) : [];
+
+    // Descrizione articolo e nome fornitore per tappezzeria/teak non
+    // arrivano dalla select sopra (item_id/supplier_id sono solo id):
+    // li risolviamo qui, insieme al nome delle sezioni optional, in
+    // un solo giro parallelo invece di uno sequenziale per tabella.
+    const itemIds = Array.from(
+      new Set(
+        [...upholsteryRawRows, ...teakRawRows]
+          .map((row) => (row.item_id ? String(row.item_id) : ""))
+          .filter(Boolean)
+      )
+    );
+
+    const supplierIds = Array.from(
+      new Set(
+        [...upholsteryRawRows, ...teakRawRows]
+          .map((row) => (row.supplier_id ? String(row.supplier_id) : ""))
+          .filter(Boolean)
+      )
+    );
+
+    const [sectionsRes, itemsRes, suppliersRes] = await Promise.all([
+      boatRow?.model_boat && selectedSectionIds.size > 0
+        ? supabase
+            .from("production_bom_sections")
+            .select("id,name")
+            .eq("model_boat", boatRow.model_boat)
+            .eq("kind", "optional")
+            .order("sort_order", { ascending: true })
+        : Promise.resolve({ data: [] as any[], error: null as any }),
+      itemIds.length > 0
+        ? supabase.from("items").select("id,description").in("id", itemIds)
+        : Promise.resolve({ data: [] as any[], error: null as any }),
+      supplierIds.length > 0
+        ? supabase.from("suppliers").select("id,name").in("id", supplierIds)
+        : Promise.resolve({ data: [] as any[], error: null as any }),
+    ]);
+
+    if (!sectionsRes.error) {
+      optionalSections = (sectionsRes.data || [])
+        .filter((section: any) => selectedSectionIds.has(String(section.id)))
+        .map((section: any) => String(section.name));
     }
+
+    const itemDescriptionById = new Map<string, string>(
+      (!itemsRes.error ? itemsRes.data || [] : []).map((row: any) => [
+        String(row.id),
+        String(row.description || ""),
+      ])
+    );
+
+    const supplierNameById = new Map<string, string>(
+      (!suppliersRes.error ? suppliersRes.data || [] : []).map((row: any) => [
+        String(row.id),
+        String(row.name || ""),
+      ])
+    );
+
+    const upholsteryRows: UpholsteryRow[] = upholsteryRawRows.map((row) => ({
+      id: String(row.id),
+      itemDescription: itemDescriptionById.get(String(row.item_id)) || "Articolo",
+      supplierName: supplierNameById.get(String(row.supplier_id)) || "",
+      color: String(row.color || ""),
+      detailsLogos: String(row.details_logos || ""),
+      stitching: String(row.stitching || ""),
+      quilting: String(row.quilting || ""),
+      note: row.note ? String(row.note) : null,
+      kitMatricola: row.upholstery_kits ? Number(row.upholstery_kits.matricola) : null,
+    }));
+
+    const teakRows: TeakRow[] = teakRawRows.map((row) => ({
+      id: String(row.id),
+      itemDescription: itemDescriptionById.get(String(row.item_id)) || "Articolo",
+      supplierName: supplierNameById.get(String(row.supplier_id)) || "",
+      color: String(row.color || ""),
+      coverage: String(row.coverage || ""),
+      note: row.note ? String(row.note) : null,
+      kitMatricola: row.teak_kits ? Number(row.teak_kits.matricola) : null,
+    }));
 
     setDetails({
       hull: boatRow?.hull ? String(boatRow.hull) : "",
@@ -192,6 +314,8 @@ export default function BoatArchiveModal({
           ? String(tubeResult.data.tube_color)
           : "",
       optionalSections,
+      upholsteryRows,
+      teakRows,
     });
 
     setLoading(false);
@@ -408,6 +532,120 @@ export default function BoatArchiveModal({
                     {details.note || "Nessuna nota inserita."}
                   </div>
                 </div>
+              </div>
+
+              <div className="bam-divider" />
+
+              {/* TAPPEZZERIA */}
+
+              <div className="bam-section">
+                <div className="bam-section-head">
+                  <span className="bam-section-title">
+                    Tappezzeria{" "}
+                    {details.upholsteryRows.length > 0 &&
+                      `(${details.upholsteryRows.length})`}
+                  </span>
+                </div>
+
+                {details.upholsteryRows.length === 0 ? (
+                  <div className="bam-hint">
+                    Nessuna tappezzeria collegata a questo battello.
+                  </div>
+                ) : (
+                  <div className="bam-list">
+                    {details.upholsteryRows.map((row) => (
+                      <div key={row.id} className="bam-row bam-row-tall">
+                        <span className="bam-row-icon">🛋️</span>
+
+                        <div className="bam-row-main">
+                          <div className="bam-row-title">
+                            {row.itemDescription}
+                            {row.supplierName && (
+                              <span className="bam-row-supplier">
+                                {" "}
+                                · {row.supplierName}
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="bam-row-sub">
+                            {[row.color, row.detailsLogos, row.stitching, row.quilting]
+                              .filter(Boolean)
+                              .join(" · ") || "—"}
+                          </div>
+
+                          {row.note && <div className="bam-row-note">{row.note}</div>}
+                        </div>
+
+                        <span
+                          className={`bam-status-badge ${
+                            row.kitMatricola ? "assigned" : "pending"
+                          }`}
+                        >
+                          {row.kitMatricola
+                            ? `Assegnata · #${row.kitMatricola}`
+                            : "Non assegnata"}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="bam-divider" />
+
+              {/* TEAK */}
+
+              <div className="bam-section">
+                <div className="bam-section-head">
+                  <span className="bam-section-title">
+                    Teak{" "}
+                    {details.teakRows.length > 0 && `(${details.teakRows.length})`}
+                  </span>
+                </div>
+
+                {details.teakRows.length === 0 ? (
+                  <div className="bam-hint">
+                    Nessun teak collegato a questo battello.
+                  </div>
+                ) : (
+                  <div className="bam-list">
+                    {details.teakRows.map((row) => (
+                      <div key={row.id} className="bam-row bam-row-tall">
+                        <span className="bam-row-icon">🪵</span>
+
+                        <div className="bam-row-main">
+                          <div className="bam-row-title">
+                            {row.itemDescription}
+                            {row.supplierName && (
+                              <span className="bam-row-supplier">
+                                {" "}
+                                · {row.supplierName}
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="bam-row-sub">
+                            {[row.color, row.coverage].filter(Boolean).join(" · ") ||
+                              "—"}
+                          </div>
+
+                          {row.note && <div className="bam-row-note">{row.note}</div>}
+                        </div>
+
+                        <span
+                          className={`bam-status-badge ${
+                            row.kitMatricola ? "assigned" : "pending"
+                          }`}
+                        >
+                          {row.kitMatricola
+                            ? `Assegnata · #${row.kitMatricola}`
+                            : "Non assegnata"}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="bam-divider" />
@@ -760,6 +998,52 @@ export default function BoatArchiveModal({
           font-size: 16px;
           line-height: 1;
           flex-shrink: 0;
+        }
+        .bam-row-tall {
+          align-items: flex-start;
+          padding: 10px 11px;
+        }
+        .bam-row-main {
+          flex: 1;
+          min-width: 0;
+        }
+        .bam-row-title {
+          color: #f8fafc;
+          font-size: 12.5px;
+          font-weight: 800;
+        }
+        .bam-row-supplier {
+          color: #7388a3;
+          font-weight: 700;
+        }
+        .bam-row-sub {
+          margin-top: 2px;
+          color: #a6b6cc;
+          font-size: 11px;
+        }
+        .bam-row-note {
+          margin-top: 4px;
+          color: #7388a3;
+          font-size: 10.5px;
+          font-style: italic;
+        }
+        .bam-status-badge {
+          flex-shrink: 0;
+          padding: 4px 9px;
+          border-radius: 999px;
+          font-size: 9.5px;
+          font-weight: 850;
+          white-space: nowrap;
+        }
+        .bam-status-badge.assigned {
+          border: 1px solid rgba(34, 197, 94, 0.32);
+          background: rgba(34, 197, 94, 0.1);
+          color: #86efac;
+        }
+        .bam-status-badge.pending {
+          border: 1px solid rgba(245, 158, 11, 0.32);
+          background: rgba(245, 158, 11, 0.1);
+          color: #fcd34d;
         }
         .bam-row-link {
           flex: 1;

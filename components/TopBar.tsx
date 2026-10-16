@@ -52,6 +52,7 @@ type Permissions = {
   reminders?: boolean;
   settings?: boolean;
   manage_users?: boolean;
+  avg_consumption?: boolean;
   [key: string]: boolean | undefined;
 };
 
@@ -67,6 +68,7 @@ const FULL_PERMISSIONS: Permissions = {
   reminders: true,
   settings: true,
   manage_users: true,
+  avg_consumption: true,
 };
 
 export default function TopBar() {
@@ -259,6 +261,10 @@ export default function TopBar() {
 
   const canManageUsers =
     permissions.manage_users ===
+    true;
+
+  const canAvgConsumption =
+    permissions.avg_consumption ===
     true;
 
   const showProductionResult = Boolean(search.trim()) &&
@@ -1020,6 +1026,28 @@ export default function TopBar() {
 
             <span>
               Movimenti
+            </span>
+          </Link>
+
+          )}
+
+          {/* MEDIA CONSUMO */}
+
+          {canAvgConsumption && (
+          <Link
+            href="/consumo-medio"
+            className={`topbar-v2-pill ${
+              pathname.startsWith(
+                "/consumo-medio"
+              )
+                ? "active"
+                : ""
+            }`}
+          >
+            <ChartIcon />
+
+            <span>
+              Media consumo
             </span>
           </Link>
 
@@ -2207,6 +2235,46 @@ function MovementIcon() {
         strokeWidth="1.8"
         strokeLinecap="round"
         strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function ChartIcon() {
+  return (
+    <svg
+      width="15"
+      height="15"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path
+        d="M4 20V10"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+
+      <path
+        d="M11 20V4"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+
+      <path
+        d="M18 20V13"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+
+      <path
+        d="M3 20H21"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
       />
     </svg>
   );

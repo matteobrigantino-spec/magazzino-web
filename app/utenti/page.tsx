@@ -23,6 +23,7 @@ type Permissions = {
   settings?: boolean;
   manage_users?: boolean;
   low_stock?: boolean;
+  avg_consumption?: boolean;
 
   [key: string]: boolean | undefined;
 };
@@ -51,7 +52,8 @@ type PermissionKey =
   | "reminders"
   | "settings"
   | "manage_users"
-  | "low_stock";
+  | "low_stock"
+  | "avg_consumption";
 
 const PERMISSIONS: {
   key: PermissionKey;
@@ -130,6 +132,12 @@ const PERMISSIONS: {
     description:
       "Può vedere gli articoli sotto scorta nella Home e il relativo report.",
   },
+  {
+    key: "avg_consumption",
+    title: "Media consumo articoli",
+    description:
+      "Può vedere il report con la media di consumo mensile di ogni articolo.",
+  },
 ];
 
 function createEmptyPermissions(): Permissions {
@@ -146,6 +154,7 @@ function createEmptyPermissions(): Permissions {
     settings: true,
     manage_users: false,
     low_stock: false,
+    avg_consumption: false,
   };
 }
 
@@ -177,6 +186,8 @@ function normalizePermissions(
       value?.manage_users === true,
     low_stock:
       value?.low_stock !== false,
+    avg_consumption:
+      value?.avg_consumption !== false,
   };
 }
 

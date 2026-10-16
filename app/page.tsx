@@ -2632,11 +2632,13 @@ export default function Home() {
         .home-hero {
           position: relative;
           z-index: 1;
-          margin-bottom: 8px;
-          padding: 44px 6px 36px;
+          margin-bottom: 22px;
+          padding: 44px 34px 36px;
           overflow: hidden;
-          background: radial-gradient(900px 420px at 88% -30%, rgba(199,154,93,0.14), transparent 65%);
-          border-bottom: 1px solid rgba(19,34,39,0.08);
+          border: 1px solid rgba(19,34,39,0.10);
+          border-radius: 18px;
+          background: radial-gradient(900px 420px at 88% -30%, rgba(199,154,93,0.14), transparent 65%), #ffffff;
+          box-shadow: 0 18px 38px -30px rgba(16,32,42,0.24);
         }
 
         .home-hero-main {

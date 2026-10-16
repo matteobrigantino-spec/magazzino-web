@@ -39,12 +39,15 @@ type ConsumptionRow = {
   monthlyAverage: number | null;
 };
 
-type SortKey =
-  | "monthlyAverage"
-  | "totalQty"
-  | "stock"
-  | "description"
-  | "supplierName";
+type SupplierGroup = {
+  name: string;
+  rows: ConsumptionRow[];
+  withHistoryCount: number;
+  totalMonthly: number;
+  totalScaricato: number;
+};
+
+type SortKey = "monthlyAverage" | "totalQty" | "stock" | "description";
 
 /*
   Mesi trascorsi dal primo scarico (incluso) a oggi (incluso),
@@ -69,11 +72,14 @@ export default function AverageConsumptionPage() {
   const [errorMessage, setErrorMessage] = useState("");
 
   const [search, setSearch] = useState("");
-  const [supplierFilter, setSupplierFilter] = useState("ALL");
   const [onlyWithHistory, setOnlyWithHistory] = useState(false);
 
   const [sortKey, setSortKey] = useState<SortKey>("monthlyAverage");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+
+  const [expandedSuppliers, setExpandedSuppliers] = useState<Set<string>>(
+    new Set()
+  );
 
   useEffect(() => {
     loadReport();
@@ -175,12 +181,6 @@ export default function AverageConsumptionPage() {
     setLoading(false);
   }
 
-  const suppliersInReport = useMemo(() => {
-    return Array.from(new Set(rows.map((row) => row.supplierName))).sort(
-      (a, b) => a.localeCompare(b)
-    );
-  }, [rows]);
-
   const filteredRows = useMemo(() => {
     const text = search.trim().toLowerCase();
 
@@ -192,14 +192,11 @@ export default function AverageConsumptionPage() {
         (row.supplierCode || "").toLowerCase().includes(text) ||
         row.supplierName.toLowerCase().includes(text);
 
-      const matchesSupplier =
-        supplierFilter === "ALL" || row.supplierName === supplierFilter;
-
       const matchesHistory = !onlyWithHistory || row.totalQty !== null;
 
-      return matchesSearch && matchesSupplier && matchesHistory;
+      return matchesSearch && matchesHistory;
     });
-  }, [rows, search, supplierFilter, onlyWithHistory]);
+  }, [rows, search, onlyWithHistory]);
 
   const sortedRows = useMemo(() => {
     const direction = sortDir === "asc" ? 1 : -1;
@@ -227,12 +224,6 @@ export default function AverageConsumptionPage() {
         return direction * a.description.localeCompare(b.description, "it");
       }
 
-      if (sortKey === "supplierName") {
-        return (
-          direction * a.supplierName.localeCompare(b.supplierName, "it")
-        );
-      }
-
       if (sortKey === "stock") {
         return direction * (a.stock - b.stock);
       }
@@ -245,6 +236,59 @@ export default function AverageConsumptionPage() {
     });
   }, [filteredRows, sortKey, sortDir]);
 
+  /*
+    RAGGRUPPAMENTO PER FORNITORE
+
+    I fornitori con almeno un articolo con storico di consumo vengono
+    mostrati per primi, ordinati dal più "attivo" (media mensile
+    totale più alta) al meno attivo. I fornitori senza nessuno
+    storico vanno in fondo, in ordine alfabetico: cosi' la pagina
+    apre subito sui fornitori rilevanti invece che su un elenco
+    piatto di 700+ articoli.
+  */
+  const groups = useMemo<SupplierGroup[]>(() => {
+    const bySupplier = new Map<string, ConsumptionRow[]>();
+
+    sortedRows.forEach((row) => {
+      const list = bySupplier.get(row.supplierName) || [];
+      list.push(row);
+      bySupplier.set(row.supplierName, list);
+    });
+
+    const built = Array.from(bySupplier.entries()).map(([name, list]) => {
+      const withHistory = list.filter((row) => row.totalQty !== null);
+
+      return {
+        name,
+        rows: list,
+        withHistoryCount: withHistory.length,
+        totalMonthly: withHistory.reduce(
+          (sum, row) => sum + (row.monthlyAverage || 0),
+          0
+        ),
+        totalScaricato: withHistory.reduce(
+          (sum, row) => sum + (row.totalQty || 0),
+          0
+        ),
+      };
+    });
+
+    built.sort((a, b) => {
+      if (a.withHistoryCount === 0 && b.withHistoryCount === 0) {
+        return a.name.localeCompare(b.name, "it");
+      }
+
+      if (a.withHistoryCount === 0) return 1;
+      if (b.withHistoryCount === 0) return -1;
+
+      return b.totalMonthly - a.totalMonthly;
+    });
+
+    return built;
+  }, [sortedRows]);
+
+  const isSearching = search.trim().length > 0;
+
   const totals = useMemo(() => {
     const withHistory = rows.filter((row) => row.totalQty !== null);
 
@@ -255,6 +299,7 @@ export default function AverageConsumptionPage() {
 
     return {
       totalItems: rows.length,
+      totalSuppliers: new Set(rows.map((row) => row.supplierName)).size,
       withHistory: withHistory.length,
       withoutHistory: rows.length - withHistory.length,
       totalScaricato,
@@ -268,6 +313,28 @@ export default function AverageConsumptionPage() {
       setSortKey(key);
       setSortDir("desc");
     }
+  }
+
+  function toggleSupplier(name: string) {
+    setExpandedSuppliers((prev) => {
+      const next = new Set(prev);
+
+      if (next.has(name)) {
+        next.delete(name);
+      } else {
+        next.add(name);
+      }
+
+      return next;
+    });
+  }
+
+  function expandAll() {
+    setExpandedSuppliers(new Set(groups.map((group) => group.name)));
+  }
+
+  function collapseAll() {
+    setExpandedSuppliers(new Set());
   }
 
   function formatNumber(value: number, decimals = 2) {
@@ -330,13 +397,15 @@ export default function AverageConsumptionPage() {
           storico dei movimenti (quantità totale scaricata diviso i mesi
           trascorsi dal primo scarico). Sono compresi anche gli articoli
           già completamente scaricati, con giacenza attuale a zero.
+          Raggruppati per fornitore: i fornitori più attivi sono aperti
+          per primi.
         </div>
       </div>
 
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
+          gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
           gap: 14,
           marginBottom: 24,
         }}
@@ -345,6 +414,12 @@ export default function AverageConsumptionPage() {
           title="Articoli nel catalogo"
           value={String(totals.totalItems)}
           subtitle="Totale articoli analizzati"
+        />
+
+        <SummaryCard
+          title="Fornitori"
+          value={String(totals.totalSuppliers)}
+          subtitle="Fornitori nel catalogo"
         />
 
         <SummaryCard
@@ -415,28 +490,6 @@ export default function AverageConsumptionPage() {
           />
         </div>
 
-        <select
-          value={supplierFilter}
-          onChange={(e) => setSupplierFilter(e.target.value)}
-          style={{
-            minWidth: 220,
-            padding: "11px 13px",
-            background: "var(--input-bg)",
-            color: "var(--foreground)",
-            border: "1px solid var(--border-color)",
-            borderRadius: 8,
-            fontSize: 14,
-          }}
-        >
-          <option value="ALL">Tutti i fornitori</option>
-
-          {suppliersInReport.map((supplier) => (
-            <option key={supplier} value={supplier}>
-              {supplier}
-            </option>
-          ))}
-        </select>
-
         <label
           style={{
             display: "flex",
@@ -458,12 +511,36 @@ export default function AverageConsumptionPage() {
 
         <div
           style={{
+            display: "flex",
+            gap: 8,
+            marginLeft: "auto",
+          }}
+        >
+          <button
+            type="button"
+            onClick={expandAll}
+            style={pillButtonStyle}
+          >
+            Espandi tutti
+          </button>
+
+          <button
+            type="button"
+            onClick={collapseAll}
+            style={pillButtonStyle}
+          >
+            Comprimi tutti
+          </button>
+        </div>
+
+        <div
+          style={{
             fontSize: 13,
             opacity: 0.6,
             padding: "0 5px",
           }}
         >
-          {sortedRows.length} risultati
+          {groups.length} fornitori · {sortedRows.length} articoli
         </div>
       </div>
 
@@ -481,184 +558,292 @@ export default function AverageConsumptionPage() {
         </div>
       )}
 
+      {/* INTESTAZIONE ORDINAMENTO (si applica dentro ogni fornitore) */}
+
       <div
         style={{
-          border: "1px solid var(--border-color)",
-          borderRadius: 12,
-          overflow: "hidden",
-          background: "var(--card)",
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          flexWrap: "wrap",
+          marginBottom: 10,
+          fontSize: 12,
+          opacity: 0.6,
         }}
       >
-        <div style={{ overflowX: "auto" }}>
-          <table
-            style={{
-              width: "100%",
-              minWidth: 1250,
-              borderCollapse: "collapse",
-            }}
-          >
-            <thead>
-              <tr
+        <span>Ordina gli articoli dentro ogni fornitore per:</span>
+
+        <SortPill
+          label="Media mensile"
+          sortKey="monthlyAverage"
+          activeKey={sortKey}
+          dir={sortDir}
+          onClick={toggleSort}
+        />
+
+        <SortPill
+          label="Tot. scaricato"
+          sortKey="totalQty"
+          activeKey={sortKey}
+          dir={sortDir}
+          onClick={toggleSort}
+        />
+
+        <SortPill
+          label="Giacenza"
+          sortKey="stock"
+          activeKey={sortKey}
+          dir={sortDir}
+          onClick={toggleSort}
+        />
+
+        <SortPill
+          label="Descrizione"
+          sortKey="description"
+          activeKey={sortKey}
+          dir={sortDir}
+          onClick={toggleSort}
+        />
+      </div>
+
+      {loading ? (
+        <div
+          style={{
+            padding: 45,
+            textAlign: "center",
+            opacity: 0.55,
+            border: "1px solid var(--border-color)",
+            borderRadius: 12,
+            background: "var(--card)",
+          }}
+        >
+          Caricamento report...
+        </div>
+      ) : groups.length === 0 ? (
+        <div
+          style={{
+            padding: 45,
+            textAlign: "center",
+            opacity: 0.55,
+            border: "1px solid var(--border-color)",
+            borderRadius: 12,
+            background: "var(--card)",
+          }}
+        >
+          Nessun articolo trovato con questi criteri.
+        </div>
+      ) : (
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+          }}
+        >
+          {groups.map((group) => {
+            const isExpanded =
+              isSearching || expandedSuppliers.has(group.name);
+
+            return (
+              <div
+                key={group.name}
                 style={{
-                  background: "var(--table-head)",
+                  border: "1px solid var(--border-color)",
+                  borderRadius: 12,
+                  background: "var(--card)",
+                  overflow: "hidden",
                 }}
               >
-                <SortableHeader
-                  label="Fornitore"
-                  sortKey="supplierName"
-                  activeKey={sortKey}
-                  dir={sortDir}
-                  onClick={toggleSort}
-                />
-
-                <th style={headerStyle}>Codice articolo</th>
-                <th style={headerStyle}>Codice scanner</th>
-
-                <SortableHeader
-                  label="Descrizione"
-                  sortKey="description"
-                  activeKey={sortKey}
-                  dir={sortDir}
-                  onClick={toggleSort}
-                  align="left"
-                />
-
-                <SortableHeader
-                  label="Giacenza"
-                  sortKey="stock"
-                  activeKey={sortKey}
-                  dir={sortDir}
-                  onClick={toggleSort}
-                  align="center"
-                />
-
-                <SortableHeader
-                  label="Tot. scaricato"
-                  sortKey="totalQty"
-                  activeKey={sortKey}
-                  dir={sortDir}
-                  onClick={toggleSort}
-                  align="center"
-                />
-
-                <th style={headerCenterStyle}>Primo scarico</th>
-
-                <SortableHeader
-                  label="Media mensile"
-                  sortKey="monthlyAverage"
-                  activeKey={sortKey}
-                  dir={sortDir}
-                  onClick={toggleSort}
-                  align="right"
-                />
-              </tr>
-            </thead>
-
-            <tbody>
-              {loading ? (
-                <tr>
-                  <td colSpan={8} style={emptyStyle}>
-                    Caricamento report...
-                  </td>
-                </tr>
-              ) : sortedRows.length === 0 ? (
-                <tr>
-                  <td colSpan={8} style={emptyStyle}>
-                    Nessun articolo trovato con questi criteri.
-                  </td>
-                </tr>
-              ) : (
-                sortedRows.map((row) => (
-                  <tr
-                    key={row.id}
+                <button
+                  type="button"
+                  onClick={() => toggleSupplier(group.name)}
+                  style={{
+                    width: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 14,
+                    padding: "14px 16px",
+                    border: "none",
+                    background: "var(--table-head)",
+                    color: "var(--foreground)",
+                    cursor: "pointer",
+                    textAlign: "left",
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <div
                     style={{
-                      borderBottom: "1px solid var(--border-color)",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      minWidth: 0,
                     }}
                   >
-                    <td style={cellStyle}>
-                      <strong>{row.supplierName}</strong>
-                    </td>
+                    <span
+                      style={{
+                        display: "inline-block",
+                        width: 14,
+                        opacity: 0.6,
+                        transform: isExpanded
+                          ? "rotate(90deg)"
+                          : "rotate(0deg)",
+                        transition: "transform 0.12s ease",
+                      }}
+                    >
+                      ▸
+                    </span>
 
-                    <td style={cellStyle}>
-                      <Link
-                        href={`/items/${row.id}`}
-                        style={{
-                          color: "inherit",
-                          textDecoration: "none",
-                          fontWeight: 750,
-                        }}
-                      >
-                        {row.supplierCode || "-"}
-                      </Link>
-                    </td>
+                    <strong
+                      style={{
+                        fontSize: 15,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {group.name}
+                    </strong>
+                  </div>
 
-                    <td style={cellStyle}>
-                      <span
-                        style={{
-                          fontFamily: "monospace",
-                          fontSize: 13,
-                          padding: "4px 7px",
-                          border: "1px solid var(--border-color)",
-                          borderRadius: 5,
-                          background: "var(--input-bg)",
-                        }}
-                      >
-                        {row.code || "-"}
-                      </span>
-                    </td>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      flexWrap: "wrap",
+                      fontSize: 12,
+                    }}
+                  >
+                    <Badge>{group.rows.length} articoli</Badge>
 
-                    <td style={cellStyle}>
-                      <Link
-                        href={`/items/${row.id}`}
-                        style={{
-                          color: "inherit",
-                          textDecoration: "none",
-                        }}
-                      >
-                        {row.description}
-                      </Link>
-                    </td>
+                    <Badge
+                      tone={group.withHistoryCount > 0 ? "info" : "muted"}
+                    >
+                      {group.withHistoryCount} con consumo
+                    </Badge>
 
-                    <td style={centerCellStyle}>{row.stock}</td>
+                    {group.totalMonthly > 0 && (
+                      <Badge tone="accent">
+                        {formatNumber(group.totalMonthly)} / mese tot.
+                      </Badge>
+                    )}
+                  </div>
+                </button>
 
-                    <td style={centerCellStyle}>
-                      {row.totalQty !== null ? (
-                        formatNumber(row.totalQty, 0)
-                      ) : (
-                        <span style={{ opacity: 0.4 }}>—</span>
-                      )}
-                    </td>
+                {isExpanded && (
+                  <div style={{ overflowX: "auto" }}>
+                    <table
+                      style={{
+                        width: "100%",
+                        minWidth: 1050,
+                        borderCollapse: "collapse",
+                      }}
+                    >
+                      <thead>
+                        <tr>
+                          <th style={headerStyle}>Codice articolo</th>
+                          <th style={headerStyle}>Codice scanner</th>
+                          <th style={headerStyle}>Descrizione</th>
+                          <th style={headerCenterStyle}>Giacenza</th>
+                          <th style={headerCenterStyle}>Tot. scaricato</th>
+                          <th style={headerCenterStyle}>Primo scarico</th>
+                          <th style={headerRightStyle}>Media mensile</th>
+                        </tr>
+                      </thead>
 
-                    <td style={centerCellStyle}>
-                      {row.firstMovementDate ? (
-                        formatDate(row.firstMovementDate)
-                      ) : (
-                        <span style={{ opacity: 0.4 }}>—</span>
-                      )}
-                    </td>
+                      <tbody>
+                        {group.rows.map((row) => (
+                          <tr
+                            key={row.id}
+                            style={{
+                              borderTop: "1px solid var(--border-color)",
+                            }}
+                          >
+                            <td style={cellStyle}>
+                              <Link
+                                href={`/items/${row.id}`}
+                                style={{
+                                  color: "inherit",
+                                  textDecoration: "none",
+                                  fontWeight: 750,
+                                }}
+                              >
+                                {row.supplierCode || "-"}
+                              </Link>
+                            </td>
 
-                    <td style={rightCellStyle}>
-                      {row.monthlyAverage !== null ? (
-                        <strong>
-                          {formatNumber(row.monthlyAverage)} / mese
-                        </strong>
-                      ) : (
-                        <span style={{ opacity: 0.4 }}>
-                          Nessun consumo registrato
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                            <td style={cellStyle}>
+                              <span
+                                style={{
+                                  fontFamily: "monospace",
+                                  fontSize: 13,
+                                  padding: "4px 7px",
+                                  border: "1px solid var(--border-color)",
+                                  borderRadius: 5,
+                                  background: "var(--input-bg)",
+                                }}
+                              >
+                                {row.code || "-"}
+                              </span>
+                            </td>
+
+                            <td style={cellStyle}>
+                              <Link
+                                href={`/items/${row.id}`}
+                                style={{
+                                  color: "inherit",
+                                  textDecoration: "none",
+                                }}
+                              >
+                                {row.description}
+                              </Link>
+                            </td>
+
+                            <td style={centerCellStyle}>{row.stock}</td>
+
+                            <td style={centerCellStyle}>
+                              {row.totalQty !== null ? (
+                                formatNumber(row.totalQty, 0)
+                              ) : (
+                                <span style={{ opacity: 0.4 }}>—</span>
+                              )}
+                            </td>
+
+                            <td style={centerCellStyle}>
+                              {row.firstMovementDate ? (
+                                formatDate(row.firstMovementDate)
+                              ) : (
+                                <span style={{ opacity: 0.4 }}>—</span>
+                              )}
+                            </td>
+
+                            <td style={rightCellStyle}>
+                              {row.monthlyAverage !== null ? (
+                                <strong>
+                                  {formatNumber(row.monthlyAverage)} / mese
+                                </strong>
+                              ) : (
+                                <span style={{ opacity: 0.4 }}>
+                                  Nessun consumo registrato
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
-      </div>
+      )}
 
       <div
         style={{
-          marginTop: 12,
+          marginTop: 16,
           fontSize: 12,
           opacity: 0.5,
         }}
@@ -671,42 +856,94 @@ export default function AverageConsumptionPage() {
   );
 }
 
-function SortableHeader({
+function SortPill({
   label,
   sortKey,
   activeKey,
   dir,
   onClick,
-  align = "left",
 }: {
   label: string;
   sortKey: SortKey;
   activeKey: SortKey;
   dir: "asc" | "desc";
   onClick: (key: SortKey) => void;
-  align?: "left" | "center" | "right";
 }) {
   const isActive = activeKey === sortKey;
 
-  const baseStyle =
-    align === "center"
-      ? headerCenterStyle
-      : align === "right"
-      ? headerRightStyle
-      : headerStyle;
-
   return (
-    <th
-      style={{
-        ...baseStyle,
-        cursor: "pointer",
-        userSelect: "none",
-      }}
+    <button
+      type="button"
       onClick={() => onClick(sortKey)}
+      style={{
+        padding: "5px 10px",
+        borderRadius: 999,
+        border: isActive
+          ? "1px solid var(--foreground)"
+          : "1px solid var(--border-color)",
+        background: isActive ? "var(--foreground)" : "transparent",
+        color: isActive ? "var(--background)" : "var(--foreground)",
+        fontSize: 11,
+        fontWeight: 750,
+        cursor: "pointer",
+      }}
     >
       {label}
       {isActive ? (dir === "asc" ? " ▲" : " ▼") : ""}
-    </th>
+    </button>
+  );
+}
+
+function Badge({
+  children,
+  tone = "default",
+}: {
+  children: React.ReactNode;
+  tone?: "default" | "info" | "accent" | "muted";
+}) {
+  const colors: Record<
+    string,
+    { background: string; color: string; border: string }
+  > = {
+    default: {
+      background: "rgba(148, 163, 184, 0.12)",
+      color: "inherit",
+      border: "1px solid var(--border-color)",
+    },
+    info: {
+      background: "rgba(59, 130, 246, 0.12)",
+      color: "#3b82f6",
+      border: "1px solid rgba(59, 130, 246, 0.30)",
+    },
+    accent: {
+      background: "rgba(16, 185, 129, 0.12)",
+      color: "#10b981",
+      border: "1px solid rgba(16, 185, 129, 0.30)",
+    },
+    muted: {
+      background: "transparent",
+      color: "inherit",
+      border: "1px solid var(--border-color)",
+      opacity: 0.6,
+    } as any,
+  };
+
+  const style = colors[tone] || colors.default;
+
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        padding: "4px 9px",
+        borderRadius: 999,
+        fontWeight: 750,
+        whiteSpace: "nowrap",
+        ...style,
+      }}
+    >
+      {children}
+    </span>
   );
 }
 
@@ -764,13 +1001,25 @@ function SummaryCard({
   );
 }
 
-const headerStyle = {
-  padding: "13px 14px",
-  textAlign: "left" as const,
+const pillButtonStyle = {
+  padding: "8px 13px",
+  borderRadius: 8,
+  border: "1px solid var(--border-color)",
+  background: "var(--input-bg)",
+  color: "var(--foreground)",
   fontSize: 12,
+  fontWeight: 700,
+  cursor: "pointer",
+  whiteSpace: "nowrap" as const,
+};
+
+const headerStyle = {
+  padding: "11px 14px",
+  textAlign: "left" as const,
+  fontSize: 11,
   textTransform: "uppercase" as const,
   letterSpacing: 0.5,
-  opacity: 0.7,
+  opacity: 0.6,
   borderBottom: "1px solid var(--border-color)",
   whiteSpace: "nowrap" as const,
 };
@@ -786,7 +1035,7 @@ const headerRightStyle = {
 };
 
 const cellStyle = {
-  padding: "12px 14px",
+  padding: "11px 14px",
   fontSize: 14,
 };
 
@@ -799,10 +1048,4 @@ const rightCellStyle = {
   ...cellStyle,
   textAlign: "right" as const,
   whiteSpace: "nowrap" as const,
-};
-
-const emptyStyle = {
-  padding: 45,
-  textAlign: "center" as const,
-  opacity: 0.55,
 };

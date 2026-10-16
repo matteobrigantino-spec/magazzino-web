@@ -60,6 +60,12 @@ export default function ItemDetailPage({
   const [unit, setUnit] = useState("PZ");
   const [price, setPrice] = useState<number>(0);
   const [stock, setStock] = useState<number>(0);
+
+  // Giacenza al momento dell'ultimo caricamento/salvataggio: serve
+  // solo per capire, al salvataggio successivo, se la giacenza e'
+  // stata ridotta a mano (per registrarlo come scarico automatico).
+  const [originalStock, setOriginalStock] = useState<number>(0);
+
   const [minStock, setMinStock] = useState<number>(0);
   const [boxQty, setBoxQty] = useState<number>(1);
   const [onOrder, setOnOrder] = useState<number>(0);
@@ -462,6 +468,7 @@ export default function ItemDetailPage({
       }
 
       setStock(Number(item.stock || 0));
+      setOriginalStock(Number(item.stock || 0));
       setMinStock(Number(item.min_stock || 0));
       setBoxQty(Math.max(1, Number(item.box_qty || 1)));
       setOnOrder(Number(item.on_order || 0));
@@ -588,6 +595,56 @@ export default function ItemDetailPage({
       return;
     }
 
+    /*
+      Se la giacenza e' stata ridotta a mano da questa scheda (non
+      tramite Movimenti/scanner), registriamo comunque lo scarico
+      nell'archivio movimenti: cosi' compare nella pagina Movimenti
+      e conta per il report "Media consumo articoli", che altrimenti
+      non avrebbe nessuno storico su cui basarsi per questo articolo.
+      Operazione "best effort": se fallisce non deve mai bloccare il
+      salvataggio dell'articolo, gia' andato a buon fine sopra.
+    */
+    const newStockValue = Number(stock) || 0;
+    const stockDecrease = originalStock - newStockValue;
+
+    if (stockDecrease > 0) {
+      try {
+        const { data: newBatch, error: batchError } = await supabase
+          .from("movement_batches")
+          .insert({
+            batch_date: currentLocalDate(),
+            batch_type: "SCARICO",
+          })
+          .select("id")
+          .single();
+
+        if (!batchError && newBatch?.id) {
+          await supabase.from("movement_batch_rows").insert({
+            batch_id: newBatch.id,
+            movement_date: currentLocalDate(),
+            movement_type: "SCARICO",
+            code: updateData.code,
+            qty: stockDecrease,
+            result: "PROCESSED",
+            stock_before: originalStock,
+            stock_after: newStockValue,
+          });
+
+          await supabase
+            .from("movement_batches")
+            .update({
+              total_rows: 1,
+              processed: 1,
+            })
+            .eq("id", newBatch.id);
+        }
+      } catch {
+        // Nessun blocco: il salvataggio dell'articolo resta valido
+        // anche se la registrazione dello scarico fallisce.
+      }
+    }
+
+    setOriginalStock(newStockValue);
     setMsg("Articolo salvato correttamente.");
     setSuccess(true);
     setSaving(false);
@@ -1949,6 +2006,16 @@ function formatEuro(value: number) {
     currency: "EUR",
     minimumFractionDigits: 2,
   }).format(Number(value || 0));
+}
+
+function currentLocalDate() {
+  const now = new Date();
+
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
 }
 
 function formatDateTimeIt(value: string) {

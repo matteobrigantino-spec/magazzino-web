@@ -18,6 +18,7 @@ type Item = {
 type Supplier = {
   id: string;
   name: string;
+  windshield_enabled: boolean;
 };
 
 type ModelOption = {
@@ -107,7 +108,10 @@ export default function ParabrezzaPage() {
           .from("items")
           .select("id,supplier_id,code,supplier_code,description,stock")
           .order("description", { ascending: true }),
-        supabase.from("suppliers").select("id,name").order("name", { ascending: true }),
+        supabase
+          .from("suppliers")
+          .select("id,name,windshield_enabled")
+          .order("name", { ascending: true }),
         supabase
           .from("production_options")
           .select("id,option_type,name,active")
@@ -154,6 +158,7 @@ export default function ParabrezzaPage() {
       (suppliersRes.data || []).map((row: any) => ({
         id: String(row.id),
         name: String(row.name || ""),
+        windshield_enabled: row.windshield_enabled === true,
       }))
     );
 
@@ -231,13 +236,38 @@ export default function ParabrezzaPage() {
   const itemMap = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
   const boatMap = useMemo(() => new Map(boats.map((boat) => [boat.id, boat])), [boats]);
 
+  // I fornitori di parabrezza (windshield_enabled = true sulla loro
+  // scheda) possono essere piu' di uno: i selettori di articolo
+  // mostrano il catalogo di tutti insieme, non solo di uno.
+  const windshieldSupplierIds = useMemo(
+    () =>
+      new Set(
+        suppliers
+          .filter((supplier) => supplier.windshield_enabled)
+          .map((supplier) => supplier.id)
+      ),
+    [suppliers]
+  );
+
+  const supplierNameById = useMemo(
+    () => new Map(suppliers.map((supplier) => [supplier.id, supplier.name])),
+    [suppliers]
+  );
+
   function itemLabel(itemId: string) {
     const item = itemMap.get(itemId);
     if (!item) return "Articolo non trovato";
-    // Il fornitore e' sempre Paris Plast su questa pagina: ripeterlo
-    // ad ogni articolo era solo rumore, si mostra solo codice e
-    // descrizione.
     const code = item.supplier_code || item.code;
+    // Con un solo fornitore parabrezza ripetere il suo nome ad ogni
+    // articolo era solo rumore; con piu' di uno (da quando esiste
+    // anche Modelplast oltre a Paris Plast) serve invece a capire
+    // subito da quale catalogo viene ogni articolo.
+    if (windshieldSupplierIds.size > 1) {
+      const supplierName = supplierNameById.get(item.supplier_id) || "";
+      return supplierName
+        ? `${supplierName} — ${code} — ${item.description}`
+        : `${code} — ${item.description}`;
+    }
     return `${code} — ${item.description}`;
   }
 
@@ -253,26 +283,22 @@ export default function ParabrezzaPage() {
     return counts;
   }, [matrix]);
 
-  // Il fornitore dei parabrezza e' solo Paris Plast: i selettori di
-  // articolo mostrano solo il suo catalogo, non tutto il magazzino.
-  const parisPlastSupplierId = useMemo(
+  // I selettori di articolo mostrano solo il catalogo dei fornitori
+  // di parabrezza (windshieldSupplierIds sopra), non tutto il
+  // magazzino. Se per qualche motivo nessun fornitore risultasse
+  // ancora attivato, si mostra comunque tutto il magazzino invece
+  // di lasciare il picker vuoto (stesso comportamento di prima).
+  const windshieldItems = useMemo(
     () =>
-      suppliers.find((supplier) => supplier.name.toUpperCase().includes("PARIS PLAST"))?.id ||
-      "",
-    [suppliers]
-  );
-
-  const parisPlastItems = useMemo(
-    () =>
-      parisPlastSupplierId
-        ? items.filter((item) => item.supplier_id === parisPlastSupplierId)
+      windshieldSupplierIds.size > 0
+        ? items.filter((item) => windshieldSupplierIds.has(item.supplier_id))
         : items,
-    [items, parisPlastSupplierId]
+    [items, windshieldSupplierIds]
   );
 
-  // Articoli Paris Plast gia' abbinati al modello scelto nel form: si
-  // escludono dal picker per evitare di riproporre lo stesso articolo
-  // due volte sullo stesso modello (bloccato comunque a livello DB).
+  // Articoli gia' abbinati al modello scelto nel form: si escludono
+  // dal picker per evitare di riproporre lo stesso articolo due
+  // volte sullo stesso modello (bloccato comunque a livello DB).
   const alreadyMappedItemIds = useMemo(() => {
     if (!newMappingModel) return new Set<string>();
     return new Set(
@@ -281,8 +307,8 @@ export default function ParabrezzaPage() {
   }, [matrix, newMappingModel]);
 
   const availableItemsForNewMapping = useMemo(
-    () => parisPlastItems.filter((item) => !alreadyMappedItemIds.has(item.id)),
-    [parisPlastItems, alreadyMappedItemIds]
+    () => windshieldItems.filter((item) => !alreadyMappedItemIds.has(item.id)),
+    [windshieldItems, alreadyMappedItemIds]
   );
 
   async function addMapping() {
@@ -760,7 +786,7 @@ export default function ParabrezzaPage() {
                   value={row.item_id}
                   onChange={(e) => updateMappingItem(row.id, e.target.value)}
                 >
-                  {parisPlastItems.map((item) => (
+                  {windshieldItems.map((item) => (
                     <option key={item.id} value={item.id}>
                       {itemLabel(item.id)}
                     </option>
@@ -811,7 +837,7 @@ export default function ParabrezzaPage() {
         </div>
         {newMappingModel && availableItemsForNewMapping.length === 0 && (
           <p className="pbz-hint">
-            Tutti gli articoli Paris Plast sono già abbinati a questo modello.
+            Tutti gli articoli dei fornitori parabrezza sono già abbinati a questo modello.
           </p>
         )}
       </section>

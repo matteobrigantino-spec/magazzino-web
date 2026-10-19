@@ -17,6 +17,7 @@ type Item = {
   price: number;
   on_order: number;
   image_url: string | null;
+  category: string;
 };
 
 type WarehouseSort =
@@ -88,6 +89,24 @@ const EMPTY_KIT_DRAFT: KitDraft = {
   boatUpholsteryId: "",
 };
 
+type BiminiKitDraft = {
+  matricola: string;
+  scannerCode: string;
+  unitPrice: string;
+  color: string;
+  note: string;
+  boatBiminiId: string;
+};
+
+const EMPTY_BIMINI_KIT_DRAFT: BiminiKitDraft = {
+  matricola: "",
+  scannerCode: "",
+  unitPrice: "",
+  color: "",
+  note: "",
+  boatBiminiId: "",
+};
+
 export default function SupplierDetail({
   params,
 }: {
@@ -139,6 +158,21 @@ export default function SupplierDetail({
   const [kitError, setKitError] = useState("");
 
   const [openBoatRequests, setOpenBoatRequests] = useState<
+    OpenBoatRequest[]
+  >([]);
+
+  const [itemCategoryTab, setItemCategoryTab] =
+    useState<"tappezzeria" | "bimini" | "altri">("tappezzeria");
+
+  const [biminiOptions, setBiminiOptions] = useState<
+    { id: string; name: string }[]
+  >([]);
+
+  const [biminiKitDraft, setBiminiKitDraft] = useState<BiminiKitDraft>(
+    EMPTY_BIMINI_KIT_DRAFT
+  );
+
+  const [openBoatBiminiRequests, setOpenBoatBiminiRequests] = useState<
     OpenBoatRequest[]
   >([]);
 
@@ -253,7 +287,7 @@ export default function SupplierDetail({
         const response = await supabase
           .from("items")
           .select(
-            "id,code,supplier_code,description,unit,stock,min_stock,price,on_order,image_url"
+            "id,code,supplier_code,description,unit,stock,min_stock,price,on_order,image_url,category"
           )
           .eq("supplier_id", supplierId)
           .order("description");
@@ -275,12 +309,13 @@ export default function SupplierDetail({
           image_url: item.image_url
             ? String(item.image_url)
             : null,
+          category: item.category ? String(item.category) : "Altro",
         }));
       } else {
         const response = await supabase
           .from("items")
           .select(
-            "id,code,supplier_code,description,unit,stock,min_stock,on_order,image_url"
+            "id,code,supplier_code,description,unit,stock,min_stock,on_order,image_url,category"
           )
           .eq("supplier_id", supplierId)
           .order("description");
@@ -302,6 +337,7 @@ export default function SupplierDetail({
           image_url: item.image_url
             ? String(item.image_url)
             : null,
+          category: item.category ? String(item.category) : "Altro",
         }));
       }
 
@@ -470,8 +506,80 @@ export default function SupplierDetail({
     loadOpenBoatRequests();
   }, [supplierId, upholsteryEnabled]);
 
+  /*
+    OPZIONI BIMINI (colore) per il "+ Registra kit" rapido da
+    questa schermata, senza dover aprire Gestione Bimini.
+  */
+  useEffect(() => {
+    if (!biminiEnabled) {
+      setBiminiOptions([]);
+      return;
+    }
+
+    async function loadBiminiOptions() {
+      const { data, error } = await supabase
+        .from("bimini_options")
+        .select("id,name")
+        .eq("supplier_id", supplierId)
+        .eq("active", true)
+        .order("sort_order", { ascending: true })
+        .order("name", { ascending: true });
+
+      if (error) return;
+
+      setBiminiOptions(
+        (data || []).map((row: any) => ({
+          id: String(row.id),
+          name: String(row.name || ""),
+        }))
+      );
+    }
+
+    loadBiminiOptions();
+  }, [supplierId, biminiEnabled]);
+
+  /*
+    RICHIESTE APERTE DEI BATTELLI PER BIMINI (ancora senza kit
+    assegnato): usate nel "+ Registra kit" per collegare subito
+    il kit appena creato a un battello in attesa.
+  */
+  useEffect(() => {
+    if (!biminiEnabled) {
+      setOpenBoatBiminiRequests([]);
+      return;
+    }
+
+    async function loadOpenBoatBiminiRequests() {
+      const { data, error } = await supabase
+        .from("production_boat_bimini")
+        .select("id,item_id,color,production_boats(order_number,model_boat)")
+        .eq("supplier_id", supplierId)
+        .is("kit_id", null);
+
+      if (error) return;
+
+      setOpenBoatBiminiRequests(
+        (data || []).map((row: any) => ({
+          id: String(row.id),
+          itemId: String(row.item_id),
+          boatOrderNumber: String(row.production_boats?.order_number || "?"),
+          boatModel: String(row.production_boats?.model_boat || ""),
+          color: String(row.color || ""),
+        }))
+      );
+    }
+
+    loadOpenBoatBiminiRequests();
+  }, [supplierId, biminiEnabled]);
+
   function boatRequestsFor(itemId: string) {
     return openBoatRequests.filter(
+      (request) => request.itemId === itemId
+    );
+  }
+
+  function boatBiminiRequestsFor(itemId: string) {
+    return openBoatBiminiRequests.filter(
       (request) => request.itemId === itemId
     );
   }
@@ -724,6 +832,203 @@ export default function SupplierDetail({
     setKitSaving(false);
   }
 
+  async function updateItemCategory(itemId: string, category: string) {
+    setItems((current) =>
+      current.map((row) =>
+        row.id === itemId ? { ...row, category } : row
+      )
+    );
+
+    await supabase
+      .from("items")
+      .update({ category })
+      .eq("id", itemId);
+  }
+
+  async function openBiminiKitEditor(item: Item) {
+    setOpenKitItemId(item.id);
+    setKitMessage("");
+    setKitError("");
+    setBiminiKitDraft({
+      matricola: "",
+      scannerCode: item.code,
+      unitPrice: item.price > 0 ? String(item.price) : "",
+      color: biminiOptions[0]?.name || "",
+      note: "",
+      boatBiminiId: "",
+    });
+
+    const { data, error } = await supabase.rpc(
+      "next_bimini_matricola",
+      { p_supplier_id: supplierId }
+    );
+
+    if (!error && data !== null && data !== undefined) {
+      setBiminiKitDraft((current) => ({ ...current, matricola: String(data) }));
+    }
+  }
+
+  function hasBiminiChoices() {
+    return biminiOptions.length > 0;
+  }
+
+  async function saveBiminiKit(item: Item) {
+    setKitMessage("");
+    setKitError("");
+
+    const matricolaNumber = Number(biminiKitDraft.matricola);
+
+    if (
+      !Number.isInteger(matricolaNumber) ||
+      matricolaNumber < 1 ||
+      matricolaNumber > 10000
+    ) {
+      setKitError("La Matricola Kit deve essere un numero da 1 a 10000.");
+      return;
+    }
+
+    if (!biminiKitDraft.scannerCode.trim()) {
+      setKitError("Inserisci il Codice scanner.");
+      return;
+    }
+
+    const priceNumber = Number(
+      biminiKitDraft.unitPrice.trim().replace(",", ".")
+    );
+
+    if (!Number.isFinite(priceNumber) || priceNumber <= 0) {
+      setKitError("Inserisci il prezzo del kit, maggiore di zero.");
+      return;
+    }
+
+    if (!biminiKitDraft.color) {
+      setKitError("Seleziona il Colore.");
+      return;
+    }
+
+    setKitSaving(true);
+
+    const { error } = await supabase.rpc("create_bimini_stock_kit", {
+      p_supplier_id: supplierId,
+      p_item_id: item.id,
+      p_matricola: matricolaNumber,
+      p_scanner_code: biminiKitDraft.scannerCode.trim(),
+      p_unit_price: priceNumber,
+      p_color: biminiKitDraft.color,
+      p_note: biminiKitDraft.note.trim() || null,
+    });
+
+    if (error) {
+      const lower = error.message.toLowerCase();
+
+      if (
+        lower.includes("matricola") ||
+        lower.includes("duplicate") ||
+        lower.includes("unique")
+      ) {
+        setKitError(
+          "Questa Matricola Kit è già utilizzata. Verrà proposto un altro numero."
+        );
+      } else {
+        setKitError("Errore inserimento kit: " + error.message);
+      }
+
+      const { data: retryMatricola } = await supabase.rpc(
+        "next_bimini_matricola",
+        { p_supplier_id: supplierId }
+      );
+
+      if (retryMatricola !== null && retryMatricola !== undefined) {
+        setBiminiKitDraft((current) => ({
+          ...current,
+          matricola: String(retryMatricola),
+        }));
+      }
+
+      setKitSaving(false);
+      return;
+    }
+
+    setItems((current) =>
+      current.map((row) =>
+        row.id === item.id ? { ...row, stock: row.stock + 1 } : row
+      )
+    );
+
+    let assignedBoatLabel = "";
+
+    if (biminiKitDraft.boatBiminiId) {
+      const { data: createdKit } = await supabase
+        .from("bimini_kits")
+        .select("id")
+        .eq("supplier_id", supplierId)
+        .eq("matricola", matricolaNumber)
+        .maybeSingle();
+
+      if (createdKit?.id) {
+        const { error: assignError } = await supabase.rpc(
+          "assign_bimini_kit_to_boat",
+          {
+            p_kit_id: createdKit.id,
+            p_boat_bimini_id: biminiKitDraft.boatBiminiId,
+          }
+        );
+
+        if (!assignError) {
+          setItems((current) =>
+            current.map((row) =>
+              row.id === item.id
+                ? { ...row, stock: row.stock - 1 }
+                : row
+            )
+          );
+
+          const matchedRequest = openBoatBiminiRequests.find(
+            (request) => request.id === biminiKitDraft.boatBiminiId
+          );
+
+          assignedBoatLabel = matchedRequest
+            ? ` Assegnato subito al battello N. ${matchedRequest.boatOrderNumber}.`
+            : " Assegnato subito al battello selezionato.";
+
+          setOpenBoatBiminiRequests((current) =>
+            current.filter(
+              (request) => request.id !== biminiKitDraft.boatBiminiId
+            )
+          );
+        } else {
+          assignedBoatLabel =
+            " Il kit è stato creato ma l'assegnazione al battello non è riuscita: puoi assegnarlo manualmente dalla scheda del battello.";
+        }
+      }
+    }
+
+    setKitMessage(
+      `Kit #${matricolaNumber} inserito in giacenza. Giacenza articolo aumentata di 1.${assignedBoatLabel}`
+    );
+
+    setBiminiKitDraft((current) => ({
+      ...current,
+      unitPrice: "",
+      note: "",
+      boatBiminiId: "",
+    }));
+
+    const { data: nextMatricola } = await supabase.rpc(
+      "next_bimini_matricola",
+      { p_supplier_id: supplierId }
+    );
+
+    if (nextMatricola !== null && nextMatricola !== undefined) {
+      setBiminiKitDraft((current) => ({
+        ...current,
+        matricola: String(nextMatricola),
+      }));
+    }
+
+    setKitSaving(false);
+  }
+
   function isLowStock(item: Item) {
     return item.min_stock > 0 && item.stock <= item.min_stock;
   }
@@ -749,10 +1054,35 @@ export default function SupplierDetail({
     };
   }, [items]);
 
+  /*
+    SDOPPIAMENTO TAPPEZZERIA / BIMINI (solo per fornitori con
+    entrambi i moduli attivi, es. D'Amico): 2 "pagine" di
+    magazzino nella stessa schermata, a tab, per non mostrare
+    più i campi Colore/Dettagli/Cucitura della tappezzeria su un
+    articolo Bimini. La categorizzazione usa il campo libero
+    items.category ("Tappezzeria" / "Bimini" / resto in "Altri
+    articoli"), modificabile al volo dal menu Categoria in tabella.
+  */
+  const showCategorySplit = upholsteryEnabled && biminiEnabled;
+  const isBiminiTabActive =
+    showCategorySplit && itemCategoryTab === "bimini";
+
+  const showActionsColumn = showCategorySplit
+    ? itemCategoryTab === "tappezzeria" || itemCategoryTab === "bimini"
+    : upholsteryEnabled;
+
   const filteredItems = useMemo(() => {
     const text = search.trim().toLowerCase();
 
     return items.filter((item) => {
+      const matchesCategoryTab =
+        !showCategorySplit ||
+        (itemCategoryTab === "tappezzeria"
+          ? item.category === "Tappezzeria"
+          : itemCategoryTab === "bimini"
+          ? item.category === "Bimini"
+          : item.category !== "Tappezzeria" && item.category !== "Bimini");
+
       const matchesSearch =
         !text ||
         item.description?.toLowerCase().includes(text) ||
@@ -762,15 +1092,16 @@ export default function SupplierDetail({
       const matchesLowStock =
         !onlyLowStock || isLowStock(item);
 
-      return matchesSearch && matchesLowStock;
+      return matchesCategoryTab && matchesSearch && matchesLowStock;
     });
-  }, [items, search, onlyLowStock]);
+  }, [items, search, onlyLowStock, showCategorySplit, itemCategoryTab]);
 
   const tableColumnCount =
     6 +
     (canViewPrices ? 1 : 0) +
     (canViewInventoryValue ? 1 : 0) +
-    (upholsteryEnabled ? 1 : 0);
+    (showCategorySplit ? 1 : 0) +
+    (showActionsColumn ? 1 : 0);
 
   function getPdfDate() {
     return new Intl.DateTimeFormat("it-IT", {
@@ -2176,6 +2507,55 @@ export default function SupplierDetail({
         />
       </div>
 
+      {showCategorySplit && (
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            marginBottom: 14,
+            flexWrap: "wrap",
+          }}
+        >
+          {(
+            [
+              { key: "tappezzeria", label: "Magazzino Tappezzeria" },
+              { key: "bimini", label: "Magazzino Bimini" },
+              { key: "altri", label: "Altri articoli" },
+            ] as const
+          ).map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              onClick={() => {
+                setItemCategoryTab(tab.key);
+                closeKitEditor();
+              }}
+              style={{
+                padding: "9px 16px",
+                borderRadius: 8,
+                border:
+                  itemCategoryTab === tab.key
+                    ? "1px solid #2563eb"
+                    : "1px solid var(--border-color)",
+                background:
+                  itemCategoryTab === tab.key
+                    ? "rgba(37,99,235,0.12)"
+                    : "var(--card)",
+                color:
+                  itemCategoryTab === tab.key
+                    ? "#2563eb"
+                    : "var(--foreground)",
+                cursor: "pointer",
+                fontWeight: 800,
+                fontSize: 13,
+              }}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* RICERCA E FILTRI */}
 
       <div
@@ -2344,7 +2724,13 @@ export default function SupplierDetail({
                   </th>
                 )}
 
-                {upholsteryEnabled && (
+                {showCategorySplit && (
+                  <th style={headerStyle}>
+                    Categoria
+                  </th>
+                )}
+
+                {showActionsColumn && (
                   <th style={headerStyle}>
                     Azioni
                   </th>
@@ -2508,13 +2894,43 @@ export default function SupplierDetail({
                         </td>
                       )}
 
-                      {upholsteryEnabled && (
+                      {showCategorySplit && (
+                        <td style={cellStyle}>
+                          <select
+                            value={
+                              item.category === "Tappezzeria" ||
+                              item.category === "Bimini"
+                                ? item.category
+                                : "Altro"
+                            }
+                            onChange={(e) =>
+                              updateItemCategory(item.id, e.target.value)
+                            }
+                            style={{
+                              padding: "6px 9px",
+                              borderRadius: 7,
+                              border: "1px solid var(--border-color)",
+                              background: "var(--input-bg)",
+                              color: "var(--foreground)",
+                              fontSize: 12,
+                            }}
+                          >
+                            <option value="Tappezzeria">Tappezzeria</option>
+                            <option value="Bimini">Bimini</option>
+                            <option value="Altro">Altro</option>
+                          </select>
+                        </td>
+                      )}
+
+                      {showActionsColumn && (
                         <td style={cellStyle}>
                           <button
                             type="button"
                             onClick={() =>
                               kitOpen
                                 ? closeKitEditor()
+                                : isBiminiTabActive
+                                ? openBiminiKitEditor(item)
                                 : openKitEditor(item)
                             }
                             style={{
@@ -2537,7 +2953,230 @@ export default function SupplierDetail({
                       )}
                     </tr>
 
-                    {upholsteryEnabled && kitOpen && (
+                    {showActionsColumn && kitOpen && isBiminiTabActive && (
+                      <tr>
+                        <td
+                          colSpan={tableColumnCount}
+                          style={{
+                            padding: "14px 16px",
+                            background:
+                              "rgba(37,99,235,0.05)",
+                            borderBottom:
+                              "1px solid var(--border-color)",
+                          }}
+                        >
+                          <div
+                            style={{
+                              marginBottom: 10,
+                              fontSize: 12,
+                              fontWeight: 850,
+                            }}
+                          >
+                            Registra nuovo kit Bimini in giacenza —{" "}
+                            {item.supplier_code || item.code}
+                          </div>
+
+                          {!hasBiminiChoices() && (
+                            <div
+                              style={{
+                                marginBottom: 10,
+                                padding: "9px 11px",
+                                borderRadius: 8,
+                                border:
+                                  "1px solid rgba(250,204,21,0.4)",
+                                background:
+                                  "rgba(250,204,21,0.10)",
+                                fontSize: 11,
+                              }}
+                            >
+                              Configura almeno un Colore in Gestione
+                              Bimini prima di registrare un kit.
+                            </div>
+                          )}
+
+                          {kitError && (
+                            <div
+                              style={{
+                                marginBottom: 10,
+                                padding: "9px 11px",
+                                borderRadius: 8,
+                                border:
+                                  "1px solid rgba(239,68,68,0.35)",
+                                background:
+                                  "rgba(239,68,68,0.08)",
+                                color: "#b91c1c",
+                                fontSize: 11,
+                                fontWeight: 700,
+                              }}
+                            >
+                              {kitError}
+                            </div>
+                          )}
+
+                          {kitMessage && (
+                            <div
+                              style={{
+                                marginBottom: 10,
+                                padding: "9px 11px",
+                                borderRadius: 8,
+                                border:
+                                  "1px solid rgba(34,197,94,0.35)",
+                                background:
+                                  "rgba(34,197,94,0.08)",
+                                color: "#166534",
+                                fontSize: 11,
+                                fontWeight: 700,
+                              }}
+                            >
+                              {kitMessage}
+                            </div>
+                          )}
+
+                          <div
+                            style={{
+                              display: "flex",
+                              flexWrap: "wrap",
+                              gap: 10,
+                              alignItems: "flex-end",
+                            }}
+                          >
+                            <KitField label="Matricola">
+                              <input
+                                type="number"
+                                min="1"
+                                max="10000"
+                                step="1"
+                                value={biminiKitDraft.matricola}
+                                onChange={(e) =>
+                                  setBiminiKitDraft((current) => ({
+                                    ...current,
+                                    matricola: e.target.value,
+                                  }))
+                                }
+                                style={kitInputStyle}
+                              />
+                            </KitField>
+
+                            <KitField label="Codice scanner">
+                              <input
+                                value={biminiKitDraft.scannerCode}
+                                onChange={(e) =>
+                                  setBiminiKitDraft((current) => ({
+                                    ...current,
+                                    scannerCode: e.target.value,
+                                  }))
+                                }
+                                style={kitInputStyle}
+                              />
+                            </KitField>
+
+                            <KitField label="Prezzo kit">
+                              <input
+                                type="number"
+                                min="0.01"
+                                step="0.01"
+                                value={biminiKitDraft.unitPrice}
+                                onChange={(e) =>
+                                  setBiminiKitDraft((current) => ({
+                                    ...current,
+                                    unitPrice: e.target.value,
+                                  }))
+                                }
+                                style={kitInputStyle}
+                              />
+                            </KitField>
+
+                            <KitField label="Colore">
+                              <select
+                                value={biminiKitDraft.color}
+                                onChange={(e) =>
+                                  setBiminiKitDraft((current) => ({
+                                    ...current,
+                                    color: e.target.value,
+                                  }))
+                                }
+                                style={kitInputStyle}
+                              >
+                                {biminiOptions.map((option) => (
+                                  <option key={option.id} value={option.name}>
+                                    {option.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </KitField>
+
+                            <KitField label="Nota (facoltativa)">
+                              <input
+                                value={biminiKitDraft.note}
+                                onChange={(e) =>
+                                  setBiminiKitDraft((current) => ({
+                                    ...current,
+                                    note: e.target.value,
+                                  }))
+                                }
+                                style={kitInputStyle}
+                              />
+                            </KitField>
+
+                            {boatBiminiRequestsFor(item.id).length > 0 && (
+                              <KitField label="Assegna a battello">
+                                <select
+                                  value={biminiKitDraft.boatBiminiId}
+                                  onChange={(e) =>
+                                    setBiminiKitDraft((current) => ({
+                                      ...current,
+                                      boatBiminiId: e.target.value,
+                                    }))
+                                  }
+                                  style={kitInputStyle}
+                                >
+                                  <option value="">Lascia in giacenza</option>
+                                  {boatBiminiRequestsFor(item.id).map(
+                                    (request) => (
+                                      <option
+                                        key={request.id}
+                                        value={request.id}
+                                      >
+                                        {`Battello N. ${request.boatOrderNumber} — ${request.boatModel} — ${request.color}`}
+                                      </option>
+                                    )
+                                  )}
+                                </select>
+                              </KitField>
+                            )}
+
+                            <button
+                              type="button"
+                              onClick={() => saveBiminiKit(item)}
+                              disabled={kitSaving || !hasBiminiChoices()}
+                              style={{
+                                minHeight: 38,
+                                padding: "0 16px",
+                                borderRadius: 8,
+                                border: "1px solid #1d4ed8",
+                                background: "#2563eb",
+                                color: "white",
+                                cursor: kitSaving
+                                  ? "not-allowed"
+                                  : "pointer",
+                                fontWeight: 850,
+                                fontSize: 12,
+                                opacity:
+                                  kitSaving || !hasBiminiChoices()
+                                    ? 0.55
+                                    : 1,
+                              }}
+                            >
+                              {kitSaving
+                                ? "Salvataggio..."
+                                : "Salva kit"}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+
+                    {showActionsColumn && kitOpen && !isBiminiTabActive && (
                       <tr>
                         <td
                           colSpan={tableColumnCount}

@@ -107,6 +107,42 @@ const EMPTY_BIMINI_KIT_DRAFT: BiminiKitDraft = {
   boatBiminiId: "",
 };
 
+const TELI_TIPI = [
+  "Bimini di poppa",
+  "Copriconsolle",
+  "Copriseduta",
+  "Copribattello",
+] as const;
+
+type OpenBoatTeliRequest = {
+  id: string;
+  itemId: string;
+  tipo: string;
+  boatOrderNumber: string;
+  boatModel: string;
+  color: string;
+};
+
+type TeliKitDraft = {
+  tipo: string;
+  matricola: string;
+  scannerCode: string;
+  unitPrice: string;
+  color: string;
+  note: string;
+  boatTeliId: string;
+};
+
+const EMPTY_TELI_KIT_DRAFT: TeliKitDraft = {
+  tipo: TELI_TIPI[0],
+  matricola: "",
+  scannerCode: "",
+  unitPrice: "",
+  color: "",
+  note: "",
+  boatTeliId: "",
+};
+
 export default function SupplierDetail({
   params,
 }: {
@@ -127,6 +163,8 @@ export default function SupplierDetail({
   const [teakEnabled, setTeakEnabled] =
     useState(false);
   const [biminiEnabled, setBiminiEnabled] =
+    useState(false);
+  const [teliEnabled, setTeliEnabled] =
     useState(false);
   const [items, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
@@ -162,7 +200,7 @@ export default function SupplierDetail({
   >([]);
 
   const [itemCategoryTab, setItemCategoryTab] =
-    useState<"tappezzeria" | "bimini" | "altri">("tappezzeria");
+    useState<"tappezzeria" | "bimini" | "teli" | "altri">("tappezzeria");
 
   const [biminiOptions, setBiminiOptions] = useState<
     { id: string; name: string }[]
@@ -174,6 +212,18 @@ export default function SupplierDetail({
 
   const [openBoatBiminiRequests, setOpenBoatBiminiRequests] = useState<
     OpenBoatRequest[]
+  >([]);
+
+  const [teliOptions, setTeliOptions] = useState<
+    { id: string; name: string }[]
+  >([]);
+
+  const [teliKitDraft, setTeliKitDraft] = useState<TeliKitDraft>(
+    EMPTY_TELI_KIT_DRAFT
+  );
+
+  const [openBoatTeliRequests, setOpenBoatTeliRequests] = useState<
+    OpenBoatTeliRequest[]
   >([]);
 
   const [companyLogo, setCompanyLogo] = useState("");
@@ -271,6 +321,11 @@ export default function SupplierDetail({
           .eq("id", supplierId)
           .maybeSingle(),
         supabase
+          .from("suppliers")
+          .select("teli_enabled")
+          .eq("id", supplierId)
+          .maybeSingle(),
+        supabase
           .from("orders")
           .select("order_date,received_at")
           .eq("supplier_id", supplierId)
@@ -355,6 +410,7 @@ export default function SupplierDetail({
         { data: windshieldRow, error: windshieldError },
         { data: teakRow, error: teakError },
         { data: biminiRow, error: biminiError },
+        { data: teliRow, error: teliError },
         { data: deliveredOrders, error: deliveredOrdersError },
       ] = await otherQueriesPromise;
 
@@ -377,6 +433,10 @@ export default function SupplierDetail({
 
       setBiminiEnabled(
         !biminiError && biminiRow?.bimini_enabled === true
+      );
+
+      setTeliEnabled(
+        !teliError && teliRow?.teli_enabled === true
       );
 
       if (!deliveredOrdersError && deliveredOrders) {
@@ -581,6 +641,79 @@ export default function SupplierDetail({
   function boatBiminiRequestsFor(itemId: string) {
     return openBoatBiminiRequests.filter(
       (request) => request.itemId === itemId
+    );
+  }
+
+  /*
+    OPZIONI TELI (colore) per il "+ Registra kit" rapido da
+    questa schermata, senza dover aprire Gestione Teli.
+  */
+  useEffect(() => {
+    if (!teliEnabled) {
+      setTeliOptions([]);
+      return;
+    }
+
+    async function loadTeliOptions() {
+      const { data, error } = await supabase
+        .from("teli_options")
+        .select("id,name")
+        .eq("supplier_id", supplierId)
+        .eq("active", true)
+        .order("sort_order", { ascending: true })
+        .order("name", { ascending: true });
+
+      if (error) return;
+
+      setTeliOptions(
+        (data || []).map((row: any) => ({
+          id: String(row.id),
+          name: String(row.name || ""),
+        }))
+      );
+    }
+
+    loadTeliOptions();
+  }, [supplierId, teliEnabled]);
+
+  /*
+    RICHIESTE APERTE DEI BATTELLI PER TELI (ancora senza kit
+    assegnato): usate nel "+ Registra kit" per collegare subito
+    il kit appena creato a un battello in attesa.
+  */
+  useEffect(() => {
+    if (!teliEnabled) {
+      setOpenBoatTeliRequests([]);
+      return;
+    }
+
+    async function loadOpenBoatTeliRequests() {
+      const { data, error } = await supabase
+        .from("production_boat_teli")
+        .select("id,item_id,tipo,color,production_boats(order_number,model_boat)")
+        .eq("supplier_id", supplierId)
+        .is("kit_id", null);
+
+      if (error) return;
+
+      setOpenBoatTeliRequests(
+        (data || []).map((row: any) => ({
+          id: String(row.id),
+          itemId: String(row.item_id),
+          tipo: String(row.tipo || ""),
+          boatOrderNumber: String(row.production_boats?.order_number || "?"),
+          boatModel: String(row.production_boats?.model_boat || ""),
+          color: String(row.color || ""),
+        }))
+      );
+    }
+
+    loadOpenBoatTeliRequests();
+  }, [supplierId, teliEnabled]);
+
+  function boatTeliRequestsFor(itemId: string, tipo: string) {
+    return openBoatTeliRequests.filter(
+      (request) => request.itemId === itemId && request.tipo === tipo
     );
   }
 
@@ -1029,6 +1162,197 @@ export default function SupplierDetail({
     setKitSaving(false);
   }
 
+  async function openTeliKitEditor(item: Item) {
+    setOpenKitItemId(item.id);
+    setKitMessage("");
+    setKitError("");
+    setTeliKitDraft({
+      tipo: TELI_TIPI[0],
+      matricola: "",
+      scannerCode: item.code,
+      unitPrice: item.price > 0 ? String(item.price) : "",
+      color: teliOptions[0]?.name || "",
+      note: "",
+      boatTeliId: "",
+    });
+
+    const { data, error } = await supabase.rpc(
+      "next_teli_matricola",
+      { p_supplier_id: supplierId }
+    );
+
+    if (!error && data !== null && data !== undefined) {
+      setTeliKitDraft((current) => ({ ...current, matricola: String(data) }));
+    }
+  }
+
+  function hasTeliChoices() {
+    return teliOptions.length > 0;
+  }
+
+  async function saveTeliKit(item: Item) {
+    setKitMessage("");
+    setKitError("");
+
+    if (!TELI_TIPI.includes(teliKitDraft.tipo as (typeof TELI_TIPI)[number])) {
+      setKitError("Seleziona il Tipo.");
+      return;
+    }
+
+    const matricolaNumber = Number(teliKitDraft.matricola);
+
+    if (
+      !Number.isInteger(matricolaNumber) ||
+      matricolaNumber < 1 ||
+      matricolaNumber > 10000
+    ) {
+      setKitError("La Matricola Kit deve essere un numero da 1 a 10000.");
+      return;
+    }
+
+    if (!teliKitDraft.scannerCode.trim()) {
+      setKitError("Inserisci il Codice scanner.");
+      return;
+    }
+
+    const priceNumber = Number(
+      teliKitDraft.unitPrice.trim().replace(",", ".")
+    );
+
+    if (!Number.isFinite(priceNumber) || priceNumber <= 0) {
+      setKitError("Inserisci il prezzo del kit, maggiore di zero.");
+      return;
+    }
+
+    if (!teliKitDraft.color) {
+      setKitError("Seleziona il Colore.");
+      return;
+    }
+
+    setKitSaving(true);
+
+    const { error } = await supabase.rpc("create_teli_stock_kit", {
+      p_supplier_id: supplierId,
+      p_item_id: item.id,
+      p_tipo: teliKitDraft.tipo,
+      p_matricola: matricolaNumber,
+      p_scanner_code: teliKitDraft.scannerCode.trim(),
+      p_unit_price: priceNumber,
+      p_color: teliKitDraft.color,
+      p_note: teliKitDraft.note.trim() || null,
+    });
+
+    if (error) {
+      const lower = error.message.toLowerCase();
+
+      if (
+        lower.includes("matricola") ||
+        lower.includes("duplicate") ||
+        lower.includes("unique")
+      ) {
+        setKitError(
+          "Questa Matricola Kit è già utilizzata. Verrà proposto un altro numero."
+        );
+      } else {
+        setKitError("Errore inserimento kit: " + error.message);
+      }
+
+      const { data: retryMatricola } = await supabase.rpc(
+        "next_teli_matricola",
+        { p_supplier_id: supplierId }
+      );
+
+      if (retryMatricola !== null && retryMatricola !== undefined) {
+        setTeliKitDraft((current) => ({
+          ...current,
+          matricola: String(retryMatricola),
+        }));
+      }
+
+      setKitSaving(false);
+      return;
+    }
+
+    setItems((current) =>
+      current.map((row) =>
+        row.id === item.id ? { ...row, stock: row.stock + 1 } : row
+      )
+    );
+
+    let assignedBoatLabel = "";
+
+    if (teliKitDraft.boatTeliId) {
+      const { data: createdKit } = await supabase
+        .from("teli_kits")
+        .select("id")
+        .eq("supplier_id", supplierId)
+        .eq("matricola", matricolaNumber)
+        .maybeSingle();
+
+      if (createdKit?.id) {
+        const { error: assignError } = await supabase.rpc(
+          "assign_teli_kit_to_boat",
+          {
+            p_kit_id: createdKit.id,
+            p_boat_teli_id: teliKitDraft.boatTeliId,
+          }
+        );
+
+        if (!assignError) {
+          setItems((current) =>
+            current.map((row) =>
+              row.id === item.id
+                ? { ...row, stock: row.stock - 1 }
+                : row
+            )
+          );
+
+          const matchedRequest = openBoatTeliRequests.find(
+            (request) => request.id === teliKitDraft.boatTeliId
+          );
+
+          assignedBoatLabel = matchedRequest
+            ? ` Assegnato subito al battello N. ${matchedRequest.boatOrderNumber}.`
+            : " Assegnato subito al battello selezionato.";
+
+          setOpenBoatTeliRequests((current) =>
+            current.filter(
+              (request) => request.id !== teliKitDraft.boatTeliId
+            )
+          );
+        } else {
+          assignedBoatLabel =
+            " Il kit è stato creato ma l'assegnazione al battello non è riuscita: puoi assegnarlo manualmente dalla scheda del battello.";
+        }
+      }
+    }
+
+    setKitMessage(
+      `Kit #${matricolaNumber} inserito in giacenza. Giacenza articolo aumentata di 1.${assignedBoatLabel}`
+    );
+
+    setTeliKitDraft((current) => ({
+      ...current,
+      unitPrice: "",
+      note: "",
+      boatTeliId: "",
+    }));
+
+    const { data: nextMatricola } = await supabase.rpc(
+      "next_teli_matricola",
+      { p_supplier_id: supplierId }
+    );
+
+    if (nextMatricola !== null && nextMatricola !== undefined) {
+      setTeliKitDraft((current) => ({
+        ...current,
+        matricola: String(nextMatricola),
+      }));
+    }
+
+    setKitSaving(false);
+  }
+
   function isLowStock(item: Item) {
     return item.min_stock > 0 && item.stock <= item.min_stock;
   }
@@ -1055,20 +1379,28 @@ export default function SupplierDetail({
   }, [items]);
 
   /*
-    SDOPPIAMENTO TAPPEZZERIA / BIMINI (solo per fornitori con
-    entrambi i moduli attivi, es. D'Amico): 2 "pagine" di
-    magazzino nella stessa schermata, a tab, per non mostrare
-    più i campi Colore/Dettagli/Cucitura della tappezzeria su un
-    articolo Bimini. La categorizzazione usa il campo libero
-    items.category ("Tappezzeria" / "Bimini" / resto in "Altri
-    articoli"), modificabile al volo dal menu Categoria in tabella.
+    SDOPPIAMENTO TAPPEZZERIA / BIMINI / TELI (solo per fornitori
+    con almeno 2 moduli attivi, es. D'Amico che li ha tutti e 3):
+    "pagine" di magazzino nella stessa schermata, a tab, per non
+    mostrare più i campi Colore/Dettagli/Cucitura della
+    tappezzeria su un articolo Bimini o Teli. La categorizzazione
+    usa il campo libero items.category ("Tappezzeria" / "Bimini" /
+    "Teli" / resto in "Altri articoli"), modificabile al volo dal
+    menu Categoria in tabella.
   */
-  const showCategorySplit = upholsteryEnabled && biminiEnabled;
+  const enabledModuleCount =
+    (upholsteryEnabled ? 1 : 0) +
+    (biminiEnabled ? 1 : 0) +
+    (teliEnabled ? 1 : 0);
+
+  const showCategorySplit = enabledModuleCount >= 2;
   const isBiminiTabActive =
     showCategorySplit && itemCategoryTab === "bimini";
+  const isTeliTabActive =
+    showCategorySplit && itemCategoryTab === "teli";
 
   const showActionsColumn = showCategorySplit
-    ? itemCategoryTab === "tappezzeria" || itemCategoryTab === "bimini"
+    ? itemCategoryTab !== "altri"
     : upholsteryEnabled;
 
   const filteredItems = useMemo(() => {
@@ -1081,7 +1413,11 @@ export default function SupplierDetail({
           ? item.category === "Tappezzeria"
           : itemCategoryTab === "bimini"
           ? item.category === "Bimini"
-          : item.category !== "Tappezzeria" && item.category !== "Bimini");
+          : itemCategoryTab === "teli"
+          ? item.category === "Teli"
+          : item.category !== "Tappezzeria" &&
+            item.category !== "Bimini" &&
+            item.category !== "Teli");
 
       const matchesSearch =
         !text ||
@@ -2468,6 +2804,94 @@ export default function SupplierDetail({
         </section>
       )}
 
+      {teliEnabled && (
+        <section
+          style={{
+            marginBottom: 20,
+            padding: "18px 20px",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 18,
+            flexWrap: "wrap",
+            border:
+              "1px solid rgba(37,99,235,0.28)",
+            borderRadius: 14,
+            background:
+              "linear-gradient(135deg, rgba(37,99,235,0.10), rgba(59,130,246,0.035))",
+            boxShadow:
+              "0 10px 28px rgba(37,99,235,0.07)",
+          }}
+        >
+          <div
+            style={{
+              minWidth: 0,
+            }}
+          >
+            <div
+              style={{
+                marginBottom: 5,
+                color: "#2563eb",
+                fontSize: 11,
+                fontWeight: 900,
+                letterSpacing: 1.1,
+                textTransform: "uppercase",
+              }}
+            >
+              Fornitore Teli
+            </div>
+
+            <div
+              style={{
+                fontSize: 20,
+                fontWeight: 900,
+                lineHeight: 1.2,
+              }}
+            >
+              Gestione Teli
+            </div>
+
+            <div
+              style={{
+                marginTop: 6,
+                maxWidth: 720,
+                color: "var(--muted-foreground, #64748b)",
+                fontSize: 13,
+                lineHeight: 1.55,
+              }}
+            >
+              Bimini di poppa, Copriconsolle, Copriseduta e
+              Copribattello: Matricola Kit e colore, senza
+              modificare il normale magazzino.
+            </div>
+          </div>
+
+          <Link
+            href={`/suppliers/${supplierId}/teli`}
+            style={{
+              minHeight: 44,
+              padding: "0 17px",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              border:
+                "1px solid rgba(37,99,235,0.40)",
+              borderRadius: 10,
+              background: "#2563eb",
+              color: "#ffffff",
+              textDecoration: "none",
+              fontSize: 13,
+              fontWeight: 900,
+              whiteSpace: "nowrap",
+              boxShadow:
+                "0 8px 18px rgba(37,99,235,0.20)",
+            }}
+          >
+            Apri gestione Teli →
+          </Link>
+        </section>
+      )}
+
       {/* RIQUADRI RIEPILOGO */}
 
       <div
@@ -2518,10 +2942,20 @@ export default function SupplierDetail({
         >
           {(
             [
-              { key: "tappezzeria", label: "Magazzino Tappezzeria" },
-              { key: "bimini", label: "Magazzino Bimini" },
-              { key: "altri", label: "Altri articoli" },
-            ] as const
+              upholsteryEnabled
+                ? { key: "tappezzeria" as const, label: "Magazzino Tappezzeria" }
+                : null,
+              biminiEnabled
+                ? { key: "bimini" as const, label: "Magazzino Bimini" }
+                : null,
+              teliEnabled
+                ? { key: "teli" as const, label: "Magazzino Teli" }
+                : null,
+              { key: "altri" as const, label: "Altri articoli" },
+            ].filter(Boolean) as {
+              key: "tappezzeria" | "bimini" | "teli" | "altri";
+              label: string;
+            }[]
           ).map((tab) => (
             <button
               key={tab.key}
@@ -2899,7 +3333,8 @@ export default function SupplierDetail({
                           <select
                             value={
                               item.category === "Tappezzeria" ||
-                              item.category === "Bimini"
+                              item.category === "Bimini" ||
+                              item.category === "Teli"
                                 ? item.category
                                 : "Altro"
                             }
@@ -2917,6 +3352,7 @@ export default function SupplierDetail({
                           >
                             <option value="Tappezzeria">Tappezzeria</option>
                             <option value="Bimini">Bimini</option>
+                            <option value="Teli">Teli</option>
                             <option value="Altro">Altro</option>
                           </select>
                         </td>
@@ -2931,6 +3367,8 @@ export default function SupplierDetail({
                                 ? closeKitEditor()
                                 : isBiminiTabActive
                                 ? openBiminiKitEditor(item)
+                                : isTeliTabActive
+                                ? openTeliKitEditor(item)
                                 : openKitEditor(item)
                             }
                             style={{
@@ -3176,7 +3614,250 @@ export default function SupplierDetail({
                       </tr>
                     )}
 
-                    {showActionsColumn && kitOpen && !isBiminiTabActive && (
+                    {showActionsColumn && kitOpen && isTeliTabActive && (
+                      <tr>
+                        <td
+                          colSpan={tableColumnCount}
+                          style={{
+                            padding: "14px 16px",
+                            background:
+                              "rgba(37,99,235,0.05)",
+                            borderBottom:
+                              "1px solid var(--border-color)",
+                          }}
+                        >
+                          <div
+                            style={{
+                              marginBottom: 10,
+                              fontSize: 12,
+                              fontWeight: 850,
+                            }}
+                          >
+                            Registra nuovo kit Teli in giacenza —{" "}
+                            {item.supplier_code || item.code}
+                          </div>
+
+                          {!hasTeliChoices() && (
+                            <div
+                              style={{
+                                marginBottom: 10,
+                                padding: "9px 11px",
+                                borderRadius: 8,
+                                border:
+                                  "1px solid rgba(250,204,21,0.4)",
+                                background:
+                                  "rgba(250,204,21,0.10)",
+                                fontSize: 11,
+                              }}
+                            >
+                              Configura almeno un Colore in Gestione
+                              Teli prima di registrare un kit.
+                            </div>
+                          )}
+
+                          {kitError && (
+                            <div
+                              style={{
+                                marginBottom: 10,
+                                padding: "9px 11px",
+                                borderRadius: 8,
+                                border:
+                                  "1px solid rgba(239,68,68,0.35)",
+                                background:
+                                  "rgba(239,68,68,0.08)",
+                                color: "#b91c1c",
+                                fontSize: 11,
+                                fontWeight: 700,
+                              }}
+                            >
+                              {kitError}
+                            </div>
+                          )}
+
+                          {kitMessage && (
+                            <div
+                              style={{
+                                marginBottom: 10,
+                                padding: "9px 11px",
+                                borderRadius: 8,
+                                border:
+                                  "1px solid rgba(34,197,94,0.35)",
+                                background:
+                                  "rgba(34,197,94,0.08)",
+                                color: "#166534",
+                                fontSize: 11,
+                                fontWeight: 700,
+                              }}
+                            >
+                              {kitMessage}
+                            </div>
+                          )}
+
+                          <div
+                            style={{
+                              display: "flex",
+                              flexWrap: "wrap",
+                              gap: 10,
+                              alignItems: "flex-end",
+                            }}
+                          >
+                            <KitField label="Tipo">
+                              <select
+                                value={teliKitDraft.tipo}
+                                onChange={(e) =>
+                                  setTeliKitDraft((current) => ({
+                                    ...current,
+                                    tipo: e.target.value,
+                                    boatTeliId: "",
+                                  }))
+                                }
+                                style={kitInputStyle}
+                              >
+                                {TELI_TIPI.map((option) => (
+                                  <option key={option} value={option}>
+                                    {option}
+                                  </option>
+                                ))}
+                              </select>
+                            </KitField>
+
+                            <KitField label="Matricola">
+                              <input
+                                type="number"
+                                min="1"
+                                max="10000"
+                                step="1"
+                                value={teliKitDraft.matricola}
+                                onChange={(e) =>
+                                  setTeliKitDraft((current) => ({
+                                    ...current,
+                                    matricola: e.target.value,
+                                  }))
+                                }
+                                style={kitInputStyle}
+                              />
+                            </KitField>
+
+                            <KitField label="Codice scanner">
+                              <input
+                                value={teliKitDraft.scannerCode}
+                                onChange={(e) =>
+                                  setTeliKitDraft((current) => ({
+                                    ...current,
+                                    scannerCode: e.target.value,
+                                  }))
+                                }
+                                style={kitInputStyle}
+                              />
+                            </KitField>
+
+                            <KitField label="Prezzo kit">
+                              <input
+                                type="number"
+                                min="0.01"
+                                step="0.01"
+                                value={teliKitDraft.unitPrice}
+                                onChange={(e) =>
+                                  setTeliKitDraft((current) => ({
+                                    ...current,
+                                    unitPrice: e.target.value,
+                                  }))
+                                }
+                                style={kitInputStyle}
+                              />
+                            </KitField>
+
+                            <KitField label="Colore">
+                              <select
+                                value={teliKitDraft.color}
+                                onChange={(e) =>
+                                  setTeliKitDraft((current) => ({
+                                    ...current,
+                                    color: e.target.value,
+                                  }))
+                                }
+                                style={kitInputStyle}
+                              >
+                                {teliOptions.map((option) => (
+                                  <option key={option.id} value={option.name}>
+                                    {option.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </KitField>
+
+                            <KitField label="Nota (facoltativa)">
+                              <input
+                                value={teliKitDraft.note}
+                                onChange={(e) =>
+                                  setTeliKitDraft((current) => ({
+                                    ...current,
+                                    note: e.target.value,
+                                  }))
+                                }
+                                style={kitInputStyle}
+                              />
+                            </KitField>
+
+                            {boatTeliRequestsFor(item.id, teliKitDraft.tipo).length > 0 && (
+                              <KitField label="Assegna a battello">
+                                <select
+                                  value={teliKitDraft.boatTeliId}
+                                  onChange={(e) =>
+                                    setTeliKitDraft((current) => ({
+                                      ...current,
+                                      boatTeliId: e.target.value,
+                                    }))
+                                  }
+                                  style={kitInputStyle}
+                                >
+                                  <option value="">Lascia in giacenza</option>
+                                  {boatTeliRequestsFor(item.id, teliKitDraft.tipo).map(
+                                    (request) => (
+                                      <option
+                                        key={request.id}
+                                        value={request.id}
+                                      >
+                                        {`Battello N. ${request.boatOrderNumber} — ${request.boatModel} — ${request.color}`}
+                                      </option>
+                                    )
+                                  )}
+                                </select>
+                              </KitField>
+                            )}
+
+                            <button
+                              type="button"
+                              onClick={() => saveTeliKit(item)}
+                              disabled={kitSaving || !hasTeliChoices()}
+                              style={{
+                                minHeight: 38,
+                                padding: "0 16px",
+                                borderRadius: 8,
+                                border: "1px solid #1d4ed8",
+                                background: "#2563eb",
+                                color: "white",
+                                cursor: kitSaving
+                                  ? "not-allowed"
+                                  : "pointer",
+                                fontWeight: 850,
+                                fontSize: 12,
+                                opacity:
+                                  kitSaving || !hasTeliChoices()
+                                    ? 0.55
+                                    : 1,
+                              }}
+                            >
+                              {kitSaving
+                                ? "Salvataggio..."
+                                : "Salva kit"}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+
+                    {showActionsColumn && kitOpen && !isBiminiTabActive && !isTeliTabActive && (
                       <tr>
                         <td
                           colSpan={tableColumnCount}

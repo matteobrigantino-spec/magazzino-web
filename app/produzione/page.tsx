@@ -109,6 +109,38 @@ type BoatBiminiDraftRow = {
   note: string;
 };
 
+const TELI_TIPI = [
+  "Bimini di poppa",
+  "Copriconsolle",
+  "Copriseduta",
+  "Copribattello",
+] as const;
+
+type TeliSupplier = {
+  id: string;
+  name: string;
+};
+
+type TeliItemLookup = {
+  id: string;
+  supplierId: string;
+  description: string;
+};
+
+type TeliColorOption = {
+  id: string;
+  supplierId: string;
+  name: string;
+};
+
+type BoatTeliDraftRow = {
+  key: string;
+  tipo: string;
+  itemId: string;
+  color: string;
+  note: string;
+};
+
 function isTubolariName(name: string) {
   return name.trim().toLowerCase() === "tubolari";
 }
@@ -672,10 +704,19 @@ export default function ProductionPage() {
   const [biminiRows, setBiminiRows] = useState<BoatBiminiDraftRow[]>([]);
   const biminiSupplierId = biminiSuppliers[0]?.id || "";
 
+  const [teliSuppliers, setTeliSuppliers] = useState<TeliSupplier[]>([]);
+  const [teliItemLookup, setTeliItemLookup] = useState<TeliItemLookup[]>([]);
+  const [teliColorOptions, setTeliColorOptions] = useState<
+    TeliColorOption[]
+  >([]);
+  const [teliRows, setTeliRows] = useState<BoatTeliDraftRow[]>([]);
+  const teliSupplierId = teliSuppliers[0]?.id || "";
+
   useEffect(() => {
     loadData();
     loadUpholsteryCatalog();
     loadBiminiCatalog();
+    loadTeliCatalog();
   }, []);
 
   // Bimini - stesso principio della tappezzeria qui sopra, ma piu'
@@ -765,6 +806,97 @@ export default function ProductionPage() {
 
   function updateBiminiRow(key: string, patch: Partial<BoatBiminiDraftRow>) {
     setBiminiRows((current) =>
+      current.map((row) => (row.key === key ? { ...row, ...patch } : row))
+    );
+  }
+
+  // Teli - stesso principio di Bimini, ma raggruppa i 4 tipi rimasti
+  // (Bimini di poppa, Copriconsolle, Copriseduta, Copribattello) in
+  // un unico modulo con un campo Tipo per riga.
+  async function loadTeliCatalog() {
+    const { data: supplierRows, error: supplierError } = await supabase
+      .from("suppliers")
+      .select("id,name")
+      .eq("teli_enabled", true)
+      .order("name", { ascending: true });
+
+    if (supplierError || !supplierRows || supplierRows.length === 0) {
+      setTeliSuppliers([]);
+      setTeliItemLookup([]);
+      setTeliColorOptions([]);
+      return;
+    }
+
+    const suppliers: TeliSupplier[] = supplierRows.map((row: any) => ({
+      id: String(row.id),
+      name: String(row.name || ""),
+    }));
+
+    setTeliSuppliers(suppliers);
+
+    const supplierIds = suppliers.map((supplier) => supplier.id);
+
+    const [itemsRes, optionsRes] = await Promise.all([
+      supabase
+        .from("items")
+        .select("id,supplier_id,description")
+        .in("supplier_id", supplierIds)
+        .order("description", { ascending: true }),
+      supabase
+        .from("teli_options")
+        .select("id,supplier_id,name")
+        .in("supplier_id", supplierIds)
+        .eq("active", true)
+        .order("sort_order", { ascending: true })
+        .order("name", { ascending: true }),
+    ]);
+
+    setTeliItemLookup(
+      (itemsRes.data || []).map((row: any) => ({
+        id: String(row.id),
+        supplierId: String(row.supplier_id),
+        description: String(row.description || ""),
+      }))
+    );
+
+    setTeliColorOptions(
+      (optionsRes.data || []).map((row: any) => ({
+        id: String(row.id),
+        supplierId: String(row.supplier_id),
+        name: String(row.name || ""),
+      }))
+    );
+  }
+
+  function teliItemsFor(supplierId: string) {
+    return teliItemLookup.filter((item) => item.supplierId === supplierId);
+  }
+
+  function teliColorsFor(supplierId: string) {
+    return teliColorOptions.filter(
+      (option) => option.supplierId === supplierId
+    );
+  }
+
+  function addTeliRow() {
+    setTeliRows((current) => [
+      ...current,
+      {
+        key: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        tipo: TELI_TIPI[0],
+        itemId: "",
+        color: "",
+        note: "",
+      },
+    ]);
+  }
+
+  function removeTeliRow(key: string) {
+    setTeliRows((current) => current.filter((row) => row.key !== key));
+  }
+
+  function updateTeliRow(key: string, patch: Partial<BoatTeliDraftRow>) {
+    setTeliRows((current) =>
       current.map((row) => (row.key === key ? { ...row, ...patch } : row))
     );
   }
@@ -1611,6 +1743,63 @@ export default function ProductionPage() {
         ? ` Bimini: ${validBiminiRows.length} richiest${validBiminiRows.length === 1 ? "a" : "e"} collegat${validBiminiRows.length === 1 ? "a" : "e"} (vedi scheda battello per lo stato).`
         : "";
 
+    const validTeliRows = teliRows.filter(
+      (row) => row.tipo && row.itemId && row.color
+    );
+
+    if (validTeliRows.length > 0 && newBoatId && teliSupplierId) {
+      for (const row of validTeliRows) {
+        try {
+          const { data: inserted, error: insertError } = await supabase
+            .from("production_boat_teli")
+            .insert({
+              boat_id: newBoatId,
+              supplier_id: teliSupplierId,
+              item_id: row.itemId,
+              tipo: row.tipo,
+              color: row.color,
+              note: row.note.trim() || null,
+            })
+            .select("id")
+            .single();
+
+          if (insertError || !inserted) continue;
+
+          const { data: stockMatch } = await supabase
+            .from("teli_kits")
+            .select("id")
+            .eq("supplier_id", teliSupplierId)
+            .eq("item_id", row.itemId)
+            .eq("tipo", row.tipo)
+            .eq("status", "stock")
+            .eq("color", row.color)
+            .limit(1)
+            .maybeSingle();
+
+          if (stockMatch?.id) {
+            try {
+              await supabase.rpc("assign_teli_kit_to_boat", {
+                p_kit_id: stockMatch.id,
+                p_boat_teli_id: inserted.id,
+              });
+            } catch (assignError) {
+              console.error(
+                "Errore assegnazione automatica kit Teli:",
+                assignError
+              );
+            }
+          }
+        } catch (teliError) {
+          console.error("Errore collegamento Teli battello:", teliError);
+        }
+      }
+    }
+
+    const teliSuffix =
+      validTeliRows.length > 0
+        ? ` Teli: ${validTeliRows.length} richiest${validTeliRows.length === 1 ? "a" : "e"} collegat${validTeliRows.length === 1 ? "a" : "e"} (vedi scheda battello per lo stato).`
+        : "";
+
     /*
       DISTINTA BASE - SEZIONI OPTIONAL SCELTE (STEP 38)
 
@@ -1677,7 +1866,7 @@ export default function ProductionPage() {
     }
 
     setMessage(
-      `Ordine ${orderNumber.trim()} inserito in produzione.${tappezzeriaSuffix}${biminiSuffix}${missingArticlesSuffix}`
+      `Ordine ${orderNumber.trim()} inserito in produzione.${tappezzeriaSuffix}${biminiSuffix}${teliSuffix}${missingArticlesSuffix}`
     );
     setOrderNumber("");
     setModelBoat("");
@@ -1689,6 +1878,7 @@ export default function ProductionPage() {
     setTubeColor("");
     setTappezzeriaRows([]);
     setBiminiRows([]);
+    setTeliRows([]);
     setRequestedDeliveryDate("");
     setShowNew(false);
     setSaving(false);
@@ -2162,6 +2352,110 @@ export default function ProductionPage() {
                   type="button"
                   className="prod-btn secondary"
                   onClick={() => removeBiminiRow(row.key)}
+                >
+                  Rimuovi
+                </button>
+              </Field>
+            </div>
+          ))}
+
+          <div className="prod-section-head" style={{ marginTop: 22 }}>
+            <div>
+              <div className="prod-eyebrow">TELI (FACOLTATIVA)</div>
+              <h2 style={{ fontSize: 17 }}>
+                Teli per questo battello
+              </h2>
+            </div>
+
+            <button
+              type="button"
+              className="prod-btn secondary"
+              onClick={addTeliRow}
+              disabled={teliSuppliers.length === 0}
+            >
+              + Aggiungi Telo
+            </button>
+          </div>
+
+          {teliSuppliers.length === 0 && (
+            <div className="prod-config-warning">
+              Nessun fornitore con Teli attivo (si attiva dalla scheda
+              del fornitore).
+            </div>
+          )}
+
+          {teliRows.map((row) => (
+            <div key={row.key} className="prod-form-grid" style={{ marginTop: 10 }}>
+              <Field label="Tipo">
+                <select
+                  value={row.tipo}
+                  onChange={(e) =>
+                    updateTeliRow(row.key, {
+                      tipo: e.target.value,
+                    })
+                  }
+                >
+                  {TELI_TIPI.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field label="Articolo">
+                <select
+                  value={row.itemId}
+                  onChange={(e) =>
+                    updateTeliRow(row.key, {
+                      itemId: e.target.value,
+                    })
+                  }
+                >
+                  <option value="">Seleziona articolo...</option>
+                  {teliItemsFor(teliSupplierId).map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.description}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field label="Colore">
+                <select
+                  value={row.color}
+                  onChange={(e) =>
+                    updateTeliRow(row.key, {
+                      color: e.target.value,
+                    })
+                  }
+                >
+                  <option value="">Seleziona...</option>
+                  {teliColorsFor(teliSupplierId).map((option) => (
+                    <option key={option.id} value={option.name}>
+                      {option.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field label="Nota">
+                <input
+                  value={row.note}
+                  onChange={(e) =>
+                    updateTeliRow(row.key, {
+                      note: e.target.value,
+                    })
+                  }
+                  placeholder="Facoltativa"
+                />
+              </Field>
+
+              <Field label=" ">
+                <button
+                  type="button"
+                  className="prod-btn secondary"
+                  onClick={() => removeTeliRow(row.key)}
                 >
                   Rimuovi
                 </button>

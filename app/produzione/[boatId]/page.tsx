@@ -126,6 +126,35 @@ type BiminiStockCandidate = {
   color: string;
 };
 
+const TELI_TIPI = [
+  "Bimini di poppa",
+  "Copriconsolle",
+  "Copriseduta",
+  "Copribattello",
+] as const;
+
+// Teli collegati a questo battello: stesso meccanismo di Bimini, ma
+// raggruppa i 4 tipi rimasti (Bimini di poppa, Copriconsolle,
+// Copriseduta, Copribattello) in un unico modulo, scelti con un campo
+// Tipo - un battello puo' avere piu' righe Teli (es. sia Copriconsolle
+// che Copriseduta).
+type BoatTeliRequirement = {
+  id: string;
+  supplierId: string;
+  itemId: string;
+  tipo: string;
+  color: string;
+  note: string | null;
+  kitId: string | null;
+  kitMatricola: number | null;
+};
+
+type TeliStockCandidate = {
+  id: string;
+  matricola: number;
+  color: string;
+};
+
 // Solo per lo storico: le voci passate possono ancora avere uno stato
 // intermedio (da quando esisteva), qui mostrato in modo leggibile senza
 // riproporre la scelta manuale nel resto della pagina.
@@ -1613,6 +1642,293 @@ export default function ProductionBoatDetailPage({
     }
   }
 
+  // Teli collegati a questo battello: stesso meccanismo di Bimini,
+  // ma raggruppa i 4 tipi rimasti (Bimini di poppa, Copriconsolle,
+  // Copriseduta, Copribattello) scelti con un campo Tipo - un battello
+  // puo' avere piu' righe Teli.
+  const [teliRequirements, setTeliRequirements] = useState<
+    BoatTeliRequirement[]
+  >([]);
+  const [teliItemDescriptionById, setTeliItemDescriptionById] =
+    useState<Record<string, string>>({});
+
+  const [teliSuppliers, setTeliSuppliers] = useState<
+    { id: string; name: string }[]
+  >([]);
+  const [teliItemLookup, setTeliItemLookup] = useState<
+    { id: string; supplierId: string; description: string }[]
+  >([]);
+  const [teliColorOptions, setTeliColorOptions] = useState<
+    { id: string; supplierId: string; name: string }[]
+  >([]);
+
+  const [showAddTeli, setShowAddTeli] = useState(false);
+  const [newTeliTipo, setNewTeliTipo] = useState<string>(TELI_TIPI[0]);
+  const [newTeliItemId, setNewTeliItemId] = useState("");
+  const [newTeliColor, setNewTeliColor] = useState("");
+  const [newTeliNote, setNewTeliNote] = useState("");
+  const [teliReqSaving, setTeliReqSaving] = useState(false);
+  const [teliReqError, setTeliReqError] = useState("");
+
+  const [searchingTeliReqId, setSearchingTeliReqId] = useState("");
+  const [teliStockCandidates, setTeliStockCandidates] = useState<
+    TeliStockCandidate[]
+  >([]);
+  const [assigningTeliKitId, setAssigningTeliKitId] = useState("");
+
+  const teliSupplierId = teliSuppliers[0]?.id || "";
+
+  async function loadTeliRequirements() {
+    const { data, error } = await supabase
+      .from("production_boat_teli")
+      .select(
+        "id,supplier_id,item_id,tipo,color,note,kit_id,created_at,teli_kits(matricola,status)"
+      )
+      .eq("boat_id", boatId)
+      .order("created_at", { ascending: true });
+
+    if (error || !data) {
+      setTeliRequirements([]);
+      return;
+    }
+
+    const rows: BoatTeliRequirement[] = (data as any[]).map((row) => ({
+      id: String(row.id),
+      supplierId: String(row.supplier_id),
+      itemId: String(row.item_id),
+      tipo: String(row.tipo || ""),
+      color: String(row.color || ""),
+      note: row.note ? String(row.note) : null,
+      kitId: row.kit_id ? String(row.kit_id) : null,
+      kitMatricola: row.teli_kits
+        ? Number(row.teli_kits.matricola)
+        : null,
+    }));
+
+    setTeliRequirements(rows);
+
+    const itemIds = Array.from(new Set(rows.map((row) => row.itemId)));
+
+    if (itemIds.length > 0) {
+      const { data: itemRows } = await supabase
+        .from("items")
+        .select("id,description")
+        .in("id", itemIds);
+
+      const map: Record<string, string> = {};
+      (itemRows || []).forEach((item: any) => {
+        map[String(item.id)] = String(item.description || "");
+      });
+      setTeliItemDescriptionById(map);
+    }
+  }
+
+  async function loadTeliCatalog() {
+    const { data: supplierRows } = await supabase
+      .from("suppliers")
+      .select("id,name")
+      .eq("teli_enabled", true)
+      .order("name", { ascending: true });
+
+    const suppliers = (supplierRows || []).map((row: any) => ({
+      id: String(row.id),
+      name: String(row.name || ""),
+    }));
+
+    setTeliSuppliers(suppliers);
+
+    const supplierIds = suppliers.map((supplier) => supplier.id);
+
+    if (supplierIds.length === 0) {
+      setTeliItemLookup([]);
+      setTeliColorOptions([]);
+      return;
+    }
+
+    const [itemsRes, optionsRes] = await Promise.all([
+      supabase
+        .from("items")
+        .select("id,supplier_id,description")
+        .in("supplier_id", supplierIds)
+        .order("description", { ascending: true }),
+      supabase
+        .from("teli_options")
+        .select("id,supplier_id,name")
+        .in("supplier_id", supplierIds)
+        .eq("active", true)
+        .order("sort_order", { ascending: true })
+        .order("name", { ascending: true }),
+    ]);
+
+    setTeliItemLookup(
+      (itemsRes.data || []).map((row: any) => ({
+        id: String(row.id),
+        supplierId: String(row.supplier_id),
+        description: String(row.description || ""),
+      }))
+    );
+
+    setTeliColorOptions(
+      (optionsRes.data || []).map((row: any) => ({
+        id: String(row.id),
+        supplierId: String(row.supplier_id),
+        name: String(row.name || ""),
+      }))
+    );
+  }
+
+  function teliItemsFor(supplierId: string) {
+    return teliItemLookup.filter((item) => item.supplierId === supplierId);
+  }
+
+  function teliColorsFor(supplierId: string) {
+    return teliColorOptions.filter(
+      (option) => option.supplierId === supplierId
+    );
+  }
+
+  function openAddTeli() {
+    setTeliReqError("");
+    setNewTeliTipo(TELI_TIPI[0]);
+    setNewTeliItemId("");
+    setNewTeliColor("");
+    setNewTeliNote("");
+    setShowAddTeli(true);
+  }
+
+  async function addTeliRequirement() {
+    setTeliReqError("");
+
+    if (!teliSupplierId || !newTeliTipo || !newTeliItemId || !newTeliColor) {
+      setTeliReqError("Seleziona tipo, articolo e colore.");
+      return;
+    }
+
+    setTeliReqSaving(true);
+
+    const { data: inserted, error } = await supabase
+      .from("production_boat_teli")
+      .insert({
+        boat_id: boatId,
+        supplier_id: teliSupplierId,
+        item_id: newTeliItemId,
+        tipo: newTeliTipo,
+        color: newTeliColor,
+        note: newTeliNote.trim() || null,
+      })
+      .select("id")
+      .single();
+
+    if (error || !inserted) {
+      setTeliReqError("Errore salvataggio: " + (error?.message || ""));
+      setTeliReqSaving(false);
+      return;
+    }
+
+    // Se un kit identico (stesso tipo + articolo + colore) e' gia' in
+    // giacenza, lo assegniamo subito: evita di dover passare da
+    // "Cerca in giacenza" per il caso piu' comune.
+    const { data: stockMatch } = await supabase
+      .from("teli_kits")
+      .select("id")
+      .eq("supplier_id", teliSupplierId)
+      .eq("item_id", newTeliItemId)
+      .eq("tipo", newTeliTipo)
+      .eq("status", "stock")
+      .eq("color", newTeliColor)
+      .limit(1)
+      .maybeSingle();
+
+    if (stockMatch?.id) {
+      try {
+        await supabase.rpc("assign_teli_kit_to_boat", {
+          p_kit_id: stockMatch.id,
+          p_boat_teli_id: inserted.id,
+        });
+      } catch (assignError) {
+        console.error("Errore assegnazione automatica kit Teli:", assignError);
+      }
+    }
+
+    setShowAddTeli(false);
+    setTeliReqSaving(false);
+    await loadTeliRequirements();
+  }
+
+  async function deleteTeliRequirement(requirementId: string) {
+    const confirmed = confirm("Eliminare questa richiesta Teli?");
+
+    if (!confirmed) return;
+
+    const { error } = await supabase
+      .from("production_boat_teli")
+      .delete()
+      .eq("id", requirementId);
+
+    if (!error) {
+      await loadTeliRequirements();
+    }
+  }
+
+  async function searchTeliStockFor(requirement: BoatTeliRequirement) {
+    setSearchingTeliReqId(requirement.id);
+    setTeliStockCandidates([]);
+
+    const { data } = await supabase
+      .from("teli_kits")
+      .select("id,matricola,color")
+      .eq("supplier_id", requirement.supplierId)
+      .eq("item_id", requirement.itemId)
+      .eq("tipo", requirement.tipo)
+      .eq("status", "stock")
+      .order("matricola", { ascending: true });
+
+    setTeliStockCandidates(
+      (data || []).map((row: any) => ({
+        id: String(row.id),
+        matricola: Number(row.matricola),
+        color: String(row.color || ""),
+      }))
+    );
+  }
+
+  function closeTeliStockSearch() {
+    setSearchingTeliReqId("");
+    setTeliStockCandidates([]);
+  }
+
+  async function assignTeliCandidate(requirementId: string, kitId: string) {
+    setAssigningTeliKitId(kitId);
+
+    const { error } = await supabase.rpc("assign_teli_kit_to_boat", {
+      p_kit_id: kitId,
+      p_boat_teli_id: requirementId,
+    });
+
+    setAssigningTeliKitId("");
+
+    if (!error) {
+      closeTeliStockSearch();
+      await loadTeliRequirements();
+    }
+  }
+
+  async function unassignTeliRequirement(kitId: string) {
+    const confirmed = confirm(
+      "Annullare l'assegnazione? Il kit torna in giacenza."
+    );
+
+    if (!confirmed) return;
+
+    const { error } = await supabase.rpc("unassign_teli_kit_from_boat", {
+      p_kit_id: kitId,
+    });
+
+    if (!error) {
+      await loadTeliRequirements();
+    }
+  }
+
   // Barra di avanzamento a step: un tap sul reparto attuale apre questo
   // pannellino per aggiungere una nota o completare il reparto, senza
   // uscire dalla scheda.
@@ -1629,6 +1945,8 @@ export default function ProductionBoatDetailPage({
     loadTeakCatalog();
     loadBiminiRequirements();
     loadBiminiCatalog();
+    loadTeliRequirements();
+    loadTeliCatalog();
     loadBomSections();
   }, [boatId]);
 
@@ -3290,6 +3608,221 @@ export default function ProductionBoatDetailPage({
                 disabled={biminiReqSaving}
               >
                 {biminiReqSaving ? "Salvataggio..." : "Salva Bimini"}
+              </button>
+            </div>
+          </div>
+        )}
+      </section>
+
+      <section className="pbd-card">
+        <div className="pbd-head">
+          <div>
+            <div className="pbd-eyebrow">TELI</div>
+            <h2>Stato Teli</h2>
+          </div>
+
+          <button
+            type="button"
+            className="pbd-edit-btn"
+            onClick={openAddTeli}
+            disabled={teliSuppliers.length === 0}
+          >
+            + Aggiungi Telo
+          </button>
+        </div>
+
+        {teliRequirements.length === 0 && !showAddTeli && (
+          <div className="pbd-note">
+            Nessun Telo collegato a questo battello.
+          </div>
+        )}
+
+        {teliRequirements.map((requirement) => {
+          const statusLabelText = requirement.kitId ? "ASSEGNATA" : "DA ORDINARE";
+          const statusClass = requirement.kitId ? "assigned" : "toorder";
+
+          return (
+            <div key={requirement.id} className="pbd-upholstery-row">
+              <div className="pbd-upholstery-main">
+                <div>
+                  <strong>
+                    {teliItemDescriptionById[requirement.itemId] ||
+                      "Articolo"}
+                  </strong>
+                </div>
+
+                <div className="pbd-upholstery-details">
+                  {requirement.tipo} · {requirement.color}
+                </div>
+
+                {requirement.note && (
+                  <div className="pbd-upholstery-note">
+                    {requirement.note}
+                  </div>
+                )}
+              </div>
+
+              <div className="pbd-upholstery-status">
+                <span className={`pbd-uph-badge ${statusClass}`}>
+                  {statusLabelText}
+                </span>
+
+                {requirement.kitId && (
+                  <>
+                    <span className="pbd-upholstery-info">
+                      Matricola #{requirement.kitMatricola}
+                    </span>
+                    <button
+                      type="button"
+                      className="pbd-btn-link"
+                      onClick={() =>
+                        unassignTeliRequirement(requirement.kitId as string)
+                      }
+                    >
+                      Annulla assegnazione
+                    </button>
+                  </>
+                )}
+
+                {!requirement.kitId && (
+                  <div className="pbd-upholstery-actions">
+                    <button
+                      type="button"
+                      className="pbd-btn-link"
+                      onClick={() => searchTeliStockFor(requirement)}
+                    >
+                      Cerca in giacenza
+                    </button>
+                    <button
+                      type="button"
+                      className="pbd-btn-link danger"
+                      onClick={() =>
+                        deleteTeliRequirement(requirement.id)
+                      }
+                    >
+                      Elimina
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {searchingTeliReqId === requirement.id && (
+                <div className="pbd-upholstery-search">
+                  {teliStockCandidates.length === 0 ? (
+                    <div className="pbd-upholstery-note">
+                      Nessun kit di questo tipo/articolo in giacenza.
+                    </div>
+                  ) : (
+                    teliStockCandidates.map((candidate) => (
+                      <div
+                        key={candidate.id}
+                        className="pbd-upholstery-candidate"
+                      >
+                        <span>
+                          #{candidate.matricola} — {candidate.color}
+                        </span>
+                        <button
+                          type="button"
+                          className="pbd-btn-link"
+                          disabled={assigningTeliKitId === candidate.id}
+                          onClick={() =>
+                            assignTeliCandidate(requirement.id, candidate.id)
+                          }
+                        >
+                          {assigningTeliKitId === candidate.id
+                            ? "Assegno..."
+                            : "Assegna"}
+                        </button>
+                      </div>
+                    ))
+                  )}
+
+                  <button
+                    type="button"
+                    className="pbd-btn-link"
+                    onClick={closeTeliStockSearch}
+                  >
+                    Chiudi
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {showAddTeli && (
+          <div className="pbd-upholstery-add">
+            {teliReqError && (
+              <div className="pbd-form-error">{teliReqError}</div>
+            )}
+
+            <div className="pbd-form-grid">
+              <EditField label="Tipo">
+                <select
+                  value={newTeliTipo}
+                  onChange={(e) => setNewTeliTipo(e.target.value)}
+                >
+                  {TELI_TIPI.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              </EditField>
+
+              <EditField label="Articolo">
+                <select
+                  value={newTeliItemId}
+                  onChange={(e) => setNewTeliItemId(e.target.value)}
+                >
+                  <option value="">Seleziona articolo...</option>
+                  {teliItemsFor(teliSupplierId).map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.description}
+                    </option>
+                  ))}
+                </select>
+              </EditField>
+
+              <EditField label="Colore">
+                <select
+                  value={newTeliColor}
+                  onChange={(e) => setNewTeliColor(e.target.value)}
+                >
+                  <option value="">Seleziona...</option>
+                  {teliColorsFor(teliSupplierId).map((option) => (
+                    <option key={option.id} value={option.name}>
+                      {option.name}
+                    </option>
+                  ))}
+                </select>
+              </EditField>
+
+              <EditField label="Nota" wide>
+                <input
+                  value={newTeliNote}
+                  onChange={(e) => setNewTeliNote(e.target.value)}
+                  placeholder="Facoltativa"
+                />
+              </EditField>
+            </div>
+
+            <div className="pbd-form-actions">
+              <button
+                type="button"
+                className="pbd-back"
+                onClick={() => setShowAddTeli(false)}
+                disabled={teliReqSaving}
+              >
+                Annulla
+              </button>
+              <button
+                type="button"
+                className="pbd-save-btn"
+                onClick={addTeliRequirement}
+                disabled={teliReqSaving}
+              >
+                {teliReqSaving ? "Salvataggio..." : "Salva Telo"}
               </button>
             </div>
           </div>

@@ -2,8 +2,10 @@
 
 import { use, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import jsPDF from "jspdf";
 
 import { supabase } from "../../../../lib/supabaseClient";
+import { fetchCompanyLogo, drawCompanyLogoTopRight } from "../../../../lib/pdfLogo";
 
 /*
   GIACENZA BIMINI (vista rapida)
@@ -158,6 +160,127 @@ export default function BiminiWarehousePage({
     setDeletingKitId("");
   }
 
+  async function generateStockPdf() {
+    if (stockKits.length === 0) {
+      setErrorMessage("Non ci sono kit in giacenza da inserire nel PDF.");
+      return;
+    }
+
+    setErrorMessage("");
+
+    const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+    const companyLogo = await fetchCompanyLogo();
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const marginLeft = 9;
+    const marginRight = 9;
+
+    let y = 13;
+
+    function drawHeader() {
+      drawCompanyLogoTopRight(doc, companyLogo, { maxWidth: 26, maxHeight: 12 });
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(16);
+      doc.text("MAGAZZINO BIMINI", marginLeft, y);
+
+      y += 6;
+
+      doc.setFontSize(10);
+      doc.text(supplierName, marginLeft, y);
+
+      y += 5;
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7);
+      doc.text("Kit in giacenza - CON IMPORTI", marginLeft, y);
+
+      y += 4;
+
+      doc.text(`Data: ${new Intl.DateTimeFormat("it-IT").format(new Date())}`, marginLeft, y);
+
+      y += 5;
+
+      doc.setDrawColor(190);
+      doc.line(marginLeft, y, pageWidth - marginRight, y);
+
+      y += 5;
+    }
+
+    const columns = { matricola: 9, code: 30, scanner: 65, description: 105, color: 215, price: 285 };
+
+    function drawTableHeader() {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(6.5);
+
+      doc.text("MATR.", columns.matricola, y);
+      doc.text("COD. ARTICOLO", columns.code, y);
+      doc.text("SCANNER", columns.scanner, y);
+      doc.text("DESCRIZIONE", columns.description, y);
+      doc.text("COLORE", columns.color, y);
+      doc.text("PREZZO", columns.price, y, { align: "right" });
+
+      y += 3;
+
+      doc.setDrawColor(170);
+      doc.line(marginLeft, y, pageWidth - marginRight, y);
+
+      y += 4;
+    }
+
+    drawHeader();
+    drawTableHeader();
+
+    stockKits.forEach((kit) => {
+      const item = itemMap.get(kit.item_id);
+      const code = item?.supplier_code || item?.code || "-";
+      const description = item?.description || "Articolo non trovato";
+      const descriptionLines = doc.splitTextToSize(description, 105);
+      const rowHeight = Math.max(6, descriptionLines.length * 3.2);
+
+      if (y + rowHeight > pageHeight - 14) {
+        doc.addPage();
+        y = 13;
+        drawHeader();
+        drawTableHeader();
+      }
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(6.5);
+
+      doc.text(`#${kit.matricola}`, columns.matricola, y);
+      doc.text(String(code), columns.code, y);
+      doc.text(kit.scanner_code || "-", columns.scanner, y);
+      doc.text(descriptionLines, columns.description, y);
+      doc.text(kit.color || "-", columns.color, y);
+      doc.text(formatEuro(kit.unit_price), columns.price, y, { align: "right" });
+
+      y += rowHeight;
+
+      doc.setDrawColor(225);
+      doc.line(marginLeft, y, pageWidth - marginRight, y);
+
+      y += 3;
+    });
+
+    if (y > pageHeight - 20) {
+      doc.addPage();
+      y = 18;
+    }
+
+    y += 3;
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.text(`TOTALE MAGAZZINO BIMINI: ${formatEuro(totalValue)}`, pageWidth - marginRight, y, {
+      align: "right",
+    });
+
+    const safeName = supplierName.replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+
+    doc.save(`Bimini_${safeName}_con_importi.pdf`);
+  }
+
   if (loading) {
     return (
       <div className="bwh-loading">
@@ -188,6 +311,14 @@ export default function BiminiWarehousePage({
           <Link href={`/suppliers/${supplierId}/bimini/new-kit`} className="bwh-primary-button">
             + Registra kit
           </Link>
+          <button
+            type="button"
+            className="bwh-secondary-button"
+            onClick={generateStockPdf}
+            disabled={stockKits.length === 0}
+          >
+            Stampa PDF
+          </button>
           <Link href={`/suppliers/${supplierId}`} className="bwh-secondary-button">
             ← Fornitore
           </Link>
@@ -274,7 +405,8 @@ function Styles() {
       .bwh-hero-actions { display:flex; flex-wrap:wrap; gap:8px; }
       .bwh-primary-button, .bwh-secondary-button { min-height:42px; padding:0 14px; display:inline-flex; align-items:center; justify-content:center; border-radius:9px; text-decoration:none; font-size:11px; font-weight:900; white-space:nowrap; }
       .bwh-primary-button { border:1px solid #1d4ed8; background:#2563eb; color:#fff; }
-      .bwh-secondary-button { border:1px solid #cbd5e1; background:#fff; color:#0f172a; }
+      .bwh-secondary-button { border:1px solid #cbd5e1; background:#fff; color:#0f172a; cursor:pointer; }
+      .bwh-secondary-button:disabled { opacity:.5; cursor:not-allowed; }
       .bwh-message { margin-top:14px; padding:12px 14px; border-radius:11px; font-size:12px; font-weight:750; }
       .bwh-message.error { border:1px solid #fca5a5; background:#fef2f2; color:#991b1b; }
       .bwh-card { margin-top:14px; padding:18px 19px; border:1px solid #dbe3ee; border-radius:14px; background:#fff; }

@@ -108,7 +108,6 @@ const EMPTY_BIMINI_KIT_DRAFT: BiminiKitDraft = {
 };
 
 const TELI_TIPI = [
-  "Bimini di poppa",
   "Copriconsolle",
   "Copriseduta",
   "Copribattello",
@@ -2860,9 +2859,9 @@ export default function SupplierDetail({
                 lineHeight: 1.55,
               }}
             >
-              Bimini di poppa, Copriconsolle, Copriseduta e
-              Copribattello: Matricola Kit e colore, senza
-              modificare il normale magazzino.
+              Copriconsolle, Copriseduta e Copribattello:
+              Matricola Kit e colore, senza modificare il normale
+              magazzino.
             </div>
           </div>
 

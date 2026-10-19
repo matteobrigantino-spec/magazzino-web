@@ -110,7 +110,6 @@ type BoatBiminiDraftRow = {
 };
 
 const TELI_TIPI = [
-  "Bimini di poppa",
   "Copriconsolle",
   "Copriseduta",
   "Copribattello",
@@ -1018,7 +1017,7 @@ export default function ProductionPage() {
   }
 
   // Teli - stesso principio di Bimini, ma raggruppa i 4 tipi rimasti
-  // (Bimini di poppa, Copriconsolle, Copriseduta, Copribattello) in
+  // (Copriconsolle, Copriseduta, Copribattello) in
   // un unico modulo con un campo Tipo per riga.
   async function loadTeliCatalog() {
     const { data: supplierRows, error: supplierError } = await supabase

@@ -835,7 +835,7 @@ export function buildBiminiStatusPdf(
 // STATO TELI BATTELLI (STEP 56)
 //
 // Stesso concetto di STATO BIMINI BATTELLI qui sopra, ma sulle
-// richieste di production_boat_teli (Bimini di poppa, Copriconsolle,
+// richieste di production_boat_teli (Copriconsolle,
 // Copriseduta, Copribattello): una riga per ogni richiesta, con
 // Tipo + Colore al posto del solo Colore.
 // ============================================================

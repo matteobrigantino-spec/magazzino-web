@@ -127,14 +127,13 @@ type BiminiStockCandidate = {
 };
 
 const TELI_TIPI = [
-  "Bimini di poppa",
   "Copriconsolle",
   "Copriseduta",
   "Copribattello",
 ] as const;
 
 // Teli collegati a questo battello: stesso meccanismo di Bimini, ma
-// raggruppa i 4 tipi rimasti (Bimini di poppa, Copriconsolle,
+// raggruppa i 3 tipi rimasti (Copriconsolle,
 // Copriseduta, Copribattello) in un unico modulo, scelti con un campo
 // Tipo - un battello puo' avere piu' righe Teli (es. sia Copriconsolle
 // che Copriseduta).
@@ -1643,7 +1642,7 @@ export default function ProductionBoatDetailPage({
   }
 
   // Teli collegati a questo battello: stesso meccanismo di Bimini,
-  // ma raggruppa i 4 tipi rimasti (Bimini di poppa, Copriconsolle,
+  // ma raggruppa i 3 tipi rimasti (Copriconsolle,
   // Copriseduta, Copribattello) scelti con un campo Tipo - un battello
   // puo' avere piu' righe Teli.
   const [teliRequirements, setTeliRequirements] = useState<

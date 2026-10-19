@@ -19,7 +19,6 @@ type TeliOption = {
 };
 
 const TELI_TIPI = [
-  "Bimini di poppa",
   "Copriconsolle",
   "Copriseduta",
   "Copribattello",

@@ -16,7 +16,6 @@ import { supabase } from "../../../../lib/supabaseClient";
 */
 
 const TELI_TIPI = [
-  "Bimini di poppa",
   "Copriconsolle",
   "Copriseduta",
   "Copribattello",

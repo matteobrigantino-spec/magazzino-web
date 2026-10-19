@@ -85,6 +85,30 @@ type BoatUpholsteryDraftRow = {
   note: string;
 };
 
+type BiminiSupplier = {
+  id: string;
+  name: string;
+};
+
+type BiminiItemLookup = {
+  id: string;
+  supplierId: string;
+  description: string;
+};
+
+type BiminiColorOption = {
+  id: string;
+  supplierId: string;
+  name: string;
+};
+
+type BoatBiminiDraftRow = {
+  key: string;
+  itemId: string;
+  color: string;
+  note: string;
+};
+
 function isTubolariName(name: string) {
   return name.trim().toLowerCase() === "tubolari";
 }
@@ -638,10 +662,112 @@ export default function ProductionPage() {
     BoatUpholsteryDraftRow[]
   >([]);
 
+  const [biminiSuppliers, setBiminiSuppliers] = useState<BiminiSupplier[]>([]);
+  const [biminiItemLookup, setBiminiItemLookup] = useState<BiminiItemLookup[]>(
+    []
+  );
+  const [biminiColorOptions, setBiminiColorOptions] = useState<
+    BiminiColorOption[]
+  >([]);
+  const [biminiRows, setBiminiRows] = useState<BoatBiminiDraftRow[]>([]);
+  const biminiSupplierId = biminiSuppliers[0]?.id || "";
+
   useEffect(() => {
     loadData();
     loadUpholsteryCatalog();
+    loadBiminiCatalog();
   }, []);
+
+  // Bimini - stesso principio della tappezzeria qui sopra, ma piu'
+  // semplice (solo colore) e con fornitore sempre D'Amico (niente
+  // scelta del fornitore nei form, a differenza della tappezzeria che
+  // ne supporta piu' di uno).
+  async function loadBiminiCatalog() {
+    const { data: supplierRows, error: supplierError } = await supabase
+      .from("suppliers")
+      .select("id,name")
+      .eq("bimini_enabled", true)
+      .order("name", { ascending: true });
+
+    if (supplierError || !supplierRows || supplierRows.length === 0) {
+      setBiminiSuppliers([]);
+      setBiminiItemLookup([]);
+      setBiminiColorOptions([]);
+      return;
+    }
+
+    const suppliers: BiminiSupplier[] = supplierRows.map((row: any) => ({
+      id: String(row.id),
+      name: String(row.name || ""),
+    }));
+
+    setBiminiSuppliers(suppliers);
+
+    const supplierIds = suppliers.map((supplier) => supplier.id);
+
+    const [itemsRes, optionsRes] = await Promise.all([
+      supabase
+        .from("items")
+        .select("id,supplier_id,description")
+        .in("supplier_id", supplierIds)
+        .order("description", { ascending: true }),
+      supabase
+        .from("bimini_options")
+        .select("id,supplier_id,name")
+        .in("supplier_id", supplierIds)
+        .eq("active", true)
+        .order("sort_order", { ascending: true })
+        .order("name", { ascending: true }),
+    ]);
+
+    setBiminiItemLookup(
+      (itemsRes.data || []).map((row: any) => ({
+        id: String(row.id),
+        supplierId: String(row.supplier_id),
+        description: String(row.description || ""),
+      }))
+    );
+
+    setBiminiColorOptions(
+      (optionsRes.data || []).map((row: any) => ({
+        id: String(row.id),
+        supplierId: String(row.supplier_id),
+        name: String(row.name || ""),
+      }))
+    );
+  }
+
+  function biminiItemsFor(supplierId: string) {
+    return biminiItemLookup.filter((item) => item.supplierId === supplierId);
+  }
+
+  function biminiColorsFor(supplierId: string) {
+    return biminiColorOptions.filter(
+      (option) => option.supplierId === supplierId
+    );
+  }
+
+  function addBiminiRow() {
+    setBiminiRows((current) => [
+      ...current,
+      {
+        key: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        itemId: "",
+        color: "",
+        note: "",
+      },
+    ]);
+  }
+
+  function removeBiminiRow(key: string) {
+    setBiminiRows((current) => current.filter((row) => row.key !== key));
+  }
+
+  function updateBiminiRow(key: string, patch: Partial<BoatBiminiDraftRow>) {
+    setBiminiRows((current) =>
+      current.map((row) => (row.key === key ? { ...row, ...patch } : row))
+    );
+  }
 
   async function loadUpholsteryCatalog() {
     const { data: supplierRows, error: supplierError } = await supabase
@@ -1421,6 +1547,71 @@ export default function ProductionPage() {
         : "";
 
     /*
+      BIMINI (facoltativa)
+
+      Stesso principio della tappezzeria qui sopra: ogni riga diventa
+      una richiesta collegata al battello. Se in giacenza c'e' gia' un
+      kit identico (stesso articolo e colore) viene assegnato subito a
+      QUESTO battello - qui non esiste ancora, a differenza della
+      tappezzeria, un abbinamento per priorita' tra piu' battelli in
+      attesa ne' il collegamento con gli ordini aperti.
+    */
+    const validBiminiRows = biminiRows.filter(
+      (row) => row.itemId && row.color
+    );
+
+    if (validBiminiRows.length > 0 && newBoatId && biminiSupplierId) {
+      for (const row of validBiminiRows) {
+        try {
+          const { data: inserted, error: insertError } = await supabase
+            .from("production_boat_bimini")
+            .insert({
+              boat_id: newBoatId,
+              supplier_id: biminiSupplierId,
+              item_id: row.itemId,
+              color: row.color,
+              note: row.note.trim() || null,
+            })
+            .select("id")
+            .single();
+
+          if (insertError || !inserted) continue;
+
+          const { data: stockMatch } = await supabase
+            .from("bimini_kits")
+            .select("id")
+            .eq("supplier_id", biminiSupplierId)
+            .eq("item_id", row.itemId)
+            .eq("status", "stock")
+            .eq("color", row.color)
+            .limit(1)
+            .maybeSingle();
+
+          if (stockMatch?.id) {
+            try {
+              await supabase.rpc("assign_bimini_kit_to_boat", {
+                p_kit_id: stockMatch.id,
+                p_boat_bimini_id: inserted.id,
+              });
+            } catch (assignError) {
+              console.error(
+                "Errore assegnazione automatica kit Bimini:",
+                assignError
+              );
+            }
+          }
+        } catch (biminiError) {
+          console.error("Errore collegamento Bimini battello:", biminiError);
+        }
+      }
+    }
+
+    const biminiSuffix =
+      validBiminiRows.length > 0
+        ? ` Bimini: ${validBiminiRows.length} richiest${validBiminiRows.length === 1 ? "a" : "e"} collegat${validBiminiRows.length === 1 ? "a" : "e"} (vedi scheda battello per lo stato).`
+        : "";
+
+    /*
       DISTINTA BASE - SEZIONI OPTIONAL SCELTE (STEP 38)
 
       Si salvano subito le sezioni optional spuntate nel form, cosi'
@@ -1486,7 +1677,7 @@ export default function ProductionPage() {
     }
 
     setMessage(
-      `Ordine ${orderNumber.trim()} inserito in produzione.${tappezzeriaSuffix}${missingArticlesSuffix}`
+      `Ordine ${orderNumber.trim()} inserito in produzione.${tappezzeriaSuffix}${biminiSuffix}${missingArticlesSuffix}`
     );
     setOrderNumber("");
     setModelBoat("");
@@ -1497,6 +1688,7 @@ export default function ProductionPage() {
     setNote("");
     setTubeColor("");
     setTappezzeriaRows([]);
+    setBiminiRows([]);
     setRequestedDeliveryDate("");
     setShowNew(false);
     setSaving(false);
@@ -1883,6 +2075,93 @@ export default function ProductionPage() {
                   type="button"
                   className="prod-btn secondary"
                   onClick={() => removeTappezzeriaRow(row.key)}
+                >
+                  Rimuovi
+                </button>
+              </Field>
+            </div>
+          ))}
+
+          <div className="prod-section-head" style={{ marginTop: 22 }}>
+            <div>
+              <div className="prod-eyebrow">BIMINI (FACOLTATIVA)</div>
+              <h2 style={{ fontSize: 17 }}>
+                Bimini per questo battello
+              </h2>
+            </div>
+
+            <button
+              type="button"
+              className="prod-btn secondary"
+              onClick={addBiminiRow}
+              disabled={biminiSuppliers.length === 0}
+            >
+              + Aggiungi Bimini
+            </button>
+          </div>
+
+          {biminiSuppliers.length === 0 && (
+            <div className="prod-config-warning">
+              Nessun fornitore con Bimini attivo (si attiva dalla scheda
+              del fornitore).
+            </div>
+          )}
+
+          {biminiRows.map((row) => (
+            <div key={row.key} className="prod-form-grid" style={{ marginTop: 10 }}>
+              <Field label="Articolo">
+                <select
+                  value={row.itemId}
+                  onChange={(e) =>
+                    updateBiminiRow(row.key, {
+                      itemId: e.target.value,
+                    })
+                  }
+                >
+                  <option value="">Seleziona articolo...</option>
+                  {biminiItemsFor(biminiSupplierId).map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.description}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field label="Colore">
+                <select
+                  value={row.color}
+                  onChange={(e) =>
+                    updateBiminiRow(row.key, {
+                      color: e.target.value,
+                    })
+                  }
+                >
+                  <option value="">Seleziona...</option>
+                  {biminiColorsFor(biminiSupplierId).map((option) => (
+                    <option key={option.id} value={option.name}>
+                      {option.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field label="Nota">
+                <input
+                  value={row.note}
+                  onChange={(e) =>
+                    updateBiminiRow(row.key, {
+                      note: e.target.value,
+                    })
+                  }
+                  placeholder="Facoltativa"
+                />
+              </Field>
+
+              <Field label=" ">
+                <button
+                  type="button"
+                  className="prod-btn secondary"
+                  onClick={() => removeBiminiRow(row.key)}
                 >
                   Rimuovi
                 </button>

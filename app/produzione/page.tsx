@@ -201,6 +201,18 @@ export default function ProductionPage() {
   const [teakPdfBusy, setTeakPdfBusy] = useState(false);
   const [teakPdfError, setTeakPdfError] = useState("");
 
+  // PDF "Stato Bimini": stesso concetto dello stato tappezzerie/teak, ma
+  // sulle richieste di production_boat_bimini (senza collegamento
+  // all'ordine fornitore: stato semplificato assegnata/da ordinare).
+  const [biminiPdfBusy, setBiminiPdfBusy] = useState(false);
+  const [biminiPdfError, setBiminiPdfError] = useState("");
+
+  // PDF "Stato Teli": stesso concetto, ma sulle richieste di
+  // production_boat_teli (anche qui stato semplificato, con il campo
+  // Tipo in piu' rispetto al Bimini).
+  const [teliPdfBusy, setTeliPdfBusy] = useState(false);
+  const [teliPdfError, setTeliPdfError] = useState("");
+
   // PDF riepilogo "battelli con articoli mancanti" (STEP 39): stesso
   // calcolo usato nella scheda del singolo battello, ma su tutta la
   // produzione insieme.
@@ -527,6 +539,201 @@ export default function ProductionPage() {
       );
     } finally {
       setTeakPdfBusy(false);
+    }
+  }
+
+  async function downloadBiminiStatusPdf() {
+    setBiminiPdfError("");
+    setBiminiPdfBusy(true);
+
+    try {
+      if (!pdfLogo) {
+        throw new Error("Carica il logo aziendale prima di scaricare il PDF.");
+      }
+
+      const { data, error } = await supabase
+        .from("production_boat_bimini")
+        .select(
+          "id,item_id,color,kit_id,created_at,production_boats(order_number,model_boat,requested_delivery_date),bimini_kits(matricola)"
+        )
+        .order("created_at", { ascending: true });
+
+      if (error) throw error;
+
+      const requirementRows = (data || []) as any[];
+
+      if (requirementRows.length === 0) {
+        throw new Error("Non ci sono ancora richieste di Bimini collegate a nessun battello.");
+      }
+
+      const itemIds = Array.from(
+        new Set(requirementRows.map((row) => String(row.item_id)))
+      );
+
+      let itemDescriptionById: Record<string, string> = {};
+
+      if (itemIds.length > 0) {
+        const { data: itemRows } = await supabase
+          .from("items")
+          .select("id,description")
+          .in("id", itemIds);
+
+        (itemRows || []).forEach((item: any) => {
+          itemDescriptionById[String(item.id)] = String(item.description || "");
+        });
+      }
+
+      const collator = new Intl.Collator("it", { numeric: true, sensitivity: "base" });
+
+      const { buildBiminiStatusPdf } = await import("../../lib/productionPdf");
+
+      const rows = requirementRows
+        .map((row) => {
+          const kitMatricola = row.bimini_kits
+            ? Number(row.bimini_kits.matricola)
+            : null;
+
+          const status: "assegnata" | "da_ordinare" = row.kit_id
+            ? "assegnata"
+            : "da_ordinare";
+
+          const statusInfo =
+            status === "assegnata"
+              ? kitMatricola
+                ? `Kit N. ${kitMatricola}`
+                : "Kit assegnato"
+              : "-";
+
+          return {
+            boatOrderNumber: String(row.production_boats?.order_number || "-"),
+            boatModel: String(row.production_boats?.model_boat || "-"),
+            boatDeliveryDate: row.production_boats?.requested_delivery_date
+              ? String(row.production_boats.requested_delivery_date)
+              : null,
+            itemDescription: itemDescriptionById[String(row.item_id)] || "-",
+            color: String(row.color || ""),
+            status,
+            statusInfo,
+          };
+        })
+        .sort((a, b) => {
+          if (a.boatDeliveryDate && b.boatDeliveryDate) {
+            if (a.boatDeliveryDate !== b.boatDeliveryDate) {
+              return a.boatDeliveryDate < b.boatDeliveryDate ? -1 : 1;
+            }
+          } else if (a.boatDeliveryDate || b.boatDeliveryDate) {
+            return a.boatDeliveryDate ? -1 : 1;
+          }
+          return collator.compare(a.boatOrderNumber, b.boatOrderNumber);
+        });
+
+      const doc = buildBiminiStatusPdf(rows, pdfLogo, formatItDate(todayInputValue()));
+
+      await doc.save("stato_bimini_battelli.pdf", { returnPromise: true });
+    } catch (error) {
+      setBiminiPdfError(
+        error instanceof Error ? error.message : "Impossibile creare il PDF. Riprova."
+      );
+    } finally {
+      setBiminiPdfBusy(false);
+    }
+  }
+
+  async function downloadTeliStatusPdf() {
+    setTeliPdfError("");
+    setTeliPdfBusy(true);
+
+    try {
+      if (!pdfLogo) {
+        throw new Error("Carica il logo aziendale prima di scaricare il PDF.");
+      }
+
+      const { data, error } = await supabase
+        .from("production_boat_teli")
+        .select(
+          "id,item_id,tipo,color,kit_id,created_at,production_boats(order_number,model_boat,requested_delivery_date),teli_kits(matricola)"
+        )
+        .order("created_at", { ascending: true });
+
+      if (error) throw error;
+
+      const requirementRows = (data || []) as any[];
+
+      if (requirementRows.length === 0) {
+        throw new Error("Non ci sono ancora richieste di Teli collegate a nessun battello.");
+      }
+
+      const itemIds = Array.from(
+        new Set(requirementRows.map((row) => String(row.item_id)))
+      );
+
+      let itemDescriptionById: Record<string, string> = {};
+
+      if (itemIds.length > 0) {
+        const { data: itemRows } = await supabase
+          .from("items")
+          .select("id,description")
+          .in("id", itemIds);
+
+        (itemRows || []).forEach((item: any) => {
+          itemDescriptionById[String(item.id)] = String(item.description || "");
+        });
+      }
+
+      const collator = new Intl.Collator("it", { numeric: true, sensitivity: "base" });
+
+      const { buildTeliStatusPdf } = await import("../../lib/productionPdf");
+
+      const rows = requirementRows
+        .map((row) => {
+          const kitMatricola = row.teli_kits
+            ? Number(row.teli_kits.matricola)
+            : null;
+
+          const status: "assegnata" | "da_ordinare" = row.kit_id
+            ? "assegnata"
+            : "da_ordinare";
+
+          const statusInfo =
+            status === "assegnata"
+              ? kitMatricola
+                ? `Kit N. ${kitMatricola}`
+                : "Kit assegnato"
+              : "-";
+
+          return {
+            boatOrderNumber: String(row.production_boats?.order_number || "-"),
+            boatModel: String(row.production_boats?.model_boat || "-"),
+            boatDeliveryDate: row.production_boats?.requested_delivery_date
+              ? String(row.production_boats.requested_delivery_date)
+              : null,
+            itemDescription: itemDescriptionById[String(row.item_id)] || "-",
+            tipo: String(row.tipo || ""),
+            color: String(row.color || ""),
+            status,
+            statusInfo,
+          };
+        })
+        .sort((a, b) => {
+          if (a.boatDeliveryDate && b.boatDeliveryDate) {
+            if (a.boatDeliveryDate !== b.boatDeliveryDate) {
+              return a.boatDeliveryDate < b.boatDeliveryDate ? -1 : 1;
+            }
+          } else if (a.boatDeliveryDate || b.boatDeliveryDate) {
+            return a.boatDeliveryDate ? -1 : 1;
+          }
+          return collator.compare(a.boatOrderNumber, b.boatOrderNumber);
+        });
+
+      const doc = buildTeliStatusPdf(rows, pdfLogo, formatItDate(todayInputValue()));
+
+      await doc.save("stato_teli_battelli.pdf", { returnPromise: true });
+    } catch (error) {
+      setTeliPdfError(
+        error instanceof Error ? error.message : "Impossibile creare il PDF. Riprova."
+      );
+    } finally {
+      setTeliPdfBusy(false);
     }
   }
 
@@ -2540,6 +2747,22 @@ export default function ProductionPage() {
             <button
               type="button"
               className="prod-btn primary"
+              onClick={downloadBiminiStatusPdf}
+              disabled={biminiPdfBusy || pdfLogoLoading || !pdfLogo}
+            >
+              {biminiPdfBusy ? "Creazione PDF..." : "Stato Bimini"}
+            </button>
+            <button
+              type="button"
+              className="prod-btn primary"
+              onClick={downloadTeliStatusPdf}
+              disabled={teliPdfBusy || pdfLogoLoading || !pdfLogo}
+            >
+              {teliPdfBusy ? "Creazione PDF..." : "Stato Teli"}
+            </button>
+            <button
+              type="button"
+              className="prod-btn primary"
               onClick={downloadMissingArticlesSummaryPdf}
               disabled={missingSummaryPdfBusy || pdfLogoLoading || !pdfLogo}
             >
@@ -2563,6 +2786,16 @@ export default function ProductionPage() {
         {teakPdfError && (
           <div role="alert" className="prod-message error">
             {teakPdfError}
+          </div>
+        )}
+        {biminiPdfError && (
+          <div role="alert" className="prod-message error">
+            {biminiPdfError}
+          </div>
+        )}
+        {teliPdfError && (
+          <div role="alert" className="prod-message error">
+            {teliPdfError}
           </div>
         )}
 

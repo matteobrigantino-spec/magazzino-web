@@ -105,6 +105,27 @@ type TeakStockCandidate = {
   coverage: string;
 };
 
+// Bimini collegato a questo battello: stesso identico concetto di
+// tappezzeria/teak, ma piu' semplice - solo colore (niente dettagli/
+// cucitura/trapuntatura o copertura) e fornitore sempre D'Amico
+// (niente scelta del fornitore nel form, a differenza di tappezzeria
+// e teak che supportano piu' fornitori).
+type BoatBiminiRequirement = {
+  id: string;
+  supplierId: string;
+  itemId: string;
+  color: string;
+  note: string | null;
+  kitId: string | null;
+  kitMatricola: number | null;
+};
+
+type BiminiStockCandidate = {
+  id: string;
+  matricola: number;
+  color: string;
+};
+
 // Solo per lo storico: le voci passate possono ancora avere uno stato
 // intermedio (da quando esisteva), qui mostrato in modo leggibile senza
 // riproporre la scelta manuale nel resto della pagina.
@@ -1309,6 +1330,289 @@ export default function ProductionBoatDetailPage({
     }
   }
 
+  // Bimini collegato a questo battello: stesso meccanismo di
+  // tappezzeria/teak (richiesta -> kit fisico in giacenza -> stato
+  // ASSEGNATA/NON ASSEGNATA), ma senza scelta del fornitore (sempre
+  // D'Amico) e senza l'abbinamento automatico con gli ordini che ha
+  // la tappezzeria: se un kit identico e' gia' in giacenza viene
+  // assegnato subito, altrimenti la richiesta resta "da ordinare".
+  const [biminiRequirements, setBiminiRequirements] = useState<
+    BoatBiminiRequirement[]
+  >([]);
+  const [biminiItemDescriptionById, setBiminiItemDescriptionById] =
+    useState<Record<string, string>>({});
+
+  const [biminiSuppliers, setBiminiSuppliers] = useState<
+    { id: string; name: string }[]
+  >([]);
+  const [biminiItemLookup, setBiminiItemLookup] = useState<
+    { id: string; supplierId: string; description: string }[]
+  >([]);
+  const [biminiColorOptions, setBiminiColorOptions] = useState<
+    { id: string; supplierId: string; name: string }[]
+  >([]);
+
+  const [showAddBimini, setShowAddBimini] = useState(false);
+  const [newBiminiItemId, setNewBiminiItemId] = useState("");
+  const [newBiminiColor, setNewBiminiColor] = useState("");
+  const [newBiminiNote, setNewBiminiNote] = useState("");
+  const [biminiReqSaving, setBiminiReqSaving] = useState(false);
+  const [biminiReqError, setBiminiReqError] = useState("");
+
+  const [searchingBiminiReqId, setSearchingBiminiReqId] = useState("");
+  const [biminiStockCandidates, setBiminiStockCandidates] = useState<
+    BiminiStockCandidate[]
+  >([]);
+  const [assigningBiminiKitId, setAssigningBiminiKitId] = useState("");
+
+  const biminiSupplierId = biminiSuppliers[0]?.id || "";
+
+  async function loadBiminiRequirements() {
+    const { data, error } = await supabase
+      .from("production_boat_bimini")
+      .select(
+        "id,supplier_id,item_id,color,note,kit_id,created_at,bimini_kits(matricola,status)"
+      )
+      .eq("boat_id", boatId)
+      .order("created_at", { ascending: true });
+
+    if (error || !data) {
+      setBiminiRequirements([]);
+      return;
+    }
+
+    const rows: BoatBiminiRequirement[] = (data as any[]).map((row) => ({
+      id: String(row.id),
+      supplierId: String(row.supplier_id),
+      itemId: String(row.item_id),
+      color: String(row.color || ""),
+      note: row.note ? String(row.note) : null,
+      kitId: row.kit_id ? String(row.kit_id) : null,
+      kitMatricola: row.bimini_kits
+        ? Number(row.bimini_kits.matricola)
+        : null,
+    }));
+
+    setBiminiRequirements(rows);
+
+    const itemIds = Array.from(new Set(rows.map((row) => row.itemId)));
+
+    if (itemIds.length > 0) {
+      const { data: itemRows } = await supabase
+        .from("items")
+        .select("id,description")
+        .in("id", itemIds);
+
+      const map: Record<string, string> = {};
+      (itemRows || []).forEach((item: any) => {
+        map[String(item.id)] = String(item.description || "");
+      });
+      setBiminiItemDescriptionById(map);
+    }
+  }
+
+  async function loadBiminiCatalog() {
+    const { data: supplierRows } = await supabase
+      .from("suppliers")
+      .select("id,name")
+      .eq("bimini_enabled", true)
+      .order("name", { ascending: true });
+
+    const suppliers = (supplierRows || []).map((row: any) => ({
+      id: String(row.id),
+      name: String(row.name || ""),
+    }));
+
+    setBiminiSuppliers(suppliers);
+
+    const supplierIds = suppliers.map((supplier) => supplier.id);
+
+    if (supplierIds.length === 0) {
+      setBiminiItemLookup([]);
+      setBiminiColorOptions([]);
+      return;
+    }
+
+    const [itemsRes, optionsRes] = await Promise.all([
+      supabase
+        .from("items")
+        .select("id,supplier_id,description")
+        .in("supplier_id", supplierIds)
+        .order("description", { ascending: true }),
+      supabase
+        .from("bimini_options")
+        .select("id,supplier_id,name")
+        .in("supplier_id", supplierIds)
+        .eq("active", true)
+        .order("sort_order", { ascending: true })
+        .order("name", { ascending: true }),
+    ]);
+
+    setBiminiItemLookup(
+      (itemsRes.data || []).map((row: any) => ({
+        id: String(row.id),
+        supplierId: String(row.supplier_id),
+        description: String(row.description || ""),
+      }))
+    );
+
+    setBiminiColorOptions(
+      (optionsRes.data || []).map((row: any) => ({
+        id: String(row.id),
+        supplierId: String(row.supplier_id),
+        name: String(row.name || ""),
+      }))
+    );
+  }
+
+  function biminiItemsFor(supplierId: string) {
+    return biminiItemLookup.filter((item) => item.supplierId === supplierId);
+  }
+
+  function biminiColorsFor(supplierId: string) {
+    return biminiColorOptions.filter(
+      (option) => option.supplierId === supplierId
+    );
+  }
+
+  function openAddBimini() {
+    setBiminiReqError("");
+    setNewBiminiItemId("");
+    setNewBiminiColor("");
+    setNewBiminiNote("");
+    setShowAddBimini(true);
+  }
+
+  async function addBiminiRequirement() {
+    setBiminiReqError("");
+
+    if (!biminiSupplierId || !newBiminiItemId || !newBiminiColor) {
+      setBiminiReqError("Seleziona articolo e colore.");
+      return;
+    }
+
+    setBiminiReqSaving(true);
+
+    const { data: inserted, error } = await supabase
+      .from("production_boat_bimini")
+      .insert({
+        boat_id: boatId,
+        supplier_id: biminiSupplierId,
+        item_id: newBiminiItemId,
+        color: newBiminiColor,
+        note: newBiminiNote.trim() || null,
+      })
+      .select("id")
+      .single();
+
+    if (error || !inserted) {
+      setBiminiReqError("Errore salvataggio: " + (error?.message || ""));
+      setBiminiReqSaving(false);
+      return;
+    }
+
+    // Se un kit identico (stesso articolo + colore) e' gia' in
+    // giacenza, lo assegniamo subito: evita di dover passare da
+    // "Cerca in giacenza" per il caso piu' comune.
+    const { data: stockMatch } = await supabase
+      .from("bimini_kits")
+      .select("id")
+      .eq("supplier_id", biminiSupplierId)
+      .eq("item_id", newBiminiItemId)
+      .eq("status", "stock")
+      .eq("color", newBiminiColor)
+      .limit(1)
+      .maybeSingle();
+
+    if (stockMatch?.id) {
+      try {
+        await supabase.rpc("assign_bimini_kit_to_boat", {
+          p_kit_id: stockMatch.id,
+          p_boat_bimini_id: inserted.id,
+        });
+      } catch (assignError) {
+        console.error("Errore assegnazione automatica kit Bimini:", assignError);
+      }
+    }
+
+    setShowAddBimini(false);
+    setBiminiReqSaving(false);
+    await loadBiminiRequirements();
+  }
+
+  async function deleteBiminiRequirement(requirementId: string) {
+    const confirmed = confirm("Eliminare questa richiesta Bimini?");
+
+    if (!confirmed) return;
+
+    const { error } = await supabase
+      .from("production_boat_bimini")
+      .delete()
+      .eq("id", requirementId);
+
+    if (!error) {
+      await loadBiminiRequirements();
+    }
+  }
+
+  async function searchBiminiStockFor(requirement: BoatBiminiRequirement) {
+    setSearchingBiminiReqId(requirement.id);
+    setBiminiStockCandidates([]);
+
+    const { data } = await supabase
+      .from("bimini_kits")
+      .select("id,matricola,color")
+      .eq("supplier_id", requirement.supplierId)
+      .eq("item_id", requirement.itemId)
+      .eq("status", "stock")
+      .order("matricola", { ascending: true });
+
+    setBiminiStockCandidates(
+      (data || []).map((row: any) => ({
+        id: String(row.id),
+        matricola: Number(row.matricola),
+        color: String(row.color || ""),
+      }))
+    );
+  }
+
+  function closeBiminiStockSearch() {
+    setSearchingBiminiReqId("");
+    setBiminiStockCandidates([]);
+  }
+
+  async function assignBiminiCandidate(requirementId: string, kitId: string) {
+    setAssigningBiminiKitId(kitId);
+
+    const { error } = await supabase.rpc("assign_bimini_kit_to_boat", {
+      p_kit_id: kitId,
+      p_boat_bimini_id: requirementId,
+    });
+
+    setAssigningBiminiKitId("");
+
+    if (!error) {
+      closeBiminiStockSearch();
+      await loadBiminiRequirements();
+    }
+  }
+
+  async function unassignBiminiRequirement(kitId: string) {
+    const confirmed = confirm(
+      "Annullare l'assegnazione? Il kit torna in giacenza."
+    );
+
+    if (!confirmed) return;
+
+    const { error } = await supabase.rpc("unassign_bimini_kit_from_boat", {
+      p_kit_id: kitId,
+    });
+
+    if (!error) {
+      await loadBiminiRequirements();
+    }
+  }
+
   // Barra di avanzamento a step: un tap sul reparto attuale apre questo
   // pannellino per aggiungere una nota o completare il reparto, senza
   // uscire dalla scheda.
@@ -1323,6 +1627,8 @@ export default function ProductionBoatDetailPage({
     loadUpholsteryCatalog();
     loadTeakRequirements();
     loadTeakCatalog();
+    loadBiminiRequirements();
+    loadBiminiCatalog();
     loadBomSections();
   }, [boatId]);
 
@@ -2782,6 +3088,208 @@ export default function ProductionBoatDetailPage({
                 disabled={teakReqSaving}
               >
                 {teakReqSaving ? "Salvataggio..." : "Salva teak"}
+              </button>
+            </div>
+          </div>
+        )}
+      </section>
+
+      <section className="pbd-card">
+        <div className="pbd-head">
+          <div>
+            <div className="pbd-eyebrow">BIMINI</div>
+            <h2>Stato Bimini</h2>
+          </div>
+
+          <button
+            type="button"
+            className="pbd-edit-btn"
+            onClick={openAddBimini}
+            disabled={biminiSuppliers.length === 0}
+          >
+            + Aggiungi Bimini
+          </button>
+        </div>
+
+        {biminiRequirements.length === 0 && !showAddBimini && (
+          <div className="pbd-note">
+            Nessun Bimini collegato a questo battello.
+          </div>
+        )}
+
+        {biminiRequirements.map((requirement) => {
+          const statusLabelText = requirement.kitId ? "ASSEGNATA" : "DA ORDINARE";
+          const statusClass = requirement.kitId ? "assigned" : "toorder";
+
+          return (
+            <div key={requirement.id} className="pbd-upholstery-row">
+              <div className="pbd-upholstery-main">
+                <div>
+                  <strong>
+                    {biminiItemDescriptionById[requirement.itemId] ||
+                      "Articolo"}
+                  </strong>
+                </div>
+
+                <div className="pbd-upholstery-details">
+                  {requirement.color}
+                </div>
+
+                {requirement.note && (
+                  <div className="pbd-upholstery-note">
+                    {requirement.note}
+                  </div>
+                )}
+              </div>
+
+              <div className="pbd-upholstery-status">
+                <span className={`pbd-uph-badge ${statusClass}`}>
+                  {statusLabelText}
+                </span>
+
+                {requirement.kitId && (
+                  <>
+                    <span className="pbd-upholstery-info">
+                      Matricola #{requirement.kitMatricola}
+                    </span>
+                    <button
+                      type="button"
+                      className="pbd-btn-link"
+                      onClick={() =>
+                        unassignBiminiRequirement(requirement.kitId as string)
+                      }
+                    >
+                      Annulla assegnazione
+                    </button>
+                  </>
+                )}
+
+                {!requirement.kitId && (
+                  <div className="pbd-upholstery-actions">
+                    <button
+                      type="button"
+                      className="pbd-btn-link"
+                      onClick={() => searchBiminiStockFor(requirement)}
+                    >
+                      Cerca in giacenza
+                    </button>
+                    <button
+                      type="button"
+                      className="pbd-btn-link danger"
+                      onClick={() =>
+                        deleteBiminiRequirement(requirement.id)
+                      }
+                    >
+                      Elimina
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {searchingBiminiReqId === requirement.id && (
+                <div className="pbd-upholstery-search">
+                  {biminiStockCandidates.length === 0 ? (
+                    <div className="pbd-upholstery-note">
+                      Nessun kit di questo articolo in giacenza.
+                    </div>
+                  ) : (
+                    biminiStockCandidates.map((candidate) => (
+                      <div
+                        key={candidate.id}
+                        className="pbd-upholstery-candidate"
+                      >
+                        <span>
+                          #{candidate.matricola} — {candidate.color}
+                        </span>
+                        <button
+                          type="button"
+                          className="pbd-btn-link"
+                          disabled={assigningBiminiKitId === candidate.id}
+                          onClick={() =>
+                            assignBiminiCandidate(requirement.id, candidate.id)
+                          }
+                        >
+                          {assigningBiminiKitId === candidate.id
+                            ? "Assegno..."
+                            : "Assegna"}
+                        </button>
+                      </div>
+                    ))
+                  )}
+
+                  <button
+                    type="button"
+                    className="pbd-btn-link"
+                    onClick={closeBiminiStockSearch}
+                  >
+                    Chiudi
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {showAddBimini && (
+          <div className="pbd-upholstery-add">
+            {biminiReqError && (
+              <div className="pbd-form-error">{biminiReqError}</div>
+            )}
+
+            <div className="pbd-form-grid">
+              <EditField label="Articolo">
+                <select
+                  value={newBiminiItemId}
+                  onChange={(e) => setNewBiminiItemId(e.target.value)}
+                >
+                  <option value="">Seleziona articolo...</option>
+                  {biminiItemsFor(biminiSupplierId).map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.description}
+                    </option>
+                  ))}
+                </select>
+              </EditField>
+
+              <EditField label="Colore">
+                <select
+                  value={newBiminiColor}
+                  onChange={(e) => setNewBiminiColor(e.target.value)}
+                >
+                  <option value="">Seleziona...</option>
+                  {biminiColorsFor(biminiSupplierId).map((option) => (
+                    <option key={option.id} value={option.name}>
+                      {option.name}
+                    </option>
+                  ))}
+                </select>
+              </EditField>
+
+              <EditField label="Nota" wide>
+                <input
+                  value={newBiminiNote}
+                  onChange={(e) => setNewBiminiNote(e.target.value)}
+                  placeholder="Facoltativa"
+                />
+              </EditField>
+            </div>
+
+            <div className="pbd-form-actions">
+              <button
+                type="button"
+                className="pbd-back"
+                onClick={() => setShowAddBimini(false)}
+                disabled={biminiReqSaving}
+              >
+                Annulla
+              </button>
+              <button
+                type="button"
+                className="pbd-save-btn"
+                onClick={addBiminiRequirement}
+                disabled={biminiReqSaving}
+              >
+                {biminiReqSaving ? "Salvataggio..." : "Salva Bimini"}
               </button>
             </div>
           </div>

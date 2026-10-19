@@ -107,6 +107,8 @@ export default function SupplierDetail({
     useState(false);
   const [teakEnabled, setTeakEnabled] =
     useState(false);
+  const [biminiEnabled, setBiminiEnabled] =
+    useState(false);
   const [items, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -230,6 +232,11 @@ export default function SupplierDetail({
           .eq("id", supplierId)
           .maybeSingle(),
         supabase
+          .from("suppliers")
+          .select("bimini_enabled")
+          .eq("id", supplierId)
+          .maybeSingle(),
+        supabase
           .from("orders")
           .select("order_date,received_at")
           .eq("supplier_id", supplierId)
@@ -311,6 +318,7 @@ export default function SupplierDetail({
         { data: supplier },
         { data: windshieldRow, error: windshieldError },
         { data: teakRow, error: teakError },
+        { data: biminiRow, error: biminiError },
         { data: deliveredOrders, error: deliveredOrdersError },
       ] = await otherQueriesPromise;
 
@@ -329,6 +337,10 @@ export default function SupplierDetail({
 
       setTeakEnabled(
         !teakError && teakRow?.teak_enabled === true
+      );
+
+      setBiminiEnabled(
+        !biminiError && biminiRow?.bimini_enabled === true
       );
 
       if (!deliveredOrdersError && deliveredOrders) {
@@ -2034,6 +2046,93 @@ export default function SupplierDetail({
             }}
           >
             Apri gestione teak →
+          </Link>
+        </section>
+      )}
+
+      {biminiEnabled && (
+        <section
+          style={{
+            marginBottom: 20,
+            padding: "18px 20px",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 18,
+            flexWrap: "wrap",
+            border:
+              "1px solid rgba(37,99,235,0.28)",
+            borderRadius: 14,
+            background:
+              "linear-gradient(135deg, rgba(37,99,235,0.10), rgba(59,130,246,0.035))",
+            boxShadow:
+              "0 10px 28px rgba(37,99,235,0.07)",
+          }}
+        >
+          <div
+            style={{
+              minWidth: 0,
+            }}
+          >
+            <div
+              style={{
+                marginBottom: 5,
+                color: "#2563eb",
+                fontSize: 11,
+                fontWeight: 900,
+                letterSpacing: 1.1,
+                textTransform: "uppercase",
+              }}
+            >
+              Fornitore Bimini
+            </div>
+
+            <div
+              style={{
+                fontSize: 20,
+                fontWeight: 900,
+                lineHeight: 1.2,
+              }}
+            >
+              Gestione Bimini
+            </div>
+
+            <div
+              style={{
+                marginTop: 6,
+                maxWidth: 720,
+                color: "var(--muted-foreground, #64748b)",
+                fontSize: 13,
+                lineHeight: 1.55,
+              }}
+            >
+              Gestisci Matricola Kit e colore dei Bimini senza
+              modificare il normale magazzino.
+            </div>
+          </div>
+
+          <Link
+            href={`/suppliers/${supplierId}/bimini`}
+            style={{
+              minHeight: 44,
+              padding: "0 17px",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              border:
+                "1px solid rgba(37,99,235,0.40)",
+              borderRadius: 10,
+              background: "#2563eb",
+              color: "#ffffff",
+              textDecoration: "none",
+              fontSize: 13,
+              fontWeight: 900,
+              whiteSpace: "nowrap",
+              boxShadow:
+                "0 8px 18px rgba(37,99,235,0.20)",
+            }}
+          >
+            Apri gestione Bimini →
           </Link>
         </section>
       )}

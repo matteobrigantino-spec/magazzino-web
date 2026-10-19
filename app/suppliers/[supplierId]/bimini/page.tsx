@@ -25,7 +25,7 @@ type BiminiKit = {
   boat_registration: string | null;
   status: string;
   note: string | null;
-  created_at: string;
+  received_at: string;
 };
 
 type ItemLookup = {
@@ -74,7 +74,7 @@ export default function BiminiWarehousePage({
       supabase.from("suppliers").select("name,bimini_enabled").eq("id", supplierId).maybeSingle(),
       supabase
         .from("bimini_kits")
-        .select("id,item_id,matricola,scanner_code,color,unit_price,boat_registration,status,note,created_at")
+        .select("id,item_id,matricola,scanner_code,color,unit_price,boat_registration,status,note,received_at")
         .eq("supplier_id", supplierId)
         .order("matricola", { ascending: true }),
       supabase.from("items").select("id,code,supplier_code,description").eq("supplier_id", supplierId),
@@ -111,7 +111,7 @@ export default function BiminiWarehousePage({
         boat_registration: row.boat_registration ? String(row.boat_registration) : null,
         status: String(row.status || ""),
         note: row.note ? String(row.note) : null,
-        created_at: String(row.created_at || ""),
+        received_at: String(row.received_at || ""),
       }))
     );
 

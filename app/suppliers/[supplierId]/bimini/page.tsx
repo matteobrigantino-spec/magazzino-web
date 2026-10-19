@@ -52,6 +52,7 @@ export default function BiminiWarehousePage({
   const [itemLookup, setItemLookup] = useState<ItemLookup[]>([]);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
+  const [deletingKitId, setDeletingKitId] = useState("");
 
   useEffect(() => {
     loadData();
@@ -133,6 +134,30 @@ export default function BiminiWarehousePage({
     return new Intl.NumberFormat("it-IT", { style: "currency", currency: "EUR" }).format(value || 0);
   }
 
+  async function deleteKit(kit: BiminiKit) {
+    const confirmed = window.confirm(
+      `Eliminare definitivamente il Kit #${kit.matricola}?\n\n` +
+        "La giacenza dell'articolo verrà diminuita di 1.\n" +
+        "Questa operazione serve anche per eliminare un kit inserito per errore."
+    );
+
+    if (!confirmed) return;
+
+    setDeletingKitId(kit.id);
+    setErrorMessage("");
+
+    const { error } = await supabase.rpc("delete_bimini_kit", { p_kit_id: kit.id });
+
+    if (error) {
+      setErrorMessage("Errore eliminazione kit: " + error.message);
+      setDeletingKitId("");
+      return;
+    }
+
+    setKits((current) => current.filter((row) => row.id !== kit.id));
+    setDeletingKitId("");
+  }
+
   if (loading) {
     return (
       <div className="bwh-loading">
@@ -189,6 +214,14 @@ export default function BiminiWarehousePage({
                   </div>
                   <span className="bwh-row-color">{kit.color}</span>
                   <span className="bwh-row-price">{formatEuro(kit.unit_price)}</span>
+                  <button
+                    type="button"
+                    className="bwh-delete-button"
+                    onClick={() => deleteKit(kit)}
+                    disabled={deletingKitId === kit.id}
+                  >
+                    {deletingKitId === kit.id ? "..." : "Elimina"}
+                  </button>
                 </div>
               );
             })}
@@ -256,6 +289,8 @@ function Styles() {
       .bwh-row-color { flex-shrink:0; color:#334155; font-size:11px; font-weight:700; }
       .bwh-row-price { flex-shrink:0; color:#16a34a; font-size:12px; font-weight:900; }
       .bwh-row-boat { flex-shrink:0; color:#2563eb; font-size:11px; font-weight:800; }
+      .bwh-delete-button { flex-shrink:0; min-height:30px; padding:0 11px; border:1px solid #fca5a5; border-radius:7px; background:#fef2f2; color:#b91c1c; font-size:10.5px; font-weight:850; cursor:pointer; }
+      .bwh-delete-button:disabled { opacity:.55; cursor:not-allowed; }
       @media (max-width: 640px) {
         .bwh-hero { flex-direction:column; align-items:stretch; }
         .bwh-row { flex-wrap:wrap; }

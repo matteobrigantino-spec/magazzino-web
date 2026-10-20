@@ -831,6 +831,7 @@ export default function TopBar() {
             href="/produzione"
             title="Produzione"
             aria-label="Produzione"
+            prefetch={false}
             aria-current={pathname.startsWith("/produzione") ? "page" : undefined}
             className={`topbar-v2-pill ${pathname.startsWith("/produzione") ? "active" : ""}`}
           >
@@ -976,6 +977,7 @@ export default function TopBar() {
                           supplier.id
                         }
                         href={`/suppliers/${supplier.id}`}
+                        prefetch={false}
                         className="topbar-v2-dropdown-item"
                         onClick={() =>
                           setWarehouseMenuOpen(
@@ -1014,6 +1016,7 @@ export default function TopBar() {
           {canMovements && (
           <Link
             href="/movements"
+            prefetch={false}
             className={`topbar-v2-pill ${
               pathname.startsWith(
                 "/movements"
@@ -1036,6 +1039,7 @@ export default function TopBar() {
           {canAvgConsumption && (
           <Link
             href="/consumo-medio"
+            prefetch={false}
             className={`topbar-v2-pill ${
               pathname.startsWith(
                 "/consumo-medio"
@@ -1058,6 +1062,7 @@ export default function TopBar() {
           {canMissingCodes && (
           <Link
             href="/codici-da-inserire"
+            prefetch={false}
             className={`topbar-v2-pill ${
               pathname.startsWith(
                 "/codici-da-inserire"
@@ -1080,6 +1085,7 @@ export default function TopBar() {
           {canOrders && (
           <Link
             href="/orders"
+            prefetch={false}
             className={`topbar-v2-pill ${
               pathname.startsWith(
                 "/orders"

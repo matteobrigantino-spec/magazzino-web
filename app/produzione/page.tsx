@@ -2114,19 +2114,19 @@ export default function ProductionPage() {
           </div>
 
           <div className="prod-actions">
-            <Link href="/produzione/configurazioni" className="prod-btn secondary">
+            <Link href="/produzione/configurazioni" prefetch={false} className="prod-btn secondary">
               Configurazioni
             </Link>
-            <Link href="/produzione/consegne" className="prod-btn secondary">
+            <Link href="/produzione/consegne" prefetch={false} className="prod-btn secondary">
               Consegne
             </Link>
-            <Link href="/produzione/distinta-base" className="prod-btn secondary">
+            <Link href="/produzione/distinta-base" prefetch={false} className="prod-btn secondary">
               Distinta base
             </Link>
-            <Link href="/produzione/gelcoat" className="prod-btn secondary">
+            <Link href="/produzione/gelcoat" prefetch={false} className="prod-btn secondary">
               Gelcoat
             </Link>
-            <Link href="/produzione/consegnati" className="prod-btn secondary">
+            <Link href="/produzione/consegnati" prefetch={false} className="prod-btn secondary">
               Consegnati
             </Link>
             <button
@@ -2702,7 +2702,7 @@ export default function ProductionPage() {
           </div>
 
           <div className="prod-print-actions">
-            <Link href="/produzione/reparti" className="prod-btn secondary">
+            <Link href="/produzione/reparti" prefetch={false} className="prod-btn secondary">
               Reparti
             </Link>
             <button

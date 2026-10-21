@@ -118,6 +118,8 @@ type BoatBiminiRequirement = {
   note: string | null;
   kitId: string | null;
   kitMatricola: number | null;
+  openOrderQty: number;
+  requestedDelivery: string | null;
 };
 
 type BiminiStockCandidate = {
@@ -146,6 +148,8 @@ type BoatTeliRequirement = {
   note: string | null;
   kitId: string | null;
   kitMatricola: number | null;
+  openOrderQty: number;
+  requestedDelivery: string | null;
 };
 
 type TeliStockCandidate = {
@@ -1399,7 +1403,7 @@ export default function ProductionBoatDetailPage({
     const { data, error } = await supabase
       .from("production_boat_bimini")
       .select(
-        "id,supplier_id,item_id,color,note,kit_id,created_at,bimini_kits(matricola,status)"
+        "id,supplier_id,item_id,color,note,kit_id,created_at,bimini_kits(matricola,status),order_items(id,qty,received_qty,requested_delivery_date,order_item_variants(color,requested_delivery_date))"
       )
       .eq("boat_id", boatId)
       .order("created_at", { ascending: true });
@@ -1409,17 +1413,40 @@ export default function ProductionBoatDetailPage({
       return;
     }
 
-    const rows: BoatBiminiRequirement[] = (data as any[]).map((row) => ({
-      id: String(row.id),
-      supplierId: String(row.supplier_id),
-      itemId: String(row.item_id),
-      color: String(row.color || ""),
-      note: row.note ? String(row.note) : null,
-      kitId: row.kit_id ? String(row.kit_id) : null,
-      kitMatricola: row.bimini_kits
-        ? Number(row.bimini_kits.matricola)
-        : null,
-    }));
+    const rows: BoatBiminiRequirement[] = (data as any[]).map((row) => {
+      // Stesso meccanismo del teak (STEP 58): al massimo una riga
+      // d'ordine collegata per richiesta (production_boat_bimini.
+      // order_item_id).
+      const orderLine = row.order_items || null;
+      const isOpen =
+        orderLine &&
+        Number(orderLine.qty || 0) > Number(orderLine.received_qty || 0);
+
+      const matchingVariant = (orderLine?.order_item_variants || []).find(
+        (variant: any) => String(variant.color || "") === String(row.color || "")
+      );
+
+      const orderDeliveryDate =
+        matchingVariant?.requested_delivery_date ||
+        orderLine?.requested_delivery_date ||
+        null;
+
+      return {
+        id: String(row.id),
+        supplierId: String(row.supplier_id),
+        itemId: String(row.item_id),
+        color: String(row.color || ""),
+        note: row.note ? String(row.note) : null,
+        kitId: row.kit_id ? String(row.kit_id) : null,
+        kitMatricola: row.bimini_kits
+          ? Number(row.bimini_kits.matricola)
+          : null,
+        openOrderQty: isOpen
+          ? Number(orderLine.qty || 0) - Number(orderLine.received_qty || 0)
+          : 0,
+        requestedDelivery: isOpen ? orderDeliveryDate : null,
+      };
+    });
 
     setBiminiRequirements(rows);
 
@@ -1681,7 +1708,7 @@ export default function ProductionBoatDetailPage({
     const { data, error } = await supabase
       .from("production_boat_teli")
       .select(
-        "id,supplier_id,item_id,tipo,color,note,kit_id,created_at,teli_kits(matricola,status)"
+        "id,supplier_id,item_id,tipo,color,note,kit_id,created_at,teli_kits(matricola,status),order_items(id,qty,received_qty,requested_delivery_date,order_item_variants(color,requested_delivery_date))"
       )
       .eq("boat_id", boatId)
       .order("created_at", { ascending: true });
@@ -1691,18 +1718,39 @@ export default function ProductionBoatDetailPage({
       return;
     }
 
-    const rows: BoatTeliRequirement[] = (data as any[]).map((row) => ({
-      id: String(row.id),
-      supplierId: String(row.supplier_id),
-      itemId: String(row.item_id),
-      tipo: String(row.tipo || ""),
-      color: String(row.color || ""),
-      note: row.note ? String(row.note) : null,
-      kitId: row.kit_id ? String(row.kit_id) : null,
-      kitMatricola: row.teli_kits
-        ? Number(row.teli_kits.matricola)
-        : null,
-    }));
+    const rows: BoatTeliRequirement[] = (data as any[]).map((row) => {
+      // Stesso meccanismo del Bimini qui sopra (STEP 58).
+      const orderLine = row.order_items || null;
+      const isOpen =
+        orderLine &&
+        Number(orderLine.qty || 0) > Number(orderLine.received_qty || 0);
+
+      const matchingVariant = (orderLine?.order_item_variants || []).find(
+        (variant: any) => String(variant.color || "") === String(row.color || "")
+      );
+
+      const orderDeliveryDate =
+        matchingVariant?.requested_delivery_date ||
+        orderLine?.requested_delivery_date ||
+        null;
+
+      return {
+        id: String(row.id),
+        supplierId: String(row.supplier_id),
+        itemId: String(row.item_id),
+        tipo: String(row.tipo || ""),
+        color: String(row.color || ""),
+        note: row.note ? String(row.note) : null,
+        kitId: row.kit_id ? String(row.kit_id) : null,
+        kitMatricola: row.teli_kits
+          ? Number(row.teli_kits.matricola)
+          : null,
+        openOrderQty: isOpen
+          ? Number(orderLine.qty || 0) - Number(orderLine.received_qty || 0)
+          : 0,
+        requestedDelivery: isOpen ? orderDeliveryDate : null,
+      };
+    });
 
     setTeliRequirements(rows);
 
@@ -3435,8 +3483,17 @@ export default function ProductionBoatDetailPage({
         )}
 
         {biminiRequirements.map((requirement) => {
-          const statusLabelText = requirement.kitId ? "ASSEGNATA" : "DA ORDINARE";
-          const statusClass = requirement.kitId ? "assigned" : "toorder";
+          const statusLabelText = requirement.kitId
+            ? "ASSEGNATA"
+            : requirement.openOrderQty > 0
+            ? "IN ORDINE"
+            : "DA ORDINARE";
+
+          const statusClass = requirement.kitId
+            ? "assigned"
+            : requirement.openOrderQty > 0
+            ? "ordered"
+            : "toorder";
 
           return (
             <div key={requirement.id} className="pbd-upholstery-row">
@@ -3481,7 +3538,17 @@ export default function ProductionBoatDetailPage({
                   </>
                 )}
 
-                {!requirement.kitId && (
+                {!requirement.kitId && requirement.openOrderQty > 0 && (
+                  <span className="pbd-upholstery-info">
+                    {requirement.requestedDelivery
+                      ? `Consegna richiesta: ${formatDate(
+                          requirement.requestedDelivery
+                        )}`
+                      : "Nessuna data di consegna indicata"}
+                  </span>
+                )}
+
+                {!requirement.kitId && requirement.openOrderQty === 0 && (
                   <div className="pbd-upholstery-actions">
                     <button
                       type="button"
@@ -3637,8 +3704,17 @@ export default function ProductionBoatDetailPage({
         )}
 
         {teliRequirements.map((requirement) => {
-          const statusLabelText = requirement.kitId ? "ASSEGNATA" : "DA ORDINARE";
-          const statusClass = requirement.kitId ? "assigned" : "toorder";
+          const statusLabelText = requirement.kitId
+            ? "ASSEGNATA"
+            : requirement.openOrderQty > 0
+            ? "IN ORDINE"
+            : "DA ORDINARE";
+
+          const statusClass = requirement.kitId
+            ? "assigned"
+            : requirement.openOrderQty > 0
+            ? "ordered"
+            : "toorder";
 
           return (
             <div key={requirement.id} className="pbd-upholstery-row">
@@ -3683,7 +3759,17 @@ export default function ProductionBoatDetailPage({
                   </>
                 )}
 
-                {!requirement.kitId && (
+                {!requirement.kitId && requirement.openOrderQty > 0 && (
+                  <span className="pbd-upholstery-info">
+                    {requirement.requestedDelivery
+                      ? `Consegna richiesta: ${formatDate(
+                          requirement.requestedDelivery
+                        )}`
+                      : "Nessuna data di consegna indicata"}
+                  </span>
+                )}
+
+                {!requirement.kitId && requirement.openOrderQty === 0 && (
                   <div className="pbd-upholstery-actions">
                     <button
                       type="button"

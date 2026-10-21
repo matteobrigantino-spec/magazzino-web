@@ -553,7 +553,7 @@ export default function ProductionPage() {
       const { data, error } = await supabase
         .from("production_boat_bimini")
         .select(
-          "id,item_id,color,kit_id,created_at,production_boats(order_number,model_boat,requested_delivery_date),bimini_kits(matricola)"
+          "id,item_id,color,kit_id,created_at,production_boats(order_number,model_boat,requested_delivery_date),bimini_kits(matricola),order_items(qty,received_qty,requested_delivery_date,order_item_variants(color,requested_delivery_date))"
         )
         .order("created_at", { ascending: true });
 
@@ -588,20 +588,43 @@ export default function ProductionPage() {
 
       const rows = requirementRows
         .map((row) => {
+          // Al massimo una riga d'ordine collegata per richiesta
+          // (production_boat_bimini.order_item_id), stesso concetto
+          // della tappezzeria/teak (STEP 58).
+          const orderLine = row.order_items || null;
+          const isOpen =
+            orderLine &&
+            Number(orderLine.qty || 0) > Number(orderLine.received_qty || 0);
+
+          const matchingVariant = (orderLine?.order_item_variants || []).find(
+            (variant: any) => String(variant.color || "") === String(row.color || "")
+          );
+
+          const orderDeliveryDate =
+            matchingVariant?.requested_delivery_date ||
+            orderLine?.requested_delivery_date ||
+            null;
+
           const kitMatricola = row.bimini_kits
             ? Number(row.bimini_kits.matricola)
             : null;
 
-          const status: "assegnata" | "da_ordinare" = row.kit_id
+          const status: "assegnata" | "ordine" | "da_ordinare" = row.kit_id
             ? "assegnata"
-            : "da_ordinare";
+            : isOpen
+              ? "ordine"
+              : "da_ordinare";
 
           const statusInfo =
             status === "assegnata"
               ? kitMatricola
                 ? `Kit N. ${kitMatricola}`
                 : "Kit assegnato"
-              : "-";
+              : status === "ordine"
+                ? orderDeliveryDate
+                  ? `Consegna richiesta: ${formatItDate(String(orderDeliveryDate))}`
+                  : "In ordine dal fornitore"
+                : "-";
 
           return {
             boatOrderNumber: String(row.production_boats?.order_number || "-"),
@@ -650,7 +673,7 @@ export default function ProductionPage() {
       const { data, error } = await supabase
         .from("production_boat_teli")
         .select(
-          "id,item_id,tipo,color,kit_id,created_at,production_boats(order_number,model_boat,requested_delivery_date),teli_kits(matricola)"
+          "id,item_id,tipo,color,kit_id,created_at,production_boats(order_number,model_boat,requested_delivery_date),teli_kits(matricola),order_items(qty,received_qty,requested_delivery_date,order_item_variants(color,requested_delivery_date))"
         )
         .order("created_at", { ascending: true });
 
@@ -685,20 +708,41 @@ export default function ProductionPage() {
 
       const rows = requirementRows
         .map((row) => {
+          // Stesso meccanismo del Bimini qui sopra (STEP 58).
+          const orderLine = row.order_items || null;
+          const isOpen =
+            orderLine &&
+            Number(orderLine.qty || 0) > Number(orderLine.received_qty || 0);
+
+          const matchingVariant = (orderLine?.order_item_variants || []).find(
+            (variant: any) => String(variant.color || "") === String(row.color || "")
+          );
+
+          const orderDeliveryDate =
+            matchingVariant?.requested_delivery_date ||
+            orderLine?.requested_delivery_date ||
+            null;
+
           const kitMatricola = row.teli_kits
             ? Number(row.teli_kits.matricola)
             : null;
 
-          const status: "assegnata" | "da_ordinare" = row.kit_id
+          const status: "assegnata" | "ordine" | "da_ordinare" = row.kit_id
             ? "assegnata"
-            : "da_ordinare";
+            : isOpen
+              ? "ordine"
+              : "da_ordinare";
 
           const statusInfo =
             status === "assegnata"
               ? kitMatricola
                 ? `Kit N. ${kitMatricola}`
                 : "Kit assegnato"
-              : "-";
+              : status === "ordine"
+                ? orderDeliveryDate
+                  ? `Consegna richiesta: ${formatItDate(String(orderDeliveryDate))}`
+                  : "In ordine dal fornitore"
+                : "-";
 
           return {
             boatOrderNumber: String(row.production_boats?.order_number || "-"),

@@ -39,6 +39,8 @@ type Supplier = {
   upholstery_enabled?: boolean;
   windshield_enabled?: boolean;
   teak_enabled?: boolean;
+  bimini_enabled?: boolean;
+  teli_enabled?: boolean;
 };
 
 type Item = {
@@ -197,6 +199,33 @@ const KIT_LINK_TYPES: KitLinkType[] = [
     includeLine: () => true,
     runLink: async (itemId, currentSupplierId) => {
       await supabase.rpc("sync_teak_order_links", {
+        p_supplier_id: currentSupplierId,
+        p_item_id: itemId,
+      });
+    },
+  },
+  {
+    // Bimini (STEP 58): stesso concetto del teak, nessuna
+    // assegnazione manuale "Per battello" dalla riga d'ordine.
+    key: "bimini",
+    label: "bimini",
+    isEnabled: (supplier) => !!supplier.bimini_enabled,
+    includeLine: () => true,
+    runLink: async (itemId, currentSupplierId) => {
+      await supabase.rpc("sync_bimini_order_links", {
+        p_supplier_id: currentSupplierId,
+        p_item_id: itemId,
+      });
+    },
+  },
+  {
+    // Teli (STEP 58): stesso concetto del teak/bimini.
+    key: "teli",
+    label: "teli",
+    isEnabled: (supplier) => !!supplier.teli_enabled,
+    includeLine: () => true,
+    runLink: async (itemId, currentSupplierId) => {
+      await supabase.rpc("sync_teli_order_links", {
         p_supplier_id: currentSupplierId,
         p_item_id: itemId,
       });
@@ -558,7 +587,7 @@ export default function SupplierOrderPage() {
     const { data: supplierData, error: supplierError } =
       await supabase
         .from("suppliers")
-        .select("id,name,upholstery_enabled,windshield_enabled,teak_enabled")
+        .select("id,name,upholstery_enabled,windshield_enabled,teak_enabled,bimini_enabled,teli_enabled")
         .eq("id", supplierId)
         .single();
 
@@ -726,6 +755,82 @@ export default function SupplierOrderPage() {
           stitching: "",
           quilting: "",
           coverage: String((row as any).coverage || ""),
+        });
+
+        openRequestVariantsByItem.set(itemId, list);
+      }
+    }
+
+    /*
+      RICHIESTE BIMINI "DA ORDINARE" (STEP 58)
+
+      Stessa logica del teak qui sopra: production_boat_bimini ha una
+      colonna supplier_id propria, quindi filtriamo direttamente per
+      fornitore. Precompiliamo solo il colore (niente dettagli/
+      cucitura/trapuntatura/copertura, che il Bimini non ha).
+    */
+    if (supplierData.bimini_enabled) {
+      const { data: openBiminiData } = await supabase
+        .from("production_boat_bimini")
+        .select("item_id,color")
+        .eq("supplier_id", supplierId)
+        .is("kit_id", null)
+        .is("order_item_id", null);
+
+      for (const row of openBiminiData || []) {
+        const itemId = String((row as any).item_id);
+
+        openRequestCounts.set(
+          itemId,
+          (openRequestCounts.get(itemId) || 0) + 1
+        );
+
+        const list = openRequestVariantsByItem.get(itemId) || [];
+
+        list.push({
+          color: String((row as any).color || ""),
+          details_logos: "",
+          stitching: "",
+          quilting: "",
+          coverage: "",
+        });
+
+        openRequestVariantsByItem.set(itemId, list);
+      }
+    }
+
+    /*
+      RICHIESTE TELI "DA ORDINARE" (STEP 58)
+
+      Stessa logica del Bimini qui sopra. Il campo Tipo (Copriconsolle/
+      Copriseduta/Copribattello) non serve qui per l'abbinamento: ogni
+      articolo Teli e' gia' un prodotto specifico, quindi raggruppare
+      per articolo+colore basta da solo.
+    */
+    if (supplierData.teli_enabled) {
+      const { data: openTeliData } = await supabase
+        .from("production_boat_teli")
+        .select("item_id,color")
+        .eq("supplier_id", supplierId)
+        .is("kit_id", null)
+        .is("order_item_id", null);
+
+      for (const row of openTeliData || []) {
+        const itemId = String((row as any).item_id);
+
+        openRequestCounts.set(
+          itemId,
+          (openRequestCounts.get(itemId) || 0) + 1
+        );
+
+        const list = openRequestVariantsByItem.get(itemId) || [];
+
+        list.push({
+          color: String((row as any).color || ""),
+          details_logos: "",
+          stitching: "",
+          quilting: "",
+          coverage: "",
         });
 
         openRequestVariantsByItem.set(itemId, list);

@@ -666,7 +666,7 @@ export type BiminiStatusRow = {
   boatModel: string;
   itemDescription: string;
   color: string;
-  status: "assegnata" | "da_ordinare";
+  status: "assegnata" | "ordine" | "da_ordinare";
   statusInfo: string;
 };
 
@@ -699,11 +699,13 @@ export function buildBiminiStatusPdf(
 
   function statusColor(status: BiminiStatusRow["status"]): [number, number, number] {
     if (status === "assegnata") return [22, 163, 74];
+    if (status === "ordine") return [37, 99, 235];
     return [217, 119, 6];
   }
 
   function statusLabel(status: BiminiStatusRow["status"]) {
     if (status === "assegnata") return "ASSEGNATA";
+    if (status === "ordine") return "IN ORDINE";
     return "DA ORDINARE";
   }
 
@@ -846,7 +848,7 @@ export type TeliStatusRow = {
   itemDescription: string;
   tipo: string;
   color: string;
-  status: "assegnata" | "da_ordinare";
+  status: "assegnata" | "ordine" | "da_ordinare";
   statusInfo: string;
 };
 
@@ -879,11 +881,13 @@ export function buildTeliStatusPdf(
 
   function statusColor(status: TeliStatusRow["status"]): [number, number, number] {
     if (status === "assegnata") return [22, 163, 74];
+    if (status === "ordine") return [37, 99, 235];
     return [217, 119, 6];
   }
 
   function statusLabel(status: TeliStatusRow["status"]) {
     if (status === "assegnata") return "ASSEGNATA";
+    if (status === "ordine") return "IN ORDINE";
     return "DA ORDINARE";
   }
 

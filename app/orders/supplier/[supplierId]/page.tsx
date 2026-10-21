@@ -1173,6 +1173,29 @@ export default function SupplierOrderPage() {
     }
 
     /*
+      Alcuni codici articolo sono molto lunghi e senza spazi (es.
+      "KAIXPLPNAT4W1030VINOXD001P"): anche al carattere piu' piccolo
+      ammesso possono restare piu' larghi della colonna e finire
+      scritti sopra la colonna Descrizione. Questa funzione va usata
+      DOPO fitFontSize (stesso font gia' impostato): se il testo non
+      ci sta ancora, lo accorcia con "..." finche' non ci sta, cosi'
+      non sconfina mai nella colonna accanto.
+    */
+    function truncateToWidth(text: string, maxWidth: number) {
+      if (doc.getTextWidth(text) <= maxWidth) {
+        return text;
+      }
+
+      let truncated = text;
+
+      while (truncated.length > 1 && doc.getTextWidth(truncated + "…") > maxWidth) {
+        truncated = truncated.slice(0, -1);
+      }
+
+      return truncated + "…";
+    }
+
+    /*
       COLONNE TABELLA
 
       La consegna richiesta e' per singolo articolo (kit diversi
@@ -1184,15 +1207,15 @@ export default function SupplierOrderPage() {
       {
         key: "code",
         label: "Cod. articolo",
-        frac: 0.19,
+        frac: 0.22,
         align: "left" as const,
       },
       {
         key: "description",
         label: "Descrizione",
         // Senza prezzo/totale, la descrizione riprende lo spazio
-        // libero (0.33 + 0.11 + 0.11) invece di lasciarlo vuoto.
-        frac: showPrices ? 0.33 : 0.55,
+        // libero (0.30 + 0.11 + 0.11) invece di lasciarlo vuoto.
+        frac: showPrices ? 0.3 : 0.52,
         align: "left" as const,
       },
       {
@@ -1741,17 +1764,13 @@ export default function SupplierOrderPage() {
       });
 
       const code = row.item.supplier_code || "-";
-      const codeSize = fitFontSize(
-        code,
-        8.2,
-        6,
-        colW.code - 2 * cellPad
-      );
+      const codeMaxWidth = colW.code - 2 * cellPad;
+      const codeSize = fitFontSize(code, 8.2, 6, codeMaxWidth);
 
       doc.setFont("helvetica", "normal");
       doc.setFontSize(codeSize);
       setInk(INK);
-      doc.text(code, colX.code + cellPad, rowTextTop);
+      doc.text(truncateToWidth(code, codeMaxWidth), colX.code + cellPad, rowTextTop);
 
       doc.setFont("helvetica", "normal");
       doc.setFontSize(8.6);

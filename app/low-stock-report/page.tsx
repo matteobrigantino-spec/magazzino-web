@@ -255,15 +255,25 @@ export default function LowStockReportPage() {
       controllata a mano (stesso concetto del badge arancione "DA
       CONTROLLARE" gia' usato nella scheda fornitore).
     Entrambi partono da filteredItems, cosi' la ricerca/il filtro
-    fornitore scelti in pagina valgono anche per il PDF.
+    fornitore scelti in pagina valgono anche per il PDF. Gli articoli
+    che hanno gia' merce in ordine (on_order > 0) vengono esclusi da
+    entrambi i PDF: sono gia' gestiti, non serve ordinarli di nuovo
+    (restano invece visibili nella tabella a schermo, con il badge
+    "in ordine").
   */
   const belowMinItems = useMemo(
-    () => filteredItems.filter((item) => item.stock < item.min_stock),
+    () =>
+      filteredItems.filter(
+        (item) => item.stock < item.min_stock && item.on_order === 0
+      ),
     [filteredItems]
   );
 
   const atMinItems = useMemo(
-    () => filteredItems.filter((item) => item.stock === item.min_stock),
+    () =>
+      filteredItems.filter(
+        (item) => item.stock === item.min_stock && item.on_order === 0
+      ),
     [filteredItems]
   );
 
@@ -426,7 +436,7 @@ export default function LowStockReportPage() {
               )
             }
             disabled={belowMinItems.length === 0}
-            title="Solo gli articoli con giacenza inferiore alla scorta minima: carenza vera, da ordinare."
+            title="Solo gli articoli con giacenza inferiore alla scorta minima: carenza vera, da ordinare. Esclusi quelli con merce gia' in ordine."
             style={{
               padding: "11px 16px",
               borderRadius: 8,
@@ -461,7 +471,7 @@ export default function LowStockReportPage() {
               )
             }
             disabled={atMinItems.length === 0}
-            title="Solo gli articoli con giacenza esattamente uguale alla scorta minima: non e' ancora una carenza, da controllare a mano."
+            title="Solo gli articoli con giacenza esattamente uguale alla scorta minima: non e' ancora una carenza, da controllare a mano. Esclusi quelli con merce gia' in ordine."
             style={{
               padding: "11px 16px",
               borderRadius: 8,

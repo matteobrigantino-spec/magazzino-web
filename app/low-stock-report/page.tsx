@@ -247,8 +247,32 @@ export default function LowStockReportPage() {
     };
   }, [items]);
 
-  async function createPdf() {
-    if (filteredItems.length === 0) {
+  /*
+    DUE REPORT SEPARATI (invece di uno unico "sotto o uguale alla
+    scorta minima"):
+    - sotto scorta minima: carenza vera, da ordinare subito;
+    - uguale alla scorta minima: non e' ancora una carenza, va solo
+      controllata a mano (stesso concetto del badge arancione "DA
+      CONTROLLARE" gia' usato nella scheda fornitore).
+    Entrambi partono da filteredItems, cosi' la ricerca/il filtro
+    fornitore scelti in pagina valgono anche per il PDF.
+  */
+  const belowMinItems = useMemo(
+    () => filteredItems.filter((item) => item.stock < item.min_stock),
+    [filteredItems]
+  );
+
+  const atMinItems = useMemo(
+    () => filteredItems.filter((item) => item.stock === item.min_stock),
+    [filteredItems]
+  );
+
+  async function createPdf(
+    rows: LowStockItem[],
+    title: string,
+    filename: string
+  ) {
+    if (rows.length === 0) {
       alert("Non ci sono articoli da esportare.");
       return;
     }
@@ -261,7 +285,7 @@ export default function LowStockReportPage() {
     drawCompanyLogoTopRight(pdf, companyLogo);
 
     pdf.setFontSize(18);
-    pdf.text("REPORT SCORTE MINIME", 14, 17);
+    pdf.text(title, 14, 17);
 
     pdf.setFontSize(9);
     pdf.text(
@@ -292,7 +316,7 @@ export default function LowStockReportPage() {
 
     printHeader();
 
-    filteredItems.forEach((item) => {
+    rows.forEach((item) => {
       if (y > 195) {
         pdf.addPage();
         y = 15;
@@ -328,7 +352,7 @@ export default function LowStockReportPage() {
       y += 6;
     });
 
-    pdf.save("report_scorte_minime.pdf");
+    pdf.save(filename);
   }
 
   return (
@@ -385,33 +409,83 @@ export default function LowStockReportPage() {
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={createPdf}
-          disabled={filteredItems.length === 0}
+        <div
           style={{
-            padding: "11px 16px",
-            borderRadius: 8,
-            border: "1px solid var(--foreground)",
-            background:
-              filteredItems.length === 0
-                ? "var(--card)"
-                : "var(--foreground)",
-            color:
-              filteredItems.length === 0
-                ? "var(--foreground)"
-                : "var(--background)",
-            cursor:
-              filteredItems.length === 0
-                ? "not-allowed"
-                : "pointer",
-            opacity:
-              filteredItems.length === 0 ? 0.5 : 1,
-            fontWeight: 750,
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 10,
           }}
         >
-          Scarica PDF
-        </button>
+          <button
+            type="button"
+            onClick={() =>
+              createPdf(
+                belowMinItems,
+                "REPORT SOTTO SCORTA MINIMA",
+                "report_sotto_scorta_minima.pdf"
+              )
+            }
+            disabled={belowMinItems.length === 0}
+            title="Solo gli articoli con giacenza inferiore alla scorta minima: carenza vera, da ordinare."
+            style={{
+              padding: "11px 16px",
+              borderRadius: 8,
+              border: "1px solid var(--foreground)",
+              background:
+                belowMinItems.length === 0
+                  ? "var(--card)"
+                  : "var(--foreground)",
+              color:
+                belowMinItems.length === 0
+                  ? "var(--foreground)"
+                  : "var(--background)",
+              cursor:
+                belowMinItems.length === 0
+                  ? "not-allowed"
+                  : "pointer",
+              opacity:
+                belowMinItems.length === 0 ? 0.5 : 1,
+              fontWeight: 750,
+            }}
+          >
+            PDF sotto scorta minima
+          </button>
+
+          <button
+            type="button"
+            onClick={() =>
+              createPdf(
+                atMinItems,
+                "REPORT SCORTE DA CONTROLLARE (= SCORTA MINIMA)",
+                "report_scorte_da_controllare.pdf"
+              )
+            }
+            disabled={atMinItems.length === 0}
+            title="Solo gli articoli con giacenza esattamente uguale alla scorta minima: non e' ancora una carenza, da controllare a mano."
+            style={{
+              padding: "11px 16px",
+              borderRadius: 8,
+              border: "1px solid var(--foreground)",
+              background:
+                atMinItems.length === 0
+                  ? "var(--card)"
+                  : "var(--foreground)",
+              color:
+                atMinItems.length === 0
+                  ? "var(--foreground)"
+                  : "var(--background)",
+              cursor:
+                atMinItems.length === 0
+                  ? "not-allowed"
+                  : "pointer",
+              opacity:
+                atMinItems.length === 0 ? 0.5 : 1,
+              fontWeight: 750,
+            }}
+          >
+            PDF da controllare (= scorta minima)
+          </button>
+        </div>
       </div>
 
       <div

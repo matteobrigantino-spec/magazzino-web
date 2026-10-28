@@ -49,6 +49,14 @@ type SupplierGroup = {
 
 type SortKey = "monthlyAverage" | "totalQty" | "stock" | "description";
 
+type PriceIncreaseResult = {
+  pct: number;
+  totalOld: number;
+  totalNew: number;
+  itemsConsidered: number;
+  itemsWithoutHistory: number;
+};
+
 /*
   Mesi trascorsi dal primo scarico (incluso) a oggi (incluso),
   minimo 1 mese anche se il primo e unico scarico e' di questo
@@ -81,6 +89,20 @@ export default function AverageConsumptionPage() {
     new Set()
   );
 
+  const [canViewPrices, setCanViewPrices] = useState(false);
+
+  /*
+    Aumento prezzi complessivo (STEP 59): calcolato solo quando
+    l'utente apre il pannello, non al caricamento della pagina,
+    perche' serve leggere lo storico prezzi di tutti gli articoli.
+  */
+  const [priceIncreaseOpen, setPriceIncreaseOpen] = useState(false);
+  const [priceIncreaseLoading, setPriceIncreaseLoading] = useState(false);
+  const [priceIncreaseLoaded, setPriceIncreaseLoaded] = useState(false);
+  const [priceIncreaseError, setPriceIncreaseError] = useState("");
+  const [priceIncreaseResult, setPriceIncreaseResult] =
+    useState<PriceIncreaseResult | null>(null);
+
   useEffect(() => {
     loadReport();
   }, []);
@@ -88,6 +110,19 @@ export default function AverageConsumptionPage() {
   async function loadReport() {
     setLoading(true);
     setErrorMessage("");
+
+    const role = localStorage.getItem("magazzino_role");
+    const savedPermissions = localStorage.getItem("magazzino_permissions");
+
+    let permissions: { view_prices?: boolean } = {};
+
+    try {
+      permissions = savedPermissions ? JSON.parse(savedPermissions) : {};
+    } catch {
+      permissions = {};
+    }
+
+    setCanViewPrices(role === "admin" || permissions.view_prices === true);
 
     const [itemsResult, suppliersResult, consumptionResult] =
       await Promise.all([
@@ -348,6 +383,120 @@ export default function AverageConsumptionPage() {
     return new Date(value + "T00:00:00").toLocaleDateString("it-IT");
   }
 
+  function formatEuro(value: number) {
+    return new Intl.NumberFormat("it-IT", {
+      style: "currency",
+      currency: "EUR",
+      minimumFractionDigits: 2,
+    }).format(Number(value || 0));
+  }
+
+  /*
+    AUMENTO PREZZI COMPLESSIVO
+
+    Media pesata sul valore: sommo tutte le variazioni in euro e le
+    divido per la somma dei prezzi di partenza, cosi' gli articoli
+    piu' costosi pesano di piu' sul risultato (impatto reale sulla
+    spesa, non solo conteggio articoli).
+
+    Il prezzo di partenza di ogni articolo e' il primo prezzo mai
+    registrato diverso da 0: se la primissima riga di storico parte
+    da 0 (prezzo sconosciuto messo per la prima volta, es. 0 -> 45),
+    quella riga non conta come aumento e uso 45 come base; eventuali
+    variazioni successive (es. 45 -> 50) contano normalmente.
+    Gli articoli senza nessuno storico prezzi non entrano nel calcolo.
+  */
+  async function togglePriceIncrease() {
+    const opening = !priceIncreaseOpen;
+    setPriceIncreaseOpen(opening);
+
+    if (!opening || priceIncreaseLoaded) return;
+
+    setPriceIncreaseLoading(true);
+    setPriceIncreaseError("");
+
+    const [historyResult, itemsResult] = await Promise.all([
+      supabase
+        .from("item_price_history")
+        .select("item_id,old_price,new_price,changed_at")
+        .order("changed_at", { ascending: true }),
+      supabase.from("items").select("id,price"),
+    ]);
+
+    if (historyResult.error) {
+      setPriceIncreaseError(
+        "Errore caricamento storico prezzi: " + historyResult.error.message
+      );
+      setPriceIncreaseLoading(false);
+      return;
+    }
+
+    if (itemsResult.error) {
+      setPriceIncreaseError(
+        "Errore caricamento prezzi attuali: " + itemsResult.error.message
+      );
+      setPriceIncreaseLoading(false);
+      return;
+    }
+
+    const historyRows = (historyResult.data || []) as {
+      item_id: string;
+      old_price: number | string | null;
+      new_price: number | string | null;
+    }[];
+
+    const currentPriceById = new Map<string, number>();
+
+    (
+      (itemsResult.data || []) as { id: string; price: number | null }[]
+    ).forEach((item) => {
+      currentPriceById.set(String(item.id), Number(item.price || 0));
+    });
+
+    const baselineByItem = new Map<string, number>();
+
+    historyRows.forEach((row) => {
+      const itemId = String(row.item_id);
+
+      // Tengo solo la primissima riga di storico di ogni articolo
+      // (le righe arrivano gia' ordinate per data crescente).
+      if (baselineByItem.has(itemId)) return;
+
+      const oldPrice = row.old_price === null ? 0 : Number(row.old_price);
+      const newPrice = Number(row.new_price || 0);
+
+      baselineByItem.set(itemId, oldPrice > 0 ? oldPrice : newPrice);
+    });
+
+    let totalOld = 0;
+    let totalNew = 0;
+    let itemsConsidered = 0;
+
+    baselineByItem.forEach((baseline, itemId) => {
+      if (baseline <= 0) return;
+
+      const currentPrice = currentPriceById.get(itemId);
+      if (currentPrice === undefined) return;
+
+      totalOld += baseline;
+      totalNew += currentPrice;
+      itemsConsidered += 1;
+    });
+
+    const pct = totalOld > 0 ? ((totalNew - totalOld) / totalOld) * 100 : 0;
+
+    setPriceIncreaseResult({
+      pct,
+      totalOld,
+      totalNew,
+      itemsConsidered,
+      itemsWithoutHistory: currentPriceById.size - baselineByItem.size,
+    });
+
+    setPriceIncreaseLoaded(true);
+    setPriceIncreaseLoading(false);
+  }
+
   return (
     <div
       style={{
@@ -440,6 +589,138 @@ export default function AverageConsumptionPage() {
           subtitle="Somma di tutto lo storico scarichi"
         />
       </div>
+
+      {canViewPrices && (
+        <div
+          style={{
+            marginBottom: 16,
+            border: "1px solid var(--border-color)",
+            borderRadius: 12,
+            overflow: "hidden",
+          }}
+        >
+          <button
+            type="button"
+            onClick={togglePriceIncrease}
+            style={{
+              width: "100%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 10,
+              padding: "14px 16px",
+              background: "var(--input-bg)",
+              color: "var(--foreground)",
+              border: "none",
+              cursor: "pointer",
+              fontSize: 14,
+              fontWeight: 750,
+              textAlign: "left",
+            }}
+          >
+            <span>
+              Aumento prezzi complessivo
+              {priceIncreaseLoaded && priceIncreaseResult && (
+                <span style={{ opacity: 0.55, fontWeight: 500 }}>
+                  {" "}
+                  ({priceIncreaseResult.itemsConsidered}{" "}
+                  {priceIncreaseResult.itemsConsidered === 1
+                    ? "articolo"
+                    : "articoli"}{" "}
+                  con storico)
+                </span>
+              )}
+            </span>
+
+            <span
+              style={{
+                display: "inline-block",
+                transition: "transform .15s ease",
+                transform: priceIncreaseOpen
+                  ? "rotate(180deg)"
+                  : "rotate(0deg)",
+              }}
+            >
+              ▾
+            </span>
+          </button>
+
+          {priceIncreaseOpen && (
+            <div style={{ padding: "14px 16px", background: "var(--card)" }}>
+              {priceIncreaseLoading && (
+                <div style={{ fontSize: 13, opacity: 0.6 }}>
+                  Calcolo in corso...
+                </div>
+              )}
+
+              {!priceIncreaseLoading && priceIncreaseError && (
+                <div style={{ fontSize: 13, color: "#ef4444" }}>
+                  {priceIncreaseError}
+                </div>
+              )}
+
+              {!priceIncreaseLoading &&
+                !priceIncreaseError &&
+                priceIncreaseResult && (
+                  <div>
+                    <div
+                      style={{
+                        fontSize: 32,
+                        fontWeight: 850,
+                        letterSpacing: "-0.5px",
+                        color:
+                          priceIncreaseResult.pct > 0
+                            ? "#ef4444"
+                            : priceIncreaseResult.pct < 0
+                              ? "#22c55e"
+                              : "var(--foreground)",
+                      }}
+                    >
+                      {priceIncreaseResult.pct > 0 ? "+" : ""}
+                      {formatNumber(priceIncreaseResult.pct, 1)}%
+                    </div>
+
+                    <div
+                      style={{
+                        marginTop: 6,
+                        fontSize: 13,
+                        opacity: 0.7,
+                      }}
+                    >
+                      Da {formatEuro(priceIncreaseResult.totalOld)} a{" "}
+                      {formatEuro(priceIncreaseResult.totalNew)}, su{" "}
+                      {priceIncreaseResult.itemsConsidered}{" "}
+                      {priceIncreaseResult.itemsConsidered === 1
+                        ? "articolo"
+                        : "articoli"}{" "}
+                      con almeno una variazione di prezzo registrata.
+                    </div>
+
+                    <div
+                      style={{
+                        marginTop: 4,
+                        fontSize: 12,
+                        opacity: 0.5,
+                      }}
+                    >
+                      {priceIncreaseResult.itemsWithoutHistory}{" "}
+                      {priceIncreaseResult.itemsWithoutHistory === 1
+                        ? "articolo non ha"
+                        : "articoli non hanno"}{" "}
+                      ancora nessuno storico prezzi e non{" "}
+                      {priceIncreaseResult.itemsWithoutHistory === 1
+                        ? "è compreso"
+                        : "sono compresi"}{" "}
+                      nel calcolo. Le variazioni che partono da un
+                      prezzo a 0 (prima registrazione) non sono
+                      conteggiate come aumento.
+                    </div>
+                  </div>
+                )}
+            </div>
+          )}
+        </div>
+      )}
 
       <div
         style={{

@@ -1042,6 +1042,25 @@ export default function ItemDetailPage({
                                 >
                                   {formatEuro(newPrice)}
                                 </strong>
+                                {oldPrice !== null && oldPrice !== 0 && (
+                                  <span
+                                    style={{
+                                      marginLeft: 8,
+                                      fontSize: 12,
+                                      fontWeight: 700,
+                                      color: isIncrease
+                                        ? "#ef4444"
+                                        : isDecrease
+                                          ? "#22c55e"
+                                          : "var(--foreground)",
+                                      opacity: isIncrease || isDecrease ? 1 : 0.55,
+                                    }}
+                                  >
+                                    ({((newPrice - oldPrice) / oldPrice) * 100 > 0 ? "+" : ""}
+                                    {(((newPrice - oldPrice) / oldPrice) * 100).toFixed(1).replace(".", ",")}
+                                    %)
+                                  </span>
+                                )}
                               </span>
                             </div>
                           );

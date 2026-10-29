@@ -272,6 +272,16 @@ export default function Home() {
     setOverdueOrderLines,
   ] = useState<OverdueOrderLine[]>([]);
 
+  /*
+    Il valore magazzino resta nascosto finche' non si clicca sopra
+    la card (si rinasconde ricliccando): e' un dato sensibile, non
+    deve essere visibile a colpo d'occhio sulla dashboard.
+  */
+  const [
+    warehouseValueRevealed,
+    setWarehouseValueRevealed,
+  ] = useState(false);
+
   const canViewInventoryValue =
     permissions.view_inventory_value === true;
 
@@ -1425,15 +1435,26 @@ export default function Home() {
         {canViewInventoryValue && (
           <KpiCard
             title="Valore magazzino"
-            value={formatEuro(
-              warehouseValue
-            )}
-            subtitle="Giacenza × prezzo"
+            value={
+              warehouseValueRevealed
+                ? formatEuro(warehouseValue)
+                : "•••••• €"
+            }
+            subtitle={
+              warehouseValueRevealed
+                ? "Giacenza × prezzo · clicca per nascondere"
+                : "Clicca per vedere il valore"
+            }
             tone="green"
             icon={
               <EuroIcon />
             }
             featured
+            onClick={() =>
+              setWarehouseValueRevealed(
+                (current) => !current
+              )
+            }
           />
         )}
       </section>

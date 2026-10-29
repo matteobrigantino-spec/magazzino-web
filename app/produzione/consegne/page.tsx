@@ -389,18 +389,18 @@ export default function ProductionDeliveriesPage() {
     doc: jsPDF,
     delivery: Delivery,
     startY: number,
-    items: Record<string, DeliveryItem[]>
+    items: Record<string, DeliveryItem[]>,
+    hideDate = false
   ): number {
     const rows = tripRowsFrom(items, delivery);
     let y = startY;
 
     doc.setFont("helvetica", "bold");
     doc.setFontSize(14);
-    doc.text(
-      `${formatItDate(delivery.trip_date)}${delivery.title ? " · " + delivery.title : ""}`,
-      12,
-      y
-    );
+    const heading = hideDate
+      ? delivery.title || "Viaggio"
+      : `${formatItDate(delivery.trip_date)}${delivery.title ? " · " + delivery.title : ""}`;
+    doc.text(heading, 12, y);
     y += 6;
 
     if (delivery.note) {
@@ -484,7 +484,7 @@ export default function ProductionDeliveriesPage() {
     doc.save(`Consegna_${safeDate}${safeTitle ? "_" + safeTitle : ""}.pdf`);
   }
 
-  async function generateMonthPdf() {
+  async function generateMonthPdf(hideDates = false) {
     setErrorMessage("");
     setMessage("");
 
@@ -517,10 +517,12 @@ export default function ProductionDeliveriesPage() {
         doc.addPage();
         y2 = 16;
       }
-      y2 = drawTripTable(doc, delivery, y2, combined.itemsByDelivery);
+      y2 = drawTripTable(doc, delivery, y2, combined.itemsByDelivery, hideDates);
     }
 
-    doc.save(`Programma_Consegne_${months.join("_")}.pdf`);
+    doc.save(
+      `Programma_Consegne${hideDates ? "_SenzaDate" : ""}_${months.join("_")}.pdf`
+    );
   }
 
   return (
@@ -539,8 +541,20 @@ export default function ProductionDeliveriesPage() {
           <Link href="/produzione" className="pcg-btn secondary">
             ← Produzione
           </Link>
-          <button type="button" className="pcg-btn secondary" onClick={generateMonthPdf}>
+          <button
+            type="button"
+            className="pcg-btn secondary"
+            onClick={() => generateMonthPdf(false)}
+          >
             {selectedMonths.length > 1 ? "Genera PDF mesi selezionati" : "Genera PDF mese"}
+          </button>
+          <button
+            type="button"
+            className="pcg-btn secondary"
+            onClick={() => generateMonthPdf(true)}
+            title="Stesso programma di consegna, senza mostrare le date dei viaggi."
+          >
+            Genera PDF senza date
           </button>
           <button
             type="button"

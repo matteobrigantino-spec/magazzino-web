@@ -160,6 +160,30 @@ export default function ConsegnatiPage() {
     await loadData();
   }
 
+  // Matricola: testo libero, modificabile anche da qui (stesso
+  // pattern della pagina Produzione: si scrive in tabella, si salva
+  // quando si esce dal campo).
+  function editMatricolaDraft(boatId: string, value: string) {
+    setBoats((current) =>
+      current.map((boat) =>
+        boat.id === boatId ? { ...boat, matricola: value } : boat
+      )
+    );
+  }
+
+  async function saveMatricola(boatId: string, value: string) {
+    const trimmed = value.trim();
+
+    const { error } = await supabase
+      .from("production_boats")
+      .update({ matricola: trimmed === "" ? null : trimmed })
+      .eq("id", boatId);
+
+    if (error) {
+      setErrorMessage("Errore salvataggio matricola: " + error.message);
+    }
+  }
+
   if (loading) {
     return (
       <div className="pdl-loading">
@@ -243,7 +267,16 @@ export default function ConsegnatiPage() {
                     <td>{boat.progressive_no ?? "—"}</td>
                     <td><span className="pdl-order">{boat.order_number}</span></td>
                     <td>{boat.model_boat}</td>
-                    <td>{boat.matricola || "—"}</td>
+                    <td className="pdl-matricola-cell" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="text"
+                        className="pdl-matricola-input"
+                        placeholder="—"
+                        value={boat.matricola ?? ""}
+                        onChange={(e) => editMatricolaDraft(boat.id, e.target.value)}
+                        onBlur={(e) => saveMatricola(boat.id, e.target.value)}
+                      />
+                    </td>
                     <td>{formatItDateTime(boat.delivered_at)}</td>
                     <td>{boat.delivered_by || "—"}</td>
                     <td className="pdl-actions-cell" onClick={(e) => e.stopPropagation()}>
@@ -330,6 +363,9 @@ function Styles() {
       .pdl-click-row { cursor:pointer; }
       .pdl-click-row:hover { background:rgba(255,255,255,.025); }
       .pdl-order { color:#93c5fd; font-weight:800; }
+      .pdl-matricola-cell { white-space:nowrap; }
+      .pdl-matricola-input { width:110px; min-height:30px; padding:0 8px; border:1px solid rgba(148,163,184,.19); border-radius:7px; outline:none; background:#081524; color:#fff; font-size:10.5px; font-weight:700; }
+      .pdl-matricola-input:focus { border-color:rgba(74,222,128,.5); }
       .pdl-undo-btn { min-height:30px; padding:0 11px; border:1px solid rgba(239,68,68,.28); border-radius:7px; background:rgba(239,68,68,.08); color:#fca5a5; cursor:pointer; font-size:9px; font-weight:900; white-space:nowrap; }
       .pdl-undo-btn:hover { background:rgba(239,68,68,.15); }
       .pdl-actions-cell { display:flex; align-items:center; gap:6px; }

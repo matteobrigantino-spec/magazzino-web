@@ -332,6 +332,22 @@ export default function ParabrezzaPage() {
       return;
     }
 
+    // Se l'articolo appena mappato aveva gia' giacenza generale
+    // (arrivata prima di essere mappato), quella giacenza non e'
+    // ancora tracciata come pezzi parabrezza: la riconcilio PRIMA
+    // di agganciare i battelli, cosi' quando backfill crea le loro
+    // richieste trova gia' i pezzi disponibili e li assegna subito
+    // (altrimenti i battelli gia' in produzione resterebbero "da
+    // ordinare" anche con giacenza piena - STEP 59).
+    const { error: reconcileError } = await supabase.rpc(
+      "reconcile_windshield_stock_for_item",
+      { p_item_id: newMappingItemId }
+    );
+
+    if (reconcileError) {
+      console.error("Errore riconciliazione giacenza parabrezza:", reconcileError);
+    }
+
     // Aggancia subito anche i battelli di questo modello gia' in
     // produzione: senza questa chiamata resterebbero per sempre
     // senza parabrezza tracciato (la richiesta si crea solo alla
@@ -378,6 +394,18 @@ export default function ParabrezzaPage() {
     // qualche motivo fossero rimasti senza richiesta parabrezza.
     let cleanedCount = 0;
     if (mapping) {
+      // Stesso motivo di addMapping: se il NUOVO articolo aveva
+      // gia' giacenza non ancora tracciata, la riconcilio prima di
+      // agganciare i battelli (STEP 59).
+      const { error: reconcileError } = await supabase.rpc(
+        "reconcile_windshield_stock_for_item",
+        { p_item_id: itemId }
+      );
+
+      if (reconcileError) {
+        console.error("Errore riconciliazione giacenza parabrezza:", reconcileError);
+      }
+
       const { error: backfillError } = await supabase.rpc(
         "backfill_windshield_requirements_for_model",
         { p_model_boat: mapping.model_boat }

@@ -3023,6 +3023,195 @@ export function buildGelcoatStockPdf(params: {
 }
 
 // ============================================================
+// ARTICOLI SENZA MOVIMENTI (STEP 60)
+//
+// Elenco di tutti gli articoli a catalogo che non hanno mai avuto
+// nemmeno uno scarico registrato (stessa definizione di "senza
+// storico di consumo" della pagina Consumo medio: codice assente da
+// get_item_consumption_summary). Una riga per articolo con la
+// giacenza attuale e, se chi stampa puo' vedere i prezzi, anche il
+// valore fermo in magazzino (giacenza x prezzo) e il totale generale
+// in testata - i "soldi fermi" in articoli che non si muovono mai.
+// ============================================================
+
+export type NoMovementItemPdfRow = {
+  code: string;
+  supplierCode: string | null;
+  description: string;
+  supplierName: string;
+  stock: number;
+  price: number | null; // null quando chi stampa non ha il permesso di vedere i prezzi
+};
+
+export function buildNoMovementItemsPdf(params: {
+  rows: NoMovementItemPdfRow[];
+  totalValue: number | null; // null quando chi stampa non ha il permesso di vedere i prezzi
+  logo: string;
+  generatedDate: string;
+}) {
+  const { rows, totalValue, logo, generatedDate } = params;
+
+  const sorted = [...rows].sort((a, b) =>
+    a.supplierName.localeCompare(b.supplierName, "it") ||
+    a.description.localeCompare(b.description, "it")
+  );
+
+  const showPrices = totalValue !== null;
+
+  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  doc.setProperties({
+    title: "Articoli senza movimenti",
+    subject: "Articoli a catalogo mai scaricati, con relativa giacenza ferma",
+  });
+
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const margin = 14;
+  const tableWidth = pageWidth - margin * 2;
+
+  function formatEuroPdf(value: number) {
+    return new Intl.NumberFormat("it-IT", {
+      style: "currency",
+      currency: "EUR",
+      minimumFractionDigits: 2,
+    }).format(value);
+  }
+
+  function drawPageHeader(subtitle: string) {
+    drawCompanyLogoTopRight(doc, logo);
+
+    doc.setTextColor(0, 0, 0);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.text("ARTICOLI SENZA MOVIMENTI", margin, 16);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9.5);
+    doc.setTextColor(120, 120, 120);
+    doc.text(`${subtitle} · Generato il ${generatedDate}`, margin, 23);
+    doc.setTextColor(0, 0, 0);
+
+    doc.setDrawColor(200);
+    doc.setLineWidth(0.3);
+    doc.line(margin, 27, pageWidth - margin, 27);
+
+    return 34;
+  }
+
+  const countLabel = `${sorted.length} articol${sorted.length === 1 ? "o" : "i"} senza nessuno scarico registrato`;
+  const valueLabel = showPrices
+    ? ` · Valore fermo in magazzino: ${formatEuroPdf(totalValue as number)}`
+    : "";
+
+  let y = drawPageHeader(countLabel + valueLabel);
+
+  const columns = showPrices
+    ? [
+        { key: "supplier", label: "FORNITORE", width: 42 },
+        { key: "code", label: "CODICE", width: 26 },
+        { key: "desc", label: "ARTICOLO", width: tableWidth - 42 - 26 - 18 - 24 - 26 },
+        { key: "stock", label: "GIACENZA", width: 18 },
+        { key: "price", label: "PREZZO", width: 24 },
+        { key: "value", label: "VALORE", width: 26 },
+      ]
+    : [
+        { key: "supplier", label: "FORNITORE", width: 48 },
+        { key: "code", label: "CODICE", width: 28 },
+        { key: "desc", label: "ARTICOLO", width: tableWidth - 48 - 28 - 20 },
+        { key: "stock", label: "GIACENZA", width: 20 },
+      ];
+
+  function drawTableHeader(yPos: number) {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.5);
+    doc.setTextColor(110, 110, 110);
+    let x = margin;
+    columns.forEach((column) => {
+      doc.text(column.label, x, yPos);
+      x += column.width;
+    });
+    doc.setTextColor(0, 0, 0);
+    doc.setDrawColor(225);
+    doc.setLineWidth(0.25);
+    doc.line(margin, yPos + 2.5, pageWidth - margin, yPos + 2.5);
+    return yPos + 8;
+  }
+
+  if (sorted.length === 0) {
+    doc.setFont("helvetica", "italic");
+    doc.setFontSize(10);
+    doc.setTextColor(90, 90, 90);
+    doc.text("Nessun articolo senza movimenti: tutto il catalogo ha almeno uno scarico.", margin, y + 2);
+    doc.setTextColor(0, 0, 0);
+  } else {
+    y = drawTableHeader(y);
+
+    sorted.forEach((row) => {
+      const descWidth = columns[2].width;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      const descLines = doc.splitTextToSize(row.description || "-", descWidth - 4);
+      const rowHeight = Math.max(8, descLines.length * 4 + 3);
+
+      if (y + rowHeight > pageHeight - 16) {
+        doc.addPage();
+        y = drawPageHeader(`Elenco (segue) ·${valueLabel || " " + countLabel}`);
+        y = drawTableHeader(y);
+      }
+
+      let x = margin;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.setTextColor(0, 0, 0);
+
+      const supplierLines = doc.splitTextToSize(row.supplierName || "-", columns[0].width - 4);
+      doc.text(supplierLines, x, y + 4.5);
+      x += columns[0].width;
+
+      doc.text(row.supplierCode || row.code || "-", x, y + 4.5);
+      x += columns[1].width;
+
+      doc.text(descLines, x, y + 4.5);
+      x += columns[2].width;
+
+      doc.text(String(row.stock), x, y + 4.5);
+      x += columns[3].width;
+
+      if (showPrices) {
+        doc.text(row.price ? formatEuroPdf(row.price) : "-", x, y + 4.5);
+        x += columns[4].width;
+
+        doc.setFont("helvetica", "bold");
+        doc.text(row.price ? formatEuroPdf(row.stock * row.price) : "-", x, y + 4.5);
+        doc.setFont("helvetica", "normal");
+      }
+
+      doc.setDrawColor(240);
+      doc.setLineWidth(0.15);
+      doc.line(margin, y + rowHeight, pageWidth - margin, y + rowHeight);
+      doc.setLineWidth(0.2);
+
+      y += rowHeight + 1;
+    });
+  }
+
+  const totalPages = doc.getNumberOfPages();
+  for (let page = 1; page <= totalPages; page++) {
+    doc.setPage(page);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(130, 130, 130);
+    doc.text(`Pagina ${page} di ${totalPages}`, pageWidth - margin, pageHeight - 8, {
+      align: "right",
+    });
+  }
+
+  const filename = `Articoli_senza_movimenti_${generatedDate.replace(/[^0-9a-zA-Z]+/g, "_")}.pdf`;
+
+  return { doc, filename };
+}
+
+// ============================================================
 // Collaudo finale + guida foto battello
 //
 // Due pagine da stampare insieme, collegate al singolo battello

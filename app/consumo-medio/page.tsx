@@ -580,7 +580,8 @@ export default function AverageConsumptionPage() {
         <SummaryCard
           title="Senza movimenti registrati"
           value={String(totals.withoutHistory)}
-          subtitle="Nessuno scarico in archivio"
+          subtitle="Nessuno scarico in archivio · clicca per l'elenco"
+          href="/consumo-medio/senza-movimenti"
         />
 
         <SummaryCard
@@ -1232,20 +1233,26 @@ function SummaryCard({
   title,
   value,
   subtitle,
+  href,
 }: {
   title: string;
   value: string;
   subtitle: string;
+  href?: string;
 }) {
-  return (
-    <div
-      style={{
-        padding: 18,
-        border: "1px solid var(--border-color)",
-        borderRadius: 12,
-        background: "var(--card)",
-      }}
-    >
+  const cardStyle: React.CSSProperties = {
+    display: "block",
+    padding: 18,
+    border: "1px solid var(--border-color)",
+    borderRadius: 12,
+    background: "var(--card)",
+    textDecoration: "none",
+    color: "inherit",
+    cursor: href ? "pointer" : "default",
+  };
+
+  const inner = (
+    <>
       <div
         style={{
           fontSize: 12,
@@ -1278,8 +1285,18 @@ function SummaryCard({
       >
         {subtitle}
       </div>
-    </div>
+    </>
   );
+
+  if (href) {
+    return (
+      <Link href={href} style={cardStyle}>
+        {inner}
+      </Link>
+    );
+  }
+
+  return <div style={cardStyle}>{inner}</div>;
 }
 
 const pillButtonStyle = {

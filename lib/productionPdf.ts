@@ -54,6 +54,10 @@ const BASE_CHECKBOX_RESERVE = 8; // room kept clear at the right of the value fo
 // size a person can still actually read and tick with a pen.
 const MIN_SCALE = 0.3;
 const MAX_SCALE = 1.6; // ceiling so a handful of rows don't blow up into giant text
+// Solo per il programma reparto (buildDepartmentProgramPdf): caselle un
+// po' piu' grandi del "base" condiviso, per essere piu' comode da
+// spuntare a penna in officina.
+const CHECKBOX_SIZE_BONUS = 1.2;
 
 export function buildProductionPdf(rows: ProductionPdfRow[], logo: string, meta: ProductionPdfMeta) {
   if (!rows.length) throw new Error("Nessuna riga selezionata.");
@@ -1153,7 +1157,7 @@ export function buildDepartmentProgramPdf(params: {
     const pad = BASE_PADDING * scale;
     const lh = BASE_LINE_HEIGHT * scale;
     const reserve = BASE_CHECKBOX_RESERVE * scale;
-    const checkboxFloor = BASE_CHECKBOX_SIZE * scale + 2 * scale;
+    const checkboxFloor = BASE_CHECKBOX_SIZE * CHECKBOX_SIZE_BONUS * scale + 2 * scale;
     doc.setFontSize(BASE_FONT_SIZE * scale);
     let total = 0;
     pdfRows.forEach((row) => {
@@ -1193,7 +1197,8 @@ export function buildDepartmentProgramPdf(params: {
   // Stessa formula usata da measureTotalHeight() sopra: se le due divergono,
   // l'auto-fit calcola una scala che poi, in disegno, non basta piu' a
   // stare in una pagina sola (e' quello che succedeva prima di questo fix).
-  const checkboxSize = BASE_CHECKBOX_SIZE * scale;
+  // Caselle piu' comode da spuntare a penna davanti al reparto.
+  const checkboxSize = BASE_CHECKBOX_SIZE * CHECKBOX_SIZE_BONUS * scale;
   const minRowHeight = checkboxSize + 2 * scale;
   const baselineOffset = 3.2 * scale;
   const CHECKBOX_RESERVE = BASE_CHECKBOX_RESERVE * scale;
@@ -1202,21 +1207,46 @@ export function buildDepartmentProgramPdf(params: {
 
   const today = new Intl.DateTimeFormat("it-IT").format(new Date());
 
+  // Oro del marchio (stesso usato nel resto del sito, es. bordi/focus
+  // di gestionale/page.tsx: rgba(199,154,93,...)) - qui pieno, senza
+  // alpha, perche' jsPDF non ha trasparenza nei colori di testo/linea.
+  const GOLD = [199, 154, 93] as const;
+  const NAVY = [24, 39, 59] as const;
+
+  // Eyebrow "PROGRAMMA REPARTO" con lettere distanziate a mano (jsPDF
+  // non ha letter-spacing nativo): piu' curata di un testo compresso.
+  function drawSpacedText(text: string, centerX: number, y: number, spacing: number) {
+    const chars = text.split("");
+    const widths2 = chars.map((c) => doc.getTextWidth(c));
+    const totalWidth = widths2.reduce((a, b) => a + b, 0) + spacing * (chars.length - 1);
+    let x = centerX - totalWidth / 2;
+    chars.forEach((c, i) => {
+      doc.text(c, x, y);
+      x += widths2[i] + spacing;
+    });
+  }
+
   function header() {
     const logoX = (pageWidth - logoWidth) / 2;
     const logoY = 8;
     doc.addImage(companyLogo, "PNG", logoX, logoY, logoWidth, logoHeight, "dept-logo");
 
     let cursorY = logoY + logoHeight + 7;
-    doc.setTextColor(140, 150, 163);
+    doc.setTextColor(...GOLD);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(8);
-    doc.text("PROGRAMMA REPARTO", pageWidth / 2, cursorY, { align: "center" });
+    drawSpacedText("PROGRAMMA REPARTO", pageWidth / 2, cursorY, 0.9);
 
     cursorY += 6.5;
-    doc.setTextColor(24, 39, 59);
+    doc.setTextColor(...NAVY);
     doc.setFontSize(15);
     doc.text(departmentName.toUpperCase(), pageWidth / 2, cursorY, { align: "center" });
+
+    cursorY += 2.6;
+    doc.setDrawColor(...GOLD);
+    doc.setLineWidth(0.6);
+    doc.line(pageWidth / 2 - 13, cursorY, pageWidth / 2 + 13, cursorY);
+    doc.setLineWidth(0.2);
 
     cursorY = logoY + logoHeight + 7;
     doc.setFont("helvetica", "normal");
@@ -1228,43 +1258,61 @@ export function buildDepartmentProgramPdf(params: {
     cursorY += 4.3;
     doc.text(`Battelli in stampa: ${pdfRows.length}`, margin, cursorY);
 
-    doc.setFillColor(244, 246, 248);
+    // Banda di intestazione tabella blu notte con testo bianco, al
+    // posto del grigio piatto di prima: separa subito colpo d'occhio
+    // intestazione e righe dati.
+    doc.setFillColor(...NAVY);
     doc.rect(margin, headerY, tableWidth, bodyStart - headerY, "F");
-    doc.setFontSize(7.6);
+    doc.setFontSize(7.8);
     doc.setFont("helvetica", "bold");
-    doc.setTextColor(65, 77, 93);
-    columns.forEach((col) => {
+    doc.setTextColor(255, 255, 255);
+    columns.forEach((col, colIndex) => {
       const labels = col.title.split("\n");
-      const firstBaseline = headerY + (labels.length === 1 ? 7.2 : 5.4);
-      labels.forEach((line, lineIndex) =>
-        doc.text(line, col.x + padding, firstBaseline + lineIndex * 3.4)
-      );
+      const firstBaseline = headerY + (labels.length === 1 ? 7.4 : 5.6);
+      const centered = colIndex === 0; // "Prog." - colonna stretta e numerica
+      labels.forEach((line, lineIndex) => {
+        if (centered) {
+          doc.text(line, col.x + col.w / 2, firstBaseline + lineIndex * 3.4, { align: "center" });
+        } else {
+          doc.text(line, col.x + padding, firstBaseline + lineIndex * 3.4);
+        }
+      });
     });
 
+    // Rigo oro sottile a chiudere la banda intestazione, prima delle
+    // righe dati.
+    doc.setDrawColor(...GOLD);
+    doc.setLineWidth(0.7);
+    doc.line(margin, bodyStart, margin + tableWidth, bodyStart);
+    doc.setLineWidth(0.2);
+
+    // Griglia verticale solo nel corpo (non nella banda scura): piu'
+    // pulita, senza linee chiare illeggibili sopra lo sfondo blu.
     doc.setDrawColor(160, 169, 182);
     doc.setLineWidth(0.3);
     let gridX = margin;
     widths.forEach((w, index) => {
       gridX += w;
-      if (index < widths.length - 1) doc.line(gridX, headerY, gridX, bottom);
+      if (index < widths.length - 1) doc.line(gridX, bodyStart, gridX, bottom);
     });
-    doc.setDrawColor(130, 140, 155);
+    doc.setDrawColor(...NAVY);
+    doc.setLineWidth(0.4);
     doc.rect(margin, headerY, tableWidth, bottom - headerY);
     doc.setLineWidth(0.2);
   }
 
   function drawCheckbox(x: number, y: number, size: number, checked: boolean) {
-    doc.setDrawColor(90, 100, 115);
-    doc.setLineWidth(0.35);
+    doc.setDrawColor(70, 80, 95);
+    doc.setLineWidth(0.45);
     if (checked) {
       doc.setFillColor(219, 234, 254);
-      doc.roundedRect(x, y, size, size, 0.8, 0.8, "FD");
+      doc.roundedRect(x, y, size, size, 0.9, 0.9, "FD");
       doc.setDrawColor(37, 99, 235);
-      doc.setLineWidth(0.6);
+      doc.setLineWidth(0.7);
       doc.line(x + size * 0.2, y + size * 0.55, x + size * 0.42, y + size * 0.78);
       doc.line(x + size * 0.42, y + size * 0.78, x + size * 0.82, y + size * 0.22);
     } else {
-      doc.roundedRect(x, y, size, size, 0.8, 0.8);
+      doc.roundedRect(x, y, size, size, 0.9, 0.9);
     }
     doc.setLineWidth(0.2);
   }
@@ -1292,7 +1340,7 @@ export function buildDepartmentProgramPdf(params: {
     }
 
     if (rowIndex % 2 === 1) {
-      doc.setFillColor(248, 249, 251);
+      doc.setFillColor(240, 243, 248);
       doc.rect(margin, y, tableWidth, rowH, "F");
     }
 
@@ -1307,9 +1355,16 @@ export function buildDepartmentProgramPdf(params: {
         return;
       }
       doc.setFont("helvetica", index === 1 ? "bold" : "normal");
-      lines[index].forEach((line, lineIndex) =>
-        doc.text(line, col.x + padding, y + padding + baselineOffset + lineIndex * lineHeight)
-      );
+      const centered = index === 0; // "Prog." - stessa resa dell'intestazione
+      lines[index].forEach((line, lineIndex) => {
+        if (centered) {
+          doc.text(line, col.x + col.w / 2, y + padding + baselineOffset + lineIndex * lineHeight, {
+            align: "center",
+          });
+        } else {
+          doc.text(line, col.x + padding, y + padding + baselineOffset + lineIndex * lineHeight);
+        }
+      });
       // Quadratino da spuntare a mano, appoggiato subito dopo il valore
       // ("Bianco [ ]" si legge come un'unica cosa) - stesso trattamento
       // della vecchia stampa generale di produzione.

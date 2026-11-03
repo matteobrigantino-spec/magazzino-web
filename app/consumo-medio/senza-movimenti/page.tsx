@@ -162,6 +162,30 @@ export default function NoMovementItemsPage() {
     return rows.reduce((sum, row) => sum + row.stock * (row.price || 0), 0);
   }, [rows, canViewPrices]);
 
+  const supplierBreakdown = useMemo(() => {
+    const bySupplier = new Map<
+      string,
+      { name: string; count: number; stock: number; value: number }
+    >();
+
+    rows.forEach((row) => {
+      const entry = bySupplier.get(row.supplierName) || {
+        name: row.supplierName,
+        count: 0,
+        stock: 0,
+        value: 0,
+      };
+      entry.count += 1;
+      entry.stock += row.stock;
+      entry.value += row.stock * (row.price || 0);
+      bySupplier.set(row.supplierName, entry);
+    });
+
+    return Array.from(bySupplier.values()).sort((a, b) =>
+      canViewPrices ? b.value - a.value : b.stock - a.stock
+    );
+  }, [rows, canViewPrices]);
+
   function formatNumber(value: number, decimals = 0) {
     return new Intl.NumberFormat("it-IT", {
       minimumFractionDigits: decimals,
@@ -304,6 +328,57 @@ export default function NoMovementItemsPage() {
           />
         )}
       </div>
+
+      {supplierBreakdown.length > 0 && (
+        <div
+          style={{
+            border: "1px solid var(--border-color)",
+            borderRadius: 12,
+            overflow: "hidden",
+            marginBottom: 20,
+          }}
+        >
+          <div
+            style={{
+              padding: "13px 14px",
+              fontSize: 13,
+              fontWeight: 750,
+              borderBottom: "1px solid var(--border-color)",
+              background: "var(--input-bg)",
+            }}
+          >
+            Per fornitore
+          </div>
+
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", minWidth: 560, borderCollapse: "collapse" }}>
+              <thead>
+                <tr>
+                  <th style={headerStyle}>Fornitore</th>
+                  <th style={headerCenterStyle}>Articoli</th>
+                  <th style={headerCenterStyle}>Giacenza</th>
+                  {canViewPrices && <th style={headerRightStyle}>Valore fermo</th>}
+                </tr>
+              </thead>
+
+              <tbody>
+                {supplierBreakdown.map((entry) => (
+                  <tr key={entry.name} style={{ borderTop: "1px solid var(--border-color)" }}>
+                    <td style={cellStyle}>{entry.name}</td>
+                    <td style={centerCellStyle}>{entry.count}</td>
+                    <td style={centerCellStyle}>{formatNumber(entry.stock)}</td>
+                    {canViewPrices && (
+                      <td style={{ ...rightCellStyle, fontWeight: 750 }}>
+                        {formatEuro(entry.value)}
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       <div
         style={{

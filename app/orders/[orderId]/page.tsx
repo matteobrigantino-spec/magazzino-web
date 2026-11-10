@@ -55,6 +55,44 @@ type LineView = {
   requested_delivery_date: string | null;
 };
 
+type UpholsteryCandidate = {
+  requirementId: string;
+  boatId: string;
+  boatMatricola: string;
+  color: string;
+  detailsLogos: string;
+  stitching: string;
+  quilting: string;
+  requestedDeliveryDate: string | null;
+};
+
+type KitAssignmentSlot = {
+  key: string;
+  lineId: string;
+  itemId: string;
+  itemDescription: string;
+  requirement: UpholsteryCandidate;
+  matricola: string;
+  scannerCode: string;
+  unitPrice: string;
+};
+
+type UpholsteryRequirementRow = {
+  id: string;
+  order_item_id: string | null;
+  boat_id: string | null;
+  color: string | null;
+  details_logos: string | null;
+  stitching: string | null;
+  quilting: string | null;
+  production_boats:
+    | {
+        order_number: string | null;
+        requested_delivery_date: string | null;
+      }[]
+    | null;
+};
+
 type Permissions = {
   orders?: boolean;
   create_orders?: boolean;
@@ -121,6 +159,15 @@ export default function OrderDetailPage() {
   const [incomingQty, setIncomingQty] = useState<
     Record<string, number>
   >({});
+
+  const [upholsteryCandidatesByLine, setUpholsteryCandidatesByLine] =
+    useState<Record<string, UpholsteryCandidate[]>>({});
+
+  const [kitAssignmentSlots, setKitAssignmentSlots] = useState<
+    KitAssignmentSlot[]
+  >([]);
+
+  const [assigningKits, setAssigningKits] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -438,10 +485,73 @@ export default function OrderDetailPage() {
       initialIncoming[line.id] = 0;
     });
 
+    /*
+      Richieste tappezzeria di battelli ancora "IN ORDINE" collegate
+      alle righe di questo ordine (kit_id ancora vuoto). Servono per
+      proporre, appena registri l'arrivo, a quale battello assegnare
+      ciascun kit appena arrivato.
+    */
+    const lineIds = orderItems.map((line) => line.id);
+
+    const candidatesByLine: Record<string, UpholsteryCandidate[]> = {};
+
+    if (lineIds.length > 0) {
+      const { data: reqRows } = await supabase
+        .from("production_boat_upholstery")
+        .select(
+          "id,order_item_id,boat_id,color,details_logos,stitching,quilting,production_boats(order_number,requested_delivery_date)"
+        )
+        .in("order_item_id", lineIds)
+        .is("kit_id", null);
+
+      ((reqRows || []) as UpholsteryRequirementRow[]).forEach((row) => {
+        const lineId = String(row.order_item_id || "");
+
+        if (!lineId) return;
+
+        const boat = (row.production_boats && row.production_boats[0]) || {
+          order_number: null,
+          requested_delivery_date: null,
+        };
+
+        const candidate: UpholsteryCandidate = {
+          requirementId: String(row.id),
+          boatId: String(row.boat_id || ""),
+          boatMatricola: String(boat.order_number || "-"),
+          color: String(row.color || ""),
+          detailsLogos: String(row.details_logos || ""),
+          stitching: String(row.stitching || ""),
+          quilting: String(row.quilting || ""),
+          requestedDeliveryDate: boat.requested_delivery_date
+            ? String(boat.requested_delivery_date)
+            : null,
+        };
+
+        const list = candidatesByLine[lineId] || [];
+        list.push(candidate);
+        candidatesByLine[lineId] = list;
+      });
+
+      Object.keys(candidatesByLine).forEach((lineId) => {
+        candidatesByLine[lineId].sort((a, b) => {
+          if (a.requestedDeliveryDate && b.requestedDeliveryDate) {
+            return a.requestedDeliveryDate.localeCompare(
+              b.requestedDeliveryDate
+            );
+          }
+
+          if (a.requestedDeliveryDate) return -1;
+          if (b.requestedDeliveryDate) return 1;
+          return 0;
+        });
+      });
+    }
+
     setOrder(orderData);
     setSupplier(supplierData);
     setLines(lineViews);
     setIncomingQty(initialIncoming);
+    setUpholsteryCandidatesByLine(candidatesByLine);
 
     setLoading(false);
   }
@@ -602,6 +712,25 @@ export default function OrderDetailPage() {
       return;
     }
 
+    /*
+      Quanti pezzi di ogni riga stanno per essere segnati come
+      arrivati con QUESTA chiamata: serve dopo, per proporre
+      l'assegnazione a un battello "IN ORDINE".
+    */
+    const arrivedQtyByLine: Record<string, number> = {};
+
+    if (mode === "partial") {
+      receipts.forEach((receipt) => {
+        arrivedQtyByLine[receipt.line_id] = receipt.qty;
+      });
+    } else {
+      lines.forEach((line) => {
+        if (line.remaining_qty > 0) {
+          arrivedQtyByLine[line.id] = line.remaining_qty;
+        }
+      });
+    }
+
     setSaving(true);
     setMessage("");
     setMessageType("");
@@ -654,6 +783,57 @@ export default function OrderDetailPage() {
     );
 
     /*
+      Per ogni pezzo appena arrivato che corrisponde a un battello
+      ancora "IN ORDINE" (nessun kit assegnato), proponiamo subito
+      di creare il kit fisico e assegnarlo: cosi' passa ad
+      "ASSEGNATA" nello stesso momento in cui segni l'arrivo.
+
+      I pezzi arrivati in piu' rispetto ai battelli in attesa
+      restano semplicemente in giacenza generica, come prima.
+    */
+    let nextMatricola = 1;
+
+    const { data: matricolaData } = await supabase.rpc(
+      "next_upholstery_matricola",
+      { p_supplier_id: order.supplier_id }
+    );
+
+    if (matricolaData !== null && matricolaData !== undefined) {
+      nextMatricola = Number(matricolaData);
+    }
+
+    const newSlots: KitAssignmentSlot[] = [];
+
+    Object.entries(arrivedQtyByLine).forEach(([lineId, qty]) => {
+      const candidates = upholsteryCandidatesByLine[lineId] || [];
+      const line = lines.find((row) => row.id === lineId);
+
+      if (!line) return;
+
+      const slotsForLine = Math.min(qty, candidates.length);
+
+      for (let i = 0; i < slotsForLine; i++) {
+        const requirement = candidates[i];
+
+        newSlots.push({
+          key: lineId + "-" + requirement.requirementId,
+          lineId,
+          itemId: line.item_id,
+          itemDescription: line.description,
+          requirement,
+          matricola: String(nextMatricola),
+          scannerCode: "",
+          unitPrice:
+            line.unit_price > 0 ? String(line.unit_price) : "",
+        });
+
+        nextMatricola += 1;
+      }
+    });
+
+    setKitAssignmentSlots(newSlots);
+
+    /*
       Ricarichiamo tutto dal database.
     */
     await loadData();
@@ -681,6 +861,158 @@ export default function OrderDetailPage() {
     }
 
     setMessageType("success");
+  }
+
+  /*
+    ASSEGNAZIONE KIT TAPPEZZERIA APPENA ARRIVATI
+
+    Per ogni "slot" proposto: crea il kit fisico in giacenza
+    (create_upholstery_stock_kit) e lo assegna subito al battello
+    in attesa (assign_upholstery_kit_to_boat). Le due RPC esistenti
+    si bilanciano da sole sulla giacenza (+1 alla creazione, -1
+    all'assegnazione): l'unico incremento reale resta quello gia'
+    fatto da receive_order_atomic all'arrivo, nessun doppio conteggio.
+  */
+  function updateKitSlot(
+    key: string,
+    field: "matricola" | "scannerCode" | "unitPrice",
+    value: string
+  ) {
+    setKitAssignmentSlots((current) =>
+      current.map((slot) =>
+        slot.key === key ? { ...slot, [field]: value } : slot
+      )
+    );
+  }
+
+  function dismissKitSlot(key: string) {
+    setKitAssignmentSlots((current) =>
+      current.filter((slot) => slot.key !== key)
+    );
+  }
+
+  function dismissAllKitSlots() {
+    setKitAssignmentSlots([]);
+  }
+
+  async function confirmKitAssignments() {
+    if (!order || kitAssignmentSlots.length === 0) return;
+
+    setAssigningKits(true);
+
+    const remaining: KitAssignmentSlot[] = [];
+    let okCount = 0;
+    let firstError = "";
+
+    for (const slot of kitAssignmentSlots) {
+      const matricolaNumber = Number(slot.matricola);
+      const priceNumber = Number(slot.unitPrice);
+
+      if (
+        !Number.isFinite(matricolaNumber) ||
+        matricolaNumber < 1 ||
+        matricolaNumber > 10000
+      ) {
+        remaining.push(slot);
+        if (!firstError) {
+          firstError =
+            "Matricola Kit non valida per il battello " +
+            slot.requirement.boatMatricola +
+            ".";
+        }
+        continue;
+      }
+
+      if (!slot.scannerCode.trim()) {
+        remaining.push(slot);
+        if (!firstError) {
+          firstError =
+            "Codice scanner mancante per il battello " +
+            slot.requirement.boatMatricola +
+            ".";
+        }
+        continue;
+      }
+
+      if (!Number.isFinite(priceNumber) || priceNumber <= 0) {
+        remaining.push(slot);
+        if (!firstError) {
+          firstError =
+            "Prezzo kit mancante per il battello " +
+            slot.requirement.boatMatricola +
+            ".";
+        }
+        continue;
+      }
+
+      const { data: newKitId, error: createError } = await supabase.rpc(
+        "create_upholstery_stock_kit",
+        {
+          p_supplier_id: order.supplier_id,
+          p_item_id: slot.itemId,
+          p_matricola: matricolaNumber,
+          p_scanner_code: slot.scannerCode.trim(),
+          p_unit_price: priceNumber,
+          p_color: slot.requirement.color,
+          p_details_logos: slot.requirement.detailsLogos,
+          p_stitching: slot.requirement.stitching,
+          p_quilting: slot.requirement.quilting,
+          p_note: null,
+        }
+      );
+
+      if (createError || !newKitId) {
+        remaining.push(slot);
+        if (!firstError) {
+          firstError =
+            "Kit per il battello " +
+            slot.requirement.boatMatricola +
+            ": " +
+            (createError?.message || "errore sconosciuto");
+        }
+        continue;
+      }
+
+      const { error: assignError } = await supabase.rpc(
+        "assign_upholstery_kit_to_boat",
+        {
+          p_kit_id: newKitId,
+          p_boat_upholstery_id: slot.requirement.requirementId,
+        }
+      );
+
+      if (assignError) {
+        remaining.push(slot);
+        if (!firstError) {
+          firstError =
+            "Kit creato ma assegnazione al battello " +
+            slot.requirement.boatMatricola +
+            " fallita: " +
+            assignError.message +
+            ". Assegnalo a mano dalla scheda del kit.";
+        }
+        continue;
+      }
+
+      okCount += 1;
+    }
+
+    setKitAssignmentSlots(remaining);
+    setAssigningKits(false);
+
+    if (okCount > 0) {
+      setMessage(
+        firstError
+          ? okCount + " kit assegnati. " + firstError
+          : okCount + " kit creati e assegnati correttamente."
+      );
+      setMessageType(firstError ? "error" : "success");
+    } else if (firstError) {
+      setMessage(firstError);
+      setMessageType("error");
+    }
+
+    await loadData();
   }
 
   /*
@@ -1498,6 +1830,207 @@ export default function OrderDetailPage() {
         </div>
       )}
 
+      {kitAssignmentSlots.length > 0 && (
+        <div
+          style={{
+            marginTop: 22,
+            padding: 20,
+            border: "1px solid rgba(199,154,93,0.45)",
+            borderRadius: 12,
+            background: "rgba(199,154,93,0.08)",
+          }}
+        >
+          <div style={{ fontSize: 18, fontWeight: 850 }}>
+            Kit tappezzeria appena arrivati da assegnare
+          </div>
+
+          <div
+            style={{
+              marginTop: 5,
+              fontSize: 13,
+              opacity: 0.65,
+              maxWidth: 820,
+              lineHeight: 1.5,
+            }}
+          >
+            Questi pezzi risultano arrivati e corrispondono a battelli
+            ancora &quot;IN ORDINE&quot;. Inserisci matricola, codice
+            scanner e prezzo di ciascun kit per segnarlo come consegnato:
+            la richiesta del battello diventerà &quot;ASSEGNATA&quot;.
+            Puoi anche ignorare un pezzo: resta in giacenza generica,
+            assegnabile più tardi dalla scheda Tappezzeria.
+          </div>
+
+          <div
+            style={{
+              marginTop: 16,
+              display: "flex",
+              flexDirection: "column",
+              gap: 12,
+            }}
+          >
+            {kitAssignmentSlots.map((slot) => (
+              <div
+                key={slot.key}
+                style={{
+                  border: "1px solid var(--border-color)",
+                  borderRadius: 10,
+                  padding: 14,
+                  background: "var(--card)",
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: 14,
+                  alignItems: "flex-end",
+                }}
+              >
+                <div style={{ minWidth: 220 }}>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      opacity: 0.55,
+                      fontWeight: 700,
+                    }}
+                  >
+                    BATTELLO
+                  </div>
+
+                  <div style={{ fontWeight: 850, fontSize: 15 }}>
+                    {slot.requirement.boatMatricola}
+                  </div>
+
+                  <div
+                    style={{
+                      fontSize: 12,
+                      opacity: 0.65,
+                      marginTop: 2,
+                    }}
+                  >
+                    {slot.requirement.color} ·{" "}
+                    {slot.requirement.detailsLogos} ·{" "}
+                    {slot.requirement.stitching} ·{" "}
+                    {slot.requirement.quilting}
+                  </div>
+                </div>
+
+                <div>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      opacity: 0.55,
+                      fontWeight: 700,
+                      marginBottom: 4,
+                    }}
+                  >
+                    MATRICOLA KIT
+                  </div>
+
+                  <input
+                    type="number"
+                    min="1"
+                    max="10000"
+                    value={slot.matricola}
+                    disabled={assigningKits}
+                    onChange={(e) =>
+                      updateKitSlot(slot.key, "matricola", e.target.value)
+                    }
+                    style={smallInputStyle}
+                  />
+                </div>
+
+                <div>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      opacity: 0.55,
+                      fontWeight: 700,
+                      marginBottom: 4,
+                    }}
+                  >
+                    CODICE SCANNER
+                  </div>
+
+                  <input
+                    type="text"
+                    value={slot.scannerCode}
+                    disabled={assigningKits}
+                    onChange={(e) =>
+                      updateKitSlot(slot.key, "scannerCode", e.target.value)
+                    }
+                    style={smallInputStyle}
+                  />
+                </div>
+
+                <div>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      opacity: 0.55,
+                      fontWeight: 700,
+                      marginBottom: 4,
+                    }}
+                  >
+                    PREZZO €
+                  </div>
+
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={slot.unitPrice}
+                    disabled={assigningKits}
+                    onChange={(e) =>
+                      updateKitSlot(slot.key, "unitPrice", e.target.value)
+                    }
+                    style={smallInputStyle}
+                  />
+                </div>
+
+                <button
+                  type="button"
+                  disabled={assigningKits}
+                  onClick={() => dismissKitSlot(slot.key)}
+                  style={{
+                    ...secondaryButtonStyle,
+                    padding: "9px 12px",
+                    fontSize: 12,
+                    opacity: assigningKits ? 0.5 : 1,
+                  }}
+                >
+                  Ignora
+                </button>
+              </div>
+            ))}
+          </div>
+
+          <div
+            style={{
+              marginTop: 16,
+              display: "flex",
+              gap: 10,
+              flexWrap: "wrap",
+            }}
+          >
+            <button
+              type="button"
+              disabled={assigningKits}
+              onClick={dismissAllKitSlots}
+              style={secondaryButtonStyle}
+            >
+              Ignora tutti
+            </button>
+
+            <button
+              type="button"
+              disabled={assigningKits}
+              onClick={confirmKitAssignments}
+              style={primaryButtonStyle(assigningKits)}
+            >
+              {assigningKits ? "Salvataggio..." : "Crea e assegna kit"}
+            </button>
+          </div>
+        </div>
+      )}
+
       {!canManageOrders && (
         <div
           style={{
@@ -1867,6 +2400,26 @@ const secondaryButtonStyle = {
 
   textDecoration:
     "none",
+};
+
+const smallInputStyle = {
+  width: 120,
+
+  padding:
+    "8px 9px",
+
+  border:
+    "1px solid var(--border-color)",
+
+  borderRadius: 7,
+
+  background:
+    "var(--input-bg)",
+
+  color:
+    "var(--foreground)",
+
+  fontWeight: 700,
 };
 
 function primaryButtonStyle(

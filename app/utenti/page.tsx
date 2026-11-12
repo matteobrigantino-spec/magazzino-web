@@ -24,6 +24,7 @@ type Permissions = {
   manage_users?: boolean;
   low_stock?: boolean;
   avg_consumption?: boolean;
+  accounting?: boolean;
 
   [key: string]: boolean | undefined;
 };
@@ -53,7 +54,8 @@ type PermissionKey =
   | "settings"
   | "manage_users"
   | "low_stock"
-  | "avg_consumption";
+  | "avg_consumption"
+  | "accounting";
 
 const PERMISSIONS: {
   key: PermissionKey;
@@ -138,6 +140,12 @@ const PERMISSIONS: {
     description:
       "Può vedere il report con la media di consumo mensile di ogni articolo.",
   },
+  {
+    key: "accounting",
+    title: "Contabilità",
+    description:
+      "Può vedere le fatture di tutti i fornitori e lo stato dei plafond/dichiarazioni d'intento.",
+  },
 ];
 
 function createEmptyPermissions(): Permissions {
@@ -155,6 +163,7 @@ function createEmptyPermissions(): Permissions {
     manage_users: false,
     low_stock: false,
     avg_consumption: false,
+    accounting: false,
   };
 }
 
@@ -188,6 +197,8 @@ function normalizePermissions(
       value?.low_stock !== false,
     avg_consumption:
       value?.avg_consumption !== false,
+    accounting:
+      value?.accounting === true,
   };
 }
 

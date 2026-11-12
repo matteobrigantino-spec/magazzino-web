@@ -53,6 +53,7 @@ type Permissions = {
   settings?: boolean;
   manage_users?: boolean;
   avg_consumption?: boolean;
+  accounting?: boolean;
   [key: string]: boolean | undefined;
 };
 
@@ -69,6 +70,7 @@ const FULL_PERMISSIONS: Permissions = {
   settings: true,
   manage_users: true,
   avg_consumption: true,
+  accounting: true,
 };
 
 export default function TopBar() {
@@ -265,6 +267,10 @@ export default function TopBar() {
 
   const canAvgConsumption =
     permissions.avg_consumption ===
+    true;
+
+  const canAccounting =
+    permissions.accounting ===
     true;
 
   const showProductionResult = Boolean(search.trim()) &&
@@ -1075,6 +1081,29 @@ export default function TopBar() {
 
             <span>
               Codici da inserire
+            </span>
+          </Link>
+
+          )}
+
+          {/* CONTABILITA' */}
+
+          {canAccounting && (
+          <Link
+            href="/contabilita"
+            prefetch={false}
+            className={`topbar-v2-pill ${
+              pathname.startsWith(
+                "/contabilita"
+              )
+                ? "active"
+                : ""
+            }`}
+          >
+            <AccountingIcon />
+
+            <span>
+              Contabilità
             </span>
           </Link>
 
@@ -2329,6 +2358,50 @@ function BarcodeIcon() {
         d="M21 5V19"
         stroke="currentColor"
         strokeWidth="1.5"
+      />
+    </svg>
+  );
+}
+
+function AccountingIcon() {
+  return (
+    <svg
+      width="15"
+      height="15"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+    >
+      <rect
+        x="4"
+        y="4"
+        width="16"
+        height="16"
+        rx="2"
+        stroke="currentColor"
+        strokeWidth="1.8"
+      />
+
+      <path
+        d="M8 9H16"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+
+      <path
+        d="M8 13H13"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+
+      <circle
+        cx="15.5"
+        cy="16"
+        r="1.6"
+        stroke="currentColor"
+        strokeWidth="1.4"
       />
     </svg>
   );

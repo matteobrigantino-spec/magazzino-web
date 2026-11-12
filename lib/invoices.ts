@@ -187,6 +187,133 @@ export async function loadSupplierInvoiceData(
   return { invoices };
 }
 
+export type AllInvoice = Invoice & {
+  supplier_id: string;
+  supplier_name: string;
+};
+
+type InvoiceSupplierRow = {
+  id: string;
+  name: string;
+};
+
+type AllInvoiceRow = {
+  id: string;
+  supplier_id: string;
+  invoice_number: string | null;
+  invoice_date: string;
+  archive_code: string | null;
+  amount: number | string | null;
+  note: string | null;
+};
+
+/*
+  Tutte le fatture di TUTTI i fornitori, per la pagina Contabilità.
+  Stessa logica di loadSupplierInvoiceData ma senza filtrare per
+  fornitore, con in più il nome del fornitore su ogni fattura.
+*/
+export async function loadAllInvoices(): Promise<AllInvoice[]> {
+  const { data: supplierRows } = await supabase
+    .from("suppliers")
+    .select("id,name");
+
+  const supplierNameById = new Map<string, string>();
+
+  ((supplierRows || []) as InvoiceSupplierRow[]).forEach((row) => {
+    supplierNameById.set(String(row.id), String(row.name || ""));
+  });
+
+  const { data: orderRows } = await supabase
+    .from("orders")
+    .select("id,order_number");
+
+  const orderNumberById = new Map<string, string>();
+
+  ((orderRows || []) as InvoiceOrderRow[]).forEach((row) => {
+    orderNumberById.set(
+      String(row.id),
+      row.order_number != null ? String(row.order_number) : ""
+    );
+  });
+
+  const { data: orderItemRows } = await supabase
+    .from("order_items")
+    .select("id,order_id,item_id,qty,received_qty");
+
+  const { data: articleRows } = await supabase
+    .from("items")
+    .select("id,code,supplier_code,description");
+
+  const articleById = new Map<string, InvoiceArticleRow>();
+
+  ((articleRows || []) as InvoiceArticleRow[]).forEach((row) => {
+    articleById.set(String(row.id), row);
+  });
+
+  const orderItemInfoById = new Map<string, InvoiceLineItem>();
+
+  ((orderItemRows || []) as InvoiceOrderItemRow[]).forEach((row) => {
+    const article = articleById.get(String(row.item_id));
+
+    orderItemInfoById.set(String(row.id), {
+      id: String(row.id),
+      order_id: String(row.order_id),
+      order_number: orderNumberById.get(String(row.order_id)) || null,
+      code: article?.code ? String(article.code) : "-",
+      supplier_code: article?.supplier_code
+        ? String(article.supplier_code)
+        : null,
+      description: article?.description
+        ? String(article.description)
+        : "Articolo non trovato",
+      qty: Number(row.qty || 0),
+      received_qty: Number(row.received_qty || 0),
+    });
+  });
+
+  const { data: invoiceRows, error: invoiceError } = await supabase
+    .from("order_invoices")
+    .select(
+      "id,supplier_id,invoice_number,invoice_date,archive_code,amount,note"
+    )
+    .order("invoice_date", { ascending: false });
+
+  if (invoiceError || !invoiceRows || invoiceRows.length === 0) {
+    return [];
+  }
+
+  const invoiceIds = (invoiceRows as AllInvoiceRow[]).map((row) =>
+    String(row.id)
+  );
+
+  const { data: linkRows } = await supabase
+    .from("order_invoice_items")
+    .select("invoice_id,order_item_id")
+    .in("invoice_id", invoiceIds);
+
+  const itemsByInvoice = new Map<string, string[]>();
+
+  ((linkRows || []) as InvoiceItemLinkRow[]).forEach((row) => {
+    const list = itemsByInvoice.get(String(row.invoice_id)) || [];
+    list.push(String(row.order_item_id));
+    itemsByInvoice.set(String(row.invoice_id), list);
+  });
+
+  return (invoiceRows as AllInvoiceRow[]).map((row) => ({
+    id: String(row.id),
+    supplier_id: String(row.supplier_id),
+    supplier_name: supplierNameById.get(String(row.supplier_id)) || "",
+    invoice_number: String(row.invoice_number || ""),
+    invoice_date: String(row.invoice_date || ""),
+    archive_code: row.archive_code ? String(row.archive_code) : null,
+    amount: row.amount !== null ? Number(row.amount) : null,
+    note: row.note ? String(row.note) : null,
+    items: (itemsByInvoice.get(String(row.id)) || [])
+      .map((orderItemId) => orderItemInfoById.get(orderItemId))
+      .filter((info): info is InvoiceLineItem => Boolean(info)),
+  }));
+}
+
 export type InvoiceDraftInput = {
   invoice_number: string;
   invoice_date: string;

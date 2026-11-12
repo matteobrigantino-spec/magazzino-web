@@ -132,3 +132,43 @@ export async function computePlafondStatus(
     periodEnd,
   };
 }
+export type SupplierPlafondStatus = {
+  supplier_id: string;
+  supplier_name: string;
+  status: PlafondStatus;
+};
+
+type PlafondSupplierRow = {
+  id: string;
+  name: string;
+};
+
+/*
+  Stato plafond di TUTTI i fornitori che richiedono la dichiarazione
+  d'intento, per la pagina Contabilità.
+*/
+export async function loadAllPlafondStatuses(): Promise<
+  SupplierPlafondStatus[]
+> {
+  const { data, error } = await supabase
+    .from("suppliers")
+    .select("id,name")
+    .eq("requires_intent_declaration", true)
+    .order("name", { ascending: true });
+
+  if (error || !data) {
+    return [];
+  }
+
+  const suppliers = data as PlafondSupplierRow[];
+
+  const results = await Promise.all(
+    suppliers.map(async (supplier) => ({
+      supplier_id: String(supplier.id),
+      supplier_name: String(supplier.name || ""),
+      status: await computePlafondStatus(String(supplier.id)),
+    }))
+  );
+
+  return results;
+}

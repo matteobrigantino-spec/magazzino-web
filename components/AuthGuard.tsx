@@ -40,7 +40,8 @@ type PermissionKey =
   | "reminders"
   | "settings"
   | "manage_users"
-  | "low_stock";
+  | "low_stock"
+  | "accounting";
 
 type Permissions = Partial<
   Record<PermissionKey, boolean>
@@ -77,6 +78,8 @@ const PERMISSION_LABELS: Record<
   settings: "Impostazioni",
   manage_users:
     "Gestione utenti",
+  accounting:
+    "Contabilità",
   low_stock:
     "Articoli da riordinare",
 };
@@ -321,6 +324,23 @@ function getRouteAccess(
 
   if (
     pathname.startsWith(
+      "/contabilita"
+    )
+  ) {
+    return {
+      allowed:
+        hasPermission(
+          permissions,
+          role,
+          "accounting"
+        ),
+      permission:
+        "accounting",
+    };
+  }
+
+  if (
+    pathname.startsWith(
       "/suppliers"
     ) ||
     pathname.startsWith(
@@ -417,6 +437,11 @@ function getFirstAllowedPath(
       permission:
         "manage_users",
       path: "/utenti",
+    },
+    {
+      permission:
+        "accounting",
+      path: "/contabilita",
     },
   ];
 

@@ -3212,6 +3212,204 @@ export function buildNoMovementItemsPdf(params: {
 }
 
 // ============================================================
+// AUMENTO PREZZI — DETTAGLIO ARTICOLI (STEP 61)
+//
+// Elenco degli articoli considerati nel calcolo "Aumento prezzi
+// complessivo" di Consumo medio: stessa identica logica di calcolo
+// del prezzo di partenza (primo prezzo di storico diverso da 0,
+// altrimenti il nuovo prezzo di quella primissima riga), cosi' il
+// totale/percentuale di testata coincide sempre con quello mostrato
+// a schermo. Una riga per articolo, ordinate per variazione in euro
+// decrescente (i rincari piu' pesanti in alto).
+// ============================================================
+
+export type PriceChangePdfRow = {
+  code: string;
+  supplierCode: string | null;
+  description: string;
+  supplierName: string;
+  baselinePrice: number;
+  currentPrice: number;
+};
+
+export function buildPriceChangesPdf(params: {
+  rows: PriceChangePdfRow[];
+  pct: number;
+  totalOld: number;
+  totalNew: number;
+  logo: string;
+  generatedDate: string;
+}) {
+  const { rows, pct, totalOld, totalNew, logo, generatedDate } = params;
+
+  const sorted = [...rows].sort(
+    (a, b) =>
+      b.currentPrice - b.baselinePrice - (a.currentPrice - a.baselinePrice)
+  );
+
+  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  doc.setProperties({
+    title: "Aumento prezzi - dettaglio articoli",
+    subject: "Articoli con almeno una variazione di prezzo registrata",
+  });
+
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const margin = 14;
+  const tableWidth = pageWidth - margin * 2;
+
+  function formatEuroPdf(value: number) {
+    return new Intl.NumberFormat("it-IT", {
+      style: "currency",
+      currency: "EUR",
+      minimumFractionDigits: 2,
+    }).format(value);
+  }
+
+  function drawPageHeader(subtitle: string) {
+    drawCompanyLogoTopRight(doc, logo);
+
+    doc.setTextColor(0, 0, 0);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.text("AUMENTO PREZZI — DETTAGLIO ARTICOLI", margin, 16);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9.5);
+    doc.setTextColor(120, 120, 120);
+    doc.text(`${subtitle} · Generato il ${generatedDate}`, margin, 23);
+    doc.setTextColor(0, 0, 0);
+
+    doc.setDrawColor(200);
+    doc.setLineWidth(0.3);
+    doc.line(margin, 27, pageWidth - margin, 27);
+
+    return 34;
+  }
+
+  const headerLabel = `${pct > 0 ? "+" : ""}${pct.toFixed(1)}% complessivo (da ${formatEuroPdf(
+    totalOld
+  )} a ${formatEuroPdf(totalNew)}) su ${sorted.length} articol${
+    sorted.length === 1 ? "o" : "i"
+  }`;
+
+  let y = drawPageHeader(headerLabel);
+
+  const columns = [
+    { key: "supplier", label: "FORNITORE", width: 34 },
+    { key: "code", label: "CODICE", width: 22 },
+    {
+      key: "desc",
+      label: "ARTICOLO",
+      width: tableWidth - 34 - 22 - 24 - 24 - 22 - 18,
+    },
+    { key: "old", label: "PREZZO INIZIALE", width: 24 },
+    { key: "new", label: "PREZZO ATTUALE", width: 24 },
+    { key: "deltaE", label: "VAR. €", width: 22 },
+    { key: "deltaP", label: "VAR. %", width: 18 },
+  ];
+
+  function drawTableHeader(yPos: number) {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.5);
+    doc.setTextColor(110, 110, 110);
+    let x = margin;
+    columns.forEach((column) => {
+      doc.text(column.label, x, yPos);
+      x += column.width;
+    });
+    doc.setTextColor(0, 0, 0);
+    doc.setDrawColor(225);
+    doc.setLineWidth(0.25);
+    doc.line(margin, yPos + 2.5, pageWidth - margin, yPos + 2.5);
+    return yPos + 8;
+  }
+
+  if (sorted.length === 0) {
+    doc.setFont("helvetica", "italic");
+    doc.setFontSize(10);
+    doc.setTextColor(90, 90, 90);
+    doc.text("Nessun articolo con storico prezzi.", margin, y + 2);
+    doc.setTextColor(0, 0, 0);
+  } else {
+    y = drawTableHeader(y);
+
+    sorted.forEach((row) => {
+      const descWidth = columns[2].width;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      const descLines = doc.splitTextToSize(row.description || "-", descWidth - 4);
+      const rowHeight = Math.max(8, descLines.length * 4 + 3);
+
+      if (y + rowHeight > pageHeight - 16) {
+        doc.addPage();
+        y = drawPageHeader("Elenco (segue)");
+        y = drawTableHeader(y);
+      }
+
+      const deltaEuro = row.currentPrice - row.baselinePrice;
+      const deltaPct =
+        row.baselinePrice > 0 ? (deltaEuro / row.baselinePrice) * 100 : 0;
+      const increase = deltaEuro > 0;
+      const decrease = deltaEuro < 0;
+
+      let x = margin;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.setTextColor(0, 0, 0);
+
+      const supplierLines = doc.splitTextToSize(row.supplierName || "-", columns[0].width - 4);
+      doc.text(supplierLines, x, y + 4.5);
+      x += columns[0].width;
+
+      doc.text(row.supplierCode || row.code || "-", x, y + 4.5);
+      x += columns[1].width;
+
+      doc.text(descLines, x, y + 4.5);
+      x += columns[2].width;
+
+      doc.text(formatEuroPdf(row.baselinePrice), x, y + 4.5);
+      x += columns[3].width;
+
+      doc.text(formatEuroPdf(row.currentPrice), x, y + 4.5);
+      x += columns[4].width;
+
+      doc.setFont("helvetica", "bold");
+      if (increase) doc.setTextColor(239, 68, 68);
+      if (decrease) doc.setTextColor(34, 197, 94);
+      doc.text(`${deltaEuro > 0 ? "+" : ""}${formatEuroPdf(deltaEuro)}`, x, y + 4.5);
+      x += columns[5].width;
+
+      doc.text(`${deltaPct > 0 ? "+" : ""}${deltaPct.toFixed(1)}%`, x, y + 4.5);
+      doc.setTextColor(0, 0, 0);
+      doc.setFont("helvetica", "normal");
+
+      doc.setDrawColor(240);
+      doc.setLineWidth(0.15);
+      doc.line(margin, y + rowHeight, pageWidth - margin, y + rowHeight);
+      doc.setLineWidth(0.2);
+
+      y += rowHeight + 1;
+    });
+  }
+
+  const totalPages = doc.getNumberOfPages();
+  for (let page = 1; page <= totalPages; page++) {
+    doc.setPage(page);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(130, 130, 130);
+    doc.text(`Pagina ${page} di ${totalPages}`, pageWidth - margin, pageHeight - 8, {
+      align: "right",
+    });
+  }
+
+  const filename = `Aumento_prezzi_dettaglio_${generatedDate.replace(/[^0-9a-zA-Z]+/g, "_")}.pdf`;
+
+  return { doc, filename };
+}
+
+// ============================================================
 // Collaudo finale + guida foto battello
 //
 // Due pagine da stampare insieme, collegate al singolo battello

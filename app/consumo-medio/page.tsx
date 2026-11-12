@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { supabase } from "../../lib/supabaseClient";
+import { fetchCompanyLogo } from "../../lib/pdfLogo";
+import { buildPriceChangesPdf, PriceChangePdfRow } from "../../lib/productionPdf";
 
 type ItemRow = {
   id: string;
@@ -102,6 +104,9 @@ export default function AverageConsumptionPage() {
   const [priceIncreaseError, setPriceIncreaseError] = useState("");
   const [priceIncreaseResult, setPriceIncreaseResult] =
     useState<PriceIncreaseResult | null>(null);
+  const [priceChangeRows, setPriceChangeRows] = useState<PriceChangePdfRow[]>([]);
+  const [priceChangePdfBusy, setPriceChangePdfBusy] = useState(false);
+  const [priceChangePdfError, setPriceChangePdfError] = useState("");
 
   useEffect(() => {
     loadReport();
@@ -415,12 +420,15 @@ export default function AverageConsumptionPage() {
     setPriceIncreaseLoading(true);
     setPriceIncreaseError("");
 
-    const [historyResult, itemsResult] = await Promise.all([
+    const [historyResult, itemsResult, priceSuppliersResult] = await Promise.all([
       supabase
         .from("item_price_history")
         .select("item_id,old_price,new_price,changed_at")
         .order("changed_at", { ascending: true }),
-      supabase.from("items").select("id,price"),
+      supabase
+        .from("items")
+        .select("id,price,code,supplier_code,description,supplier_id"),
+      supabase.from("suppliers").select("id,name"),
     ]);
 
     if (historyResult.error) {
@@ -439,19 +447,56 @@ export default function AverageConsumptionPage() {
       return;
     }
 
+    if (priceSuppliersResult.error) {
+      setPriceIncreaseError(
+        "Errore caricamento fornitori: " + priceSuppliersResult.error.message
+      );
+      setPriceIncreaseLoading(false);
+      return;
+    }
+
     const historyRows = (historyResult.data || []) as {
       item_id: string;
       old_price: number | string | null;
       new_price: number | string | null;
     }[];
 
-    const currentPriceById = new Map<string, number>();
+    const priceItemRows = (itemsResult.data || []) as {
+      id: string;
+      price: number | null;
+      code: string | null;
+      supplier_code: string | null;
+      description: string | null;
+      supplier_id: string | null;
+    }[];
 
-    (
-      (itemsResult.data || []) as { id: string; price: number | null }[]
-    ).forEach((item) => {
-      currentPriceById.set(String(item.id), Number(item.price || 0));
+    const currentPriceById = new Map<string, number>();
+    const priceItemMetaById = new Map<
+      string,
+      {
+        code: string;
+        supplierCode: string | null;
+        description: string;
+        supplierId: string | null;
+      }
+    >();
+
+    priceItemRows.forEach((item) => {
+      const itemId = String(item.id);
+      currentPriceById.set(itemId, Number(item.price || 0));
+      priceItemMetaById.set(itemId, {
+        code: item.code || "",
+        supplierCode: item.supplier_code || null,
+        description: item.description || "Senza descrizione",
+        supplierId: item.supplier_id || null,
+      });
     });
+
+    const priceSupplierNameById = new Map(
+      ((priceSuppliersResult.data || []) as { id: string; name: string }[]).map(
+        (supplier) => [String(supplier.id), supplier.name]
+      )
+    );
 
     const baselineByItem = new Map<string, number>();
 
@@ -471,6 +516,7 @@ export default function AverageConsumptionPage() {
     let totalOld = 0;
     let totalNew = 0;
     let itemsConsidered = 0;
+    const changeRows: PriceChangePdfRow[] = [];
 
     baselineByItem.forEach((baseline, itemId) => {
       if (baseline <= 0) return;
@@ -481,6 +527,18 @@ export default function AverageConsumptionPage() {
       totalOld += baseline;
       totalNew += currentPrice;
       itemsConsidered += 1;
+
+      const meta = priceItemMetaById.get(itemId);
+      changeRows.push({
+        code: meta?.code || "",
+        supplierCode: meta?.supplierCode || null,
+        description: meta?.description || "Senza descrizione",
+        supplierName: meta?.supplierId
+          ? priceSupplierNameById.get(meta.supplierId) || "Fornitore sconosciuto"
+          : "Fornitore sconosciuto",
+        baselinePrice: baseline,
+        currentPrice,
+      });
     });
 
     const pct = totalOld > 0 ? ((totalNew - totalOld) / totalOld) * 100 : 0;
@@ -492,9 +550,43 @@ export default function AverageConsumptionPage() {
       itemsConsidered,
       itemsWithoutHistory: currentPriceById.size - baselineByItem.size,
     });
+    setPriceChangeRows(changeRows);
 
     setPriceIncreaseLoaded(true);
     setPriceIncreaseLoading(false);
+  }
+
+  async function downloadPriceChangesPdf() {
+    if (!priceIncreaseResult) return;
+
+    setPriceChangePdfError("");
+    setPriceChangePdfBusy(true);
+
+    try {
+      const logo = await fetchCompanyLogo();
+      if (!logo) {
+        throw new Error(
+          "Carica il logo aziendale prima di scaricare il PDF (Produzione -> Configurazioni)."
+        );
+      }
+
+      const { doc, filename } = buildPriceChangesPdf({
+        rows: priceChangeRows,
+        pct: priceIncreaseResult.pct,
+        totalOld: priceIncreaseResult.totalOld,
+        totalNew: priceIncreaseResult.totalNew,
+        logo,
+        generatedDate: new Intl.DateTimeFormat("it-IT").format(new Date()),
+      });
+
+      doc.save(filename);
+    } catch (err) {
+      setPriceChangePdfError(
+        err instanceof Error ? err.message : "Errore durante la creazione del PDF."
+      );
+    } finally {
+      setPriceChangePdfBusy(false);
+    }
   }
 
   return (
@@ -715,6 +807,41 @@ export default function AverageConsumptionPage() {
                       nel calcolo. Le variazioni che partono da un
                       prezzo a 0 (prima registrazione) non sono
                       conteggiate come aumento.
+                    </div>
+
+                    <div style={{ marginTop: 14 }}>
+                      <button
+                        type="button"
+                        onClick={downloadPriceChangesPdf}
+                        disabled={priceChangePdfBusy || priceChangeRows.length === 0}
+                        style={{
+                          padding: "9px 14px",
+                          borderRadius: 8,
+                          border: "1px solid var(--border-color)",
+                          background: "var(--input-bg)",
+                          color: "var(--foreground)",
+                          fontSize: 13,
+                          fontWeight: 750,
+                          cursor:
+                            priceChangePdfBusy || priceChangeRows.length === 0
+                              ? "default"
+                              : "pointer",
+                          opacity:
+                            priceChangePdfBusy || priceChangeRows.length === 0
+                              ? 0.6
+                              : 1,
+                        }}
+                      >
+                        {priceChangePdfBusy ? "Genero il PDF..." : "Genera PDF"}
+                      </button>
+
+                      {priceChangePdfError && (
+                        <div
+                          style={{ marginTop: 8, fontSize: 13, color: "#ef4444" }}
+                        >
+                          {priceChangePdfError}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}

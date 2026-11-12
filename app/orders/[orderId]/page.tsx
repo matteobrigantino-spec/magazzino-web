@@ -878,6 +878,34 @@ export default function OrderDetailPage() {
     );
   }, [lines, canViewPrices]);
 
+  const deliveredValue = useMemo(() => {
+    if (!canViewPrices) {
+      return 0;
+    }
+
+    return lines.reduce(
+      (sum, line) =>
+        sum +
+        line.received_qty *
+          line.unit_price,
+      0
+    );
+  }, [lines, canViewPrices]);
+
+  const remainingValue = useMemo(() => {
+    if (!canViewPrices) {
+      return 0;
+    }
+
+    return lines.reduce(
+      (sum, line) =>
+        sum +
+        line.remaining_qty *
+          line.unit_price,
+      0
+    );
+  }, [lines, canViewPrices]);
+
   /*
     Solo le fatture che coprono almeno un DDT di QUESTO ordine
     (una fattura puo' comunque coprirne altri di ordini diversi:
@@ -1799,6 +1827,26 @@ export default function OrderDetailPage() {
             subtitle="Valore originale"
           />
         )}
+
+        {canViewPrices && (
+          <SummaryCard
+            title="Valore consegnato"
+            value={formatEuro(
+              deliveredValue
+            )}
+            subtitle="Merce già ricevuta"
+          />
+        )}
+
+        {canViewPrices && (
+          <SummaryCard
+            title="Valore da consegnare"
+            value={formatEuro(
+              remainingValue
+            )}
+            subtitle="Merce ancora in arrivo"
+          />
+        )}
       </div>
 
       {/* TABELLA */}
@@ -1874,6 +1922,12 @@ export default function OrderDetailPage() {
                   Giacenza
                 </TableHead>
 
+                {canViewPrices && (
+                  <TableHead align="right">
+                    Prezzo
+                  </TableHead>
+                )}
+
                 {canManageOrders && (
                   <TableHead align="right">
                     Arrivato ora
@@ -1942,6 +1996,14 @@ export default function OrderDetailPage() {
                     <TableCell align="right">
                       {line.stock}
                     </TableCell>
+
+                    {canViewPrices && (
+                      <TableCell align="right">
+                        {formatEuro(
+                          line.unit_price
+                        )}
+                      </TableCell>
+                    )}
 
                     {canManageOrders && (
                       <TableCell align="right">

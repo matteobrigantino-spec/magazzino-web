@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "../../../lib/supabaseClient";
 
@@ -75,6 +75,37 @@ type KitAssignmentSlot = {
   matricola: string;
   scannerCode: string;
   unitPrice: string;
+};
+
+type Shipment = {
+  id: string;
+  ddt_number: string;
+  ddt_date: string;
+  archive_code: string | null;
+  note: string | null;
+  invoiced: boolean;
+};
+
+type ShipmentRow = {
+  id: string;
+  ddt_number: string | null;
+  ddt_date: string;
+  archive_code: string | null;
+  note: string | null;
+};
+
+type ShipmentDraft = {
+  ddt_number: string;
+  ddt_date: string;
+  archive_code: string;
+  note: string;
+};
+
+const EMPTY_SHIPMENT_DRAFT: ShipmentDraft = {
+  ddt_number: "",
+  ddt_date: "",
+  archive_code: "",
+  note: "",
 };
 
 type UpholsteryRequirementRow = {
@@ -169,6 +200,15 @@ export default function OrderDetailPage() {
 
   const [assigningKits, setAssigningKits] = useState(false);
 
+  const [shipments, setShipments] = useState<Shipment[]>([]);
+  const [shipmentsLoading, setShipmentsLoading] = useState(false);
+  const [showAddShipment, setShowAddShipment] = useState(false);
+  const [shipmentDraft, setShipmentDraft] = useState<ShipmentDraft>(
+    EMPTY_SHIPMENT_DRAFT
+  );
+  const [shipmentSaving, setShipmentSaving] = useState(false);
+  const [shipmentMessage, setShipmentMessage] = useState("");
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -215,6 +255,122 @@ export default function OrderDetailPage() {
       allowManage
     );
   }, [orderId]);
+
+  /*
+    DDT (STEP 61)
+
+    Indipendente dal resto del caricamento ordine: una riga per
+    ogni DDT ricevuto per questo ordine (numero, data, codice di
+    archiviazione). "invoiced" segna se quel DDT è già stato
+    collegato a una fattura (gestite dalla pagina fornitore, dove
+    una fattura può coprire più DDT insieme).
+  */
+  const loadShipments = useCallback(async () => {
+    setShipmentsLoading(true);
+
+    const { data: rows, error } = await supabase
+      .from("order_shipments")
+      .select("id,ddt_number,ddt_date,archive_code,note")
+      .eq("order_id", orderId)
+      .order("ddt_date", { ascending: false });
+
+    if (error) {
+      setShipmentsLoading(false);
+      return;
+    }
+
+    const shipmentRows = (rows || []) as ShipmentRow[];
+    const ids = shipmentRows.map((row) => String(row.id));
+
+    let invoicedIds = new Set<string>();
+
+    if (ids.length > 0) {
+      const { data: linkRows } = await supabase
+        .from("order_invoice_shipments")
+        .select("shipment_id")
+        .in("shipment_id", ids);
+
+      invoicedIds = new Set(
+        ((linkRows || []) as { shipment_id: string }[]).map((row) =>
+          String(row.shipment_id)
+        )
+      );
+    }
+
+    setShipments(
+      shipmentRows.map((row) => ({
+        id: String(row.id),
+        ddt_number: String(row.ddt_number || ""),
+        ddt_date: String(row.ddt_date || ""),
+        archive_code: row.archive_code ? String(row.archive_code) : null,
+        note: row.note ? String(row.note) : null,
+        invoiced: invoicedIds.has(String(row.id)),
+      }))
+    );
+
+    setShipmentsLoading(false);
+  }, [orderId]);
+
+  useEffect(() => {
+    loadShipments();
+  }, [loadShipments]);
+
+  async function addShipment() {
+    const number = shipmentDraft.ddt_number.trim();
+    const date = shipmentDraft.ddt_date.trim();
+
+    if (!number) {
+      setShipmentMessage("Inserisci il numero del DDT.");
+      return;
+    }
+
+    if (!date) {
+      setShipmentMessage("Inserisci la data del DDT.");
+      return;
+    }
+
+    setShipmentSaving(true);
+    setShipmentMessage("");
+
+    const { error } = await supabase.from("order_shipments").insert({
+      order_id: orderId,
+      ddt_number: number,
+      ddt_date: date,
+      archive_code: shipmentDraft.archive_code.trim() || null,
+      note: shipmentDraft.note.trim() || null,
+    });
+
+    if (error) {
+      setShipmentMessage("Errore: " + error.message);
+      setShipmentSaving(false);
+      return;
+    }
+
+    setShipmentDraft(EMPTY_SHIPMENT_DRAFT);
+    setShowAddShipment(false);
+    setShipmentSaving(false);
+    await loadShipments();
+  }
+
+  async function deleteShipment(id: string) {
+    const confirmed = confirm(
+      "Eliminare questo DDT? L'operazione non si può annullare."
+    );
+
+    if (!confirmed) return;
+
+    const { error } = await supabase
+      .from("order_shipments")
+      .delete()
+      .eq("id", id);
+
+    if (error) {
+      alert("Errore: " + error.message);
+      return;
+    }
+
+    await loadShipments();
+  }
 
   async function loadData(
     allowPrices = canViewPrices,
@@ -2028,6 +2184,186 @@ export default function OrderDetailPage() {
               {assigningKits ? "Salvataggio..." : "Crea e assegna kit"}
             </button>
           </div>
+        </div>
+      )}
+
+      {canManageOrders && (
+        <div
+          style={{
+            marginTop: 22,
+            padding: 20,
+            border: "1px solid var(--border-color)",
+            borderRadius: 12,
+            background: "var(--card)",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: 16,
+              flexWrap: "wrap",
+            }}
+          >
+            <div style={{ fontSize: 18, fontWeight: 850 }}>DDT</div>
+
+            <button
+              type="button"
+              onClick={() => setShowAddShipment((prev) => !prev)}
+              style={secondaryButtonStyle}
+            >
+              {showAddShipment ? "Chiudi" : "+ Aggiungi DDT"}
+            </button>
+          </div>
+
+          {showAddShipment && (
+            <div
+              style={{
+                marginTop: 14,
+                padding: 14,
+                borderRadius: 10,
+                background: "var(--input-bg)",
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 10,
+                alignItems: "flex-end",
+              }}
+            >
+              <div>
+                <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 4 }}>
+                  Numero DDT
+                </div>
+                <input
+                  value={shipmentDraft.ddt_number}
+                  onChange={(e) =>
+                    setShipmentDraft((prev) => ({
+                      ...prev,
+                      ddt_number: e.target.value,
+                    }))
+                  }
+                  style={smallInputStyle}
+                />
+              </div>
+
+              <div>
+                <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 4 }}>
+                  Data DDT
+                </div>
+                <input
+                  type="date"
+                  value={shipmentDraft.ddt_date}
+                  onChange={(e) =>
+                    setShipmentDraft((prev) => ({
+                      ...prev,
+                      ddt_date: e.target.value,
+                    }))
+                  }
+                  style={smallInputStyle}
+                />
+              </div>
+
+              <div>
+                <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 4 }}>
+                  Codice archivio
+                </div>
+                <input
+                  value={shipmentDraft.archive_code}
+                  onChange={(e) =>
+                    setShipmentDraft((prev) => ({
+                      ...prev,
+                      archive_code: e.target.value,
+                    }))
+                  }
+                  style={smallInputStyle}
+                />
+              </div>
+
+              <div style={{ flex: 1, minWidth: 160 }}>
+                <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 4 }}>
+                  Nota (opzionale)
+                </div>
+                <input
+                  value={shipmentDraft.note}
+                  onChange={(e) =>
+                    setShipmentDraft((prev) => ({
+                      ...prev,
+                      note: e.target.value,
+                    }))
+                  }
+                  style={{ ...smallInputStyle, width: "100%" }}
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={addShipment}
+                disabled={shipmentSaving}
+                style={primaryButtonStyle(shipmentSaving)}
+              >
+                {shipmentSaving ? "Salvo..." : "Salva"}
+              </button>
+
+              {shipmentMessage && (
+                <div style={{ width: "100%", fontSize: 13, color: "#ef4444" }}>
+                  {shipmentMessage}
+                </div>
+              )}
+            </div>
+          )}
+
+          {!shipmentsLoading && shipments.length === 0 && (
+            <div style={{ marginTop: 12, fontSize: 13, opacity: 0.6 }}>
+              Nessun DDT registrato per questo ordine.
+            </div>
+          )}
+
+          {shipments.length > 0 && (
+            <div style={{ marginTop: 14 }}>
+              {shipments.map((shipment) => (
+                <div
+                  key={shipment.id}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: 10,
+                    padding: "8px 0",
+                    borderTop: "1px solid var(--border-color)",
+                    fontSize: 13,
+                  }}
+                >
+                  <div>
+                    <strong>DDT {shipment.ddt_number}</strong>{" "}
+                    <span style={{ opacity: 0.6 }}>
+                      · {shipment.ddt_date}
+                      {shipment.archive_code
+                        ? ` · archivio ${shipment.archive_code}`
+                        : ""}
+                      {shipment.note ? ` · ${shipment.note}` : ""}
+                      {" · "}
+                      {shipment.invoiced ? "Fatturato" : "Da fatturare"}
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => deleteShipment(shipment.id)}
+                    style={{
+                      border: "none",
+                      background: "none",
+                      color: "#ef4444",
+                      cursor: "pointer",
+                      fontSize: 13,
+                      fontWeight: 700,
+                    }}
+                  >
+                    Elimina
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

@@ -231,3 +231,83 @@ export async function deleteInvoiceById(
 
   return { error: error ? error.message : null };
 }
+
+/*
+  Elenco di sola lettura degli articoli di un ordine, da mostrare
+  come riferimento sotto i DDT di quell'ordine quando si sceglie
+  cosa mettere in una fattura (niente prezzi: pagine diverse hanno
+  permessi diversi, qui serve solo a confermare cosa c'è dentro).
+*/
+export type OrderItemReference = {
+  id: string;
+  code: string;
+  supplier_code: string | null;
+  description: string;
+  qty: number;
+  received_qty: number;
+};
+
+type OrderItemReferenceRow = {
+  id: string;
+  item_id: string;
+  qty: number | string;
+  received_qty: number | string;
+};
+
+type ArticleReferenceRow = {
+  id: string;
+  code: string | null;
+  supplier_code: string | null;
+  description: string | null;
+};
+
+export async function loadOrderItemsReference(
+  orderId: string
+): Promise<OrderItemReference[]> {
+  const { data, error } = await supabase
+    .from("order_items")
+    .select("id,item_id,qty,received_qty")
+    .eq("order_id", orderId);
+
+  if (error || !data || data.length === 0) {
+    return [];
+  }
+
+  const orderItemRows = data as OrderItemReferenceRow[];
+  const itemIds = orderItemRows.map((row) => String(row.item_id));
+
+  const { data: articleRows, error: articlesError } = await supabase
+    .from("items")
+    .select("id,code,supplier_code,description")
+    .in("id", itemIds);
+
+  const articleById = new Map<
+    string,
+    { code: string; supplier_code: string | null; description: string }
+  >();
+
+  if (!articlesError) {
+    ((articleRows || []) as ArticleReferenceRow[]).forEach((row) => {
+      articleById.set(String(row.id), {
+        code: row.code ? String(row.code) : "-",
+        supplier_code: row.supplier_code ? String(row.supplier_code) : null,
+        description: row.description
+          ? String(row.description)
+          : "Articolo non trovato",
+      });
+    });
+  }
+
+  return orderItemRows.map((row) => {
+    const article = articleById.get(String(row.item_id));
+
+    return {
+      id: String(row.id),
+      code: article?.code || "-",
+      supplier_code: article?.supplier_code || null,
+      description: article?.description || "Articolo non trovato",
+      qty: Number(row.qty || 0),
+      received_qty: Number(row.received_qty || 0),
+    };
+  });
+}

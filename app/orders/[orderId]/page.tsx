@@ -7,8 +7,10 @@ import {
   loadSupplierInvoiceData,
   createInvoice,
   deleteInvoiceById,
+  loadOrderItemsReference,
   Invoice,
   UninvoicedShipment,
+  OrderItemReference,
 } from "../../../lib/invoices";
 
 type OrderRow = {
@@ -247,6 +249,12 @@ export default function OrderDetailPage() {
   const [invoiceSaving, setInvoiceSaving] = useState(false);
   const [invoiceMessage, setInvoiceMessage] = useState("");
 
+  const [orderSearchQuery, setOrderSearchQuery] = useState("");
+  const [addedOrderIds, setAddedOrderIds] = useState<string[]>([]);
+  const [orderItemsCache, setOrderItemsCache] = useState<
+    Record<string, OrderItemReference[]>
+  >({});
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -444,7 +452,7 @@ export default function OrderDetailPage() {
     );
   }
 
-  function openAddInvoice() {
+  async function openAddInvoice() {
     if (showAddInvoice) {
       setShowAddInvoice(false);
       return;
@@ -454,8 +462,75 @@ export default function OrderDetailPage() {
       .filter((shipment) => shipment.order_id === orderId)
       .map((shipment) => shipment.id);
 
+    setOrderSearchQuery("");
+    setAddedOrderIds([orderId]);
     setSelectedShipmentIds(thisOrderShipmentIds);
     setShowAddInvoice(true);
+
+    if (!orderItemsCache[orderId]) {
+      const items = await loadOrderItemsReference(orderId);
+      setOrderItemsCache((prev) => ({ ...prev, [orderId]: items }));
+    }
+  }
+
+  /*
+    Altri ordini di questo fornitore che hanno DDT ancora da
+    fatturare, per poterli aggiungere alla stessa fattura (es.
+    ordine 1982 insieme a 1983).
+  */
+  const uninvoicedOrders = useMemo(() => {
+    const map = new Map<string, string | null>();
+
+    uninvoicedShipments.forEach((shipment) => {
+      if (!map.has(shipment.order_id)) {
+        map.set(shipment.order_id, shipment.order_number);
+      }
+    });
+
+    return Array.from(map.entries()).map(([order_id, order_number]) => ({
+      order_id,
+      order_number,
+    }));
+  }, [uninvoicedShipments]);
+
+  const matchingOrders = useMemo(() => {
+    const query = orderSearchQuery.trim().toLowerCase();
+
+    if (!query) {
+      return [];
+    }
+
+    return uninvoicedOrders
+      .filter((order) => !addedOrderIds.includes(order.order_id))
+      .filter((order) =>
+        (order.order_number || "").toLowerCase().includes(query)
+      )
+      .slice(0, 8);
+  }, [uninvoicedOrders, addedOrderIds, orderSearchQuery]);
+
+  async function addOrderToInvoiceDraft(orderIdToAdd: string) {
+    setAddedOrderIds((prev) =>
+      prev.includes(orderIdToAdd) ? prev : [...prev, orderIdToAdd]
+    );
+    setOrderSearchQuery("");
+
+    if (!orderItemsCache[orderIdToAdd]) {
+      const items = await loadOrderItemsReference(orderIdToAdd);
+      setOrderItemsCache((prev) => ({ ...prev, [orderIdToAdd]: items }));
+    }
+  }
+
+  function removeOrderFromInvoiceDraft(orderIdToRemove: string) {
+    setAddedOrderIds((prev) => prev.filter((id) => id !== orderIdToRemove));
+
+    setSelectedShipmentIds((prev) =>
+      prev.filter((shipmentId) => {
+        const shipment = uninvoicedShipments.find(
+          (row) => row.id === shipmentId
+        );
+        return shipment ? shipment.order_id !== orderIdToRemove : true;
+      })
+    );
   }
 
   async function addInvoice() {
@@ -502,6 +577,8 @@ export default function OrderDetailPage() {
 
     setInvoiceDraft(EMPTY_INVOICE_DRAFT);
     setSelectedShipmentIds([]);
+    setAddedOrderIds([]);
+    setOrderSearchQuery("");
     setShowAddInvoice(false);
     setInvoiceSaving(false);
     await loadInvoiceData();
@@ -2736,42 +2813,163 @@ export default function OrderDetailPage() {
 
               <div style={{ marginTop: 14 }}>
                 <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 6 }}>
-                  DDT coperti da questa fattura (di tutto il fornitore,
-                  già pre-selezionati quelli di questo ordine)
+                  Cerca un altro ordine da aggiungere alla stessa fattura
+                  (numero ordine)
                 </div>
 
-                {uninvoicedShipments.length === 0 && (
-                  <div style={{ fontSize: 13, opacity: 0.6 }}>
+                <input
+                  type="text"
+                  value={orderSearchQuery}
+                  onChange={(e) => setOrderSearchQuery(e.target.value)}
+                  placeholder="Numero ordine..."
+                  style={{ ...smallInputStyle, width: 220 }}
+                />
+
+                {matchingOrders.length > 0 && (
+                  <div
+                    style={{
+                      marginTop: 6,
+                      maxWidth: 220,
+                      border: "1px solid var(--border-color)",
+                      borderRadius: 8,
+                      overflow: "hidden",
+                    }}
+                  >
+                    {matchingOrders.map((order) => (
+                      <button
+                        key={order.order_id}
+                        type="button"
+                        onClick={() =>
+                          addOrderToInvoiceDraft(order.order_id)
+                        }
+                        style={{
+                          display: "block",
+                          width: "100%",
+                          textAlign: "left",
+                          padding: "8px 10px",
+                          border: "none",
+                          background: "var(--card)",
+                          cursor: "pointer",
+                          fontSize: 13,
+                        }}
+                      >
+                        Ordine N. {order.order_number || "-"}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {addedOrderIds.length === 0 && (
+                  <div style={{ marginTop: 10, fontSize: 13, opacity: 0.6 }}>
                     Nessun DDT ancora da fatturare per questo fornitore.
                   </div>
                 )}
 
-                {uninvoicedShipments.map((shipment) => (
-                  <label
-                    key={shipment.id}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                      fontSize: 13,
-                      padding: "4px 0",
-                      cursor: "pointer",
-                      fontWeight:
-                        shipment.order_id === orderId ? 700 : 400,
-                    }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedShipmentIds.includes(shipment.id)}
-                      onChange={() => toggleShipmentSelection(shipment.id)}
-                    />
-                    DDT {shipment.ddt_number} · {shipment.ddt_date}
-                    {shipment.order_number
-                      ? ` · ordine ${shipment.order_number}`
-                      : ""}
-                    {shipment.order_id === orderId ? " (questo ordine)" : ""}
-                  </label>
-                ))}
+                {addedOrderIds.map((orderIdInDraft) => {
+                  const orderShipments = uninvoicedShipments.filter(
+                    (shipment) => shipment.order_id === orderIdInDraft
+                  );
+                  const orderNumber =
+                    orderShipments[0]?.order_number || null;
+                  const referenceItems =
+                    orderItemsCache[orderIdInDraft] || [];
+
+                  return (
+                    <div
+                      key={orderIdInDraft}
+                      style={{
+                        marginTop: 12,
+                        padding: 10,
+                        borderRadius: 8,
+                        border: "1px solid var(--border-color)",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                        }}
+                      >
+                        <div style={{ fontSize: 13, fontWeight: 800 }}>
+                          Ordine N. {orderNumber || "-"}
+                          {orderIdInDraft === orderId
+                            ? " (questo ordine)"
+                            : ""}
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            removeOrderFromInvoiceDraft(orderIdInDraft)
+                          }
+                          style={{
+                            border: "none",
+                            background: "none",
+                            color: "#ef4444",
+                            cursor: "pointer",
+                            fontSize: 12,
+                            fontWeight: 700,
+                          }}
+                        >
+                          Rimuovi
+                        </button>
+                      </div>
+
+                      {referenceItems.length > 0 && (
+                        <div
+                          style={{
+                            marginTop: 6,
+                            fontSize: 12,
+                            opacity: 0.65,
+                          }}
+                        >
+                          {referenceItems.map((item) => (
+                            <div key={item.id}>
+                              {item.supplier_code || item.code} ·{" "}
+                              {item.description} · ricevuti{" "}
+                              {item.received_qty}/{item.qty}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      <div style={{ marginTop: 8 }}>
+                        {orderShipments.length === 0 && (
+                          <div style={{ fontSize: 13, opacity: 0.6 }}>
+                            Nessun DDT ancora da fatturare per questo
+                            ordine.
+                          </div>
+                        )}
+
+                        {orderShipments.map((shipment) => (
+                          <label
+                            key={shipment.id}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 8,
+                              fontSize: 13,
+                              padding: "4px 0",
+                              cursor: "pointer",
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selectedShipmentIds.includes(
+                                shipment.id
+                              )}
+                              onChange={() =>
+                                toggleShipmentSelection(shipment.id)
+                              }
+                            />
+                            DDT {shipment.ddt_number} · {shipment.ddt_date}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
 
               <div style={{ marginTop: 14 }}>

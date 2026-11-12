@@ -1,10 +1,11 @@
 "use client";
 
-import React, { use, useEffect, useMemo, useState } from "react";
+import React, { use, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import jsPDF from "jspdf";
 import { supabase } from "../../../lib/supabaseClient";
 import { fetchCompanyLogo, drawCompanyLogoTopRight } from "../../../lib/pdfLogo";
+import { computePlafondStatus, PlafondStatus } from "../../../lib/plafond";
 
 type Item = {
   id: string;
@@ -29,6 +30,40 @@ type UserPermissions = {
   view_prices?: boolean;
   view_inventory_value?: boolean;
   [key: string]: boolean | undefined;
+};
+
+type IntentDeclaration = {
+  id: string;
+  declaration_number: string;
+  valid_from: string;
+  valid_to: string | null;
+  plafond_amount: number;
+  note: string | null;
+};
+
+type IntentDeclarationRow = {
+  id: string;
+  declaration_number: string | null;
+  valid_from: string;
+  valid_to: string | null;
+  plafond_amount: number | string;
+  note: string | null;
+};
+
+type DeclarationDraft = {
+  declaration_number: string;
+  valid_from: string;
+  valid_to: string;
+  plafond_amount: string;
+  note: string;
+};
+
+const EMPTY_DECLARATION_DRAFT: DeclarationDraft = {
+  declaration_number: "",
+  valid_from: "",
+  valid_to: "",
+  plafond_amount: "",
+  note: "",
 };
 
 type UpholsteryOptionType =
@@ -230,6 +265,22 @@ export default function SupplierDetail({
   const [leadTimeStats, setLeadTimeStats] =
     useState<{ avgDays: number; count: number } | null>(null);
 
+  const [intentDeclarationEnabled, setIntentDeclarationEnabled] =
+    useState(false);
+  const [intentDeclarations, setIntentDeclarations] = useState<
+    IntentDeclaration[]
+  >([]);
+  const [plafondStatus, setPlafondStatus] = useState<PlafondStatus | null>(
+    null
+  );
+  const [plafondLoading, setPlafondLoading] = useState(false);
+  const [showAddDeclaration, setShowAddDeclaration] = useState(false);
+  const [declarationDraft, setDeclarationDraft] = useState<DeclarationDraft>(
+    EMPTY_DECLARATION_DRAFT
+  );
+  const [declarationSaving, setDeclarationSaving] = useState(false);
+  const [declarationMessage, setDeclarationMessage] = useState("");
+
   useEffect(() => {
     fetchCompanyLogo().then(setCompanyLogo);
   }, []);
@@ -325,6 +376,11 @@ export default function SupplierDetail({
           .eq("id", supplierId)
           .maybeSingle(),
         supabase
+          .from("suppliers")
+          .select("requires_intent_declaration")
+          .eq("id", supplierId)
+          .maybeSingle(),
+        supabase
           .from("orders")
           .select("order_date,received_at")
           .eq("supplier_id", supplierId)
@@ -410,6 +466,7 @@ export default function SupplierDetail({
         { data: teakRow, error: teakError },
         { data: biminiRow, error: biminiError },
         { data: teliRow, error: teliError },
+        { data: intentRow, error: intentError },
         { data: deliveredOrders, error: deliveredOrdersError },
       ] = await otherQueriesPromise;
 
@@ -436,6 +493,10 @@ export default function SupplierDetail({
 
       setTeliEnabled(
         !teliError && teliRow?.teli_enabled === true
+      );
+
+      setIntentDeclarationEnabled(
+        !intentError && intentRow?.requires_intent_declaration === true
       );
 
       if (!deliveredOrdersError && deliveredOrders) {
@@ -484,6 +545,119 @@ export default function SupplierDetail({
     canViewPrices,
     canViewInventoryValue,
   ]);
+
+  /*
+    PLAFOND / DICHIARAZIONE D'INTENTO (STEP 61)
+
+    Caricata solo se il fornitore la richiede. loadPlafondData()
+    viene richiamata anche dopo ogni aggiunta/eliminazione di una
+    dichiarazione, per tenere la cifra disponibile sempre aggiornata.
+  */
+  const loadPlafondData = useCallback(async () => {
+    setPlafondLoading(true);
+
+    const [{ data: declRows, error: declError }, status] = await Promise.all([
+      supabase
+        .from("supplier_intent_declarations")
+        .select("id,declaration_number,valid_from,valid_to,plafond_amount,note")
+        .eq("supplier_id", supplierId)
+        .order("valid_from", { ascending: false }),
+      computePlafondStatus(supplierId),
+    ]);
+
+    if (!declError) {
+      setIntentDeclarations(
+        ((declRows || []) as IntentDeclarationRow[]).map((row) => ({
+          id: String(row.id),
+          declaration_number: String(row.declaration_number || ""),
+          valid_from: String(row.valid_from || ""),
+          valid_to: row.valid_to ? String(row.valid_to) : null,
+          plafond_amount: Number(row.plafond_amount || 0),
+          note: row.note ? String(row.note) : null,
+        }))
+      );
+    }
+
+    setPlafondStatus(status);
+    setPlafondLoading(false);
+  }, [supplierId]);
+
+  useEffect(() => {
+    if (!intentDeclarationEnabled) {
+      setIntentDeclarations([]);
+      setPlafondStatus(null);
+      return;
+    }
+
+    loadPlafondData();
+  }, [intentDeclarationEnabled, loadPlafondData]);
+
+  async function addDeclaration() {
+    const number = declarationDraft.declaration_number.trim();
+    const validFrom = declarationDraft.valid_from.trim();
+    const validTo = declarationDraft.valid_to.trim();
+    const amount = Number(declarationDraft.plafond_amount);
+
+    if (!number) {
+      setDeclarationMessage("Inserisci il numero della dichiarazione.");
+      return;
+    }
+
+    if (!validFrom) {
+      setDeclarationMessage("Inserisci la data di inizio validità.");
+      return;
+    }
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setDeclarationMessage("Inserisci un importo plafond valido.");
+      return;
+    }
+
+    setDeclarationSaving(true);
+    setDeclarationMessage("");
+
+    const { error } = await supabase
+      .from("supplier_intent_declarations")
+      .insert({
+        supplier_id: supplierId,
+        declaration_number: number,
+        valid_from: validFrom,
+        valid_to: validTo || null,
+        plafond_amount: amount,
+        note: declarationDraft.note.trim() || null,
+      });
+
+    if (error) {
+      setDeclarationMessage("Errore: " + error.message);
+      setDeclarationSaving(false);
+      return;
+    }
+
+    setDeclarationDraft(EMPTY_DECLARATION_DRAFT);
+    setShowAddDeclaration(false);
+    setDeclarationSaving(false);
+    await loadPlafondData();
+  }
+
+  async function deleteDeclaration(id: string) {
+    const confirmed = confirm(
+      "Eliminare questa dichiarazione? L'operazione non si può annullare."
+    );
+
+    if (!confirmed) return;
+
+    const { error } = await supabase
+      .from("supplier_intent_declarations")
+      .delete()
+      .eq("id", id);
+
+    if (error) {
+      alert("Errore: " + error.message);
+      return;
+    }
+
+    await loadPlafondData();
+  }
 
   /*
     OPZIONI TAPPEZZERIA (colore, dettagli e loghi, cucitura,
@@ -2451,6 +2625,275 @@ export default function SupplierDetail({
         </div>
       </div>
 
+      {intentDeclarationEnabled && (
+        <section
+          style={{
+            marginBottom: 20,
+            padding: "18px 20px",
+            border: "1px solid var(--border-color)",
+            borderRadius: 12,
+            background: "var(--card)",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "flex-start",
+              gap: 16,
+              flexWrap: "wrap",
+            }}
+          >
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 6 }}>
+                Plafond — dichiarazione d&apos;intento
+              </div>
+
+              {plafondLoading && (
+                <div style={{ fontSize: 13, opacity: 0.6 }}>
+                  Calcolo in corso...
+                </div>
+              )}
+
+              {!plafondLoading &&
+                plafondStatus &&
+                !plafondStatus.hasActiveDeclaration && (
+                  <div style={{ fontSize: 13, color: "#ef4444" }}>
+                    Nessuna dichiarazione d&apos;intento attiva oggi per
+                    questo fornitore.
+                  </div>
+                )}
+
+              {!plafondLoading &&
+                plafondStatus &&
+                plafondStatus.hasActiveDeclaration && (
+                  <div>
+                    <div
+                      style={{
+                        fontSize: 28,
+                        fontWeight: 850,
+                        letterSpacing: "-0.5px",
+                        color:
+                          plafondStatus.available < 0
+                            ? "#ef4444"
+                            : "var(--foreground)",
+                      }}
+                    >
+                      {formatEuro(plafondStatus.available)} disponibile
+                    </div>
+
+                    <div style={{ marginTop: 4, fontSize: 13, opacity: 0.7 }}>
+                      Plafond {formatEuro(plafondStatus.ceiling)} · ordinato{" "}
+                      {formatEuro(plafondStatus.used)}
+                      {plafondStatus.periodStart && (
+                        <>
+                          {" "}
+                          · dal {formatDateIt(plafondStatus.periodStart)}
+                          {plafondStatus.periodEnd
+                            ? ` al ${formatDateIt(plafondStatus.periodEnd)}`
+                            : " (senza scadenza)"}
+                        </>
+                      )}
+                    </div>
+
+                    {plafondStatus.available < 0 && (
+                      <div
+                        style={{
+                          marginTop: 6,
+                          fontSize: 13,
+                          color: "#ef4444",
+                          fontWeight: 700,
+                        }}
+                      >
+                        Plafond già sforato di{" "}
+                        {formatEuro(Math.abs(plafondStatus.available))}.
+                      </div>
+                    )}
+                  </div>
+                )}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowAddDeclaration((prev) => !prev)}
+              style={secondaryButton}
+            >
+              {showAddDeclaration ? "Chiudi" : "+ Nuova dichiarazione"}
+            </button>
+          </div>
+
+          {showAddDeclaration && (
+            <div
+              style={{
+                marginTop: 16,
+                padding: 14,
+                borderRadius: 10,
+                background: "var(--input-bg)",
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 10,
+                alignItems: "flex-end",
+              }}
+            >
+              <div>
+                <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 4 }}>
+                  Numero dichiarazione
+                </div>
+                <input
+                  value={declarationDraft.declaration_number}
+                  onChange={(e) =>
+                    setDeclarationDraft((prev) => ({
+                      ...prev,
+                      declaration_number: e.target.value,
+                    }))
+                  }
+                  style={plafondInputStyle}
+                />
+              </div>
+
+              <div>
+                <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 4 }}>
+                  Valida dal
+                </div>
+                <input
+                  type="date"
+                  value={declarationDraft.valid_from}
+                  onChange={(e) =>
+                    setDeclarationDraft((prev) => ({
+                      ...prev,
+                      valid_from: e.target.value,
+                    }))
+                  }
+                  style={plafondInputStyle}
+                />
+              </div>
+
+              <div>
+                <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 4 }}>
+                  Valida al (opzionale)
+                </div>
+                <input
+                  type="date"
+                  value={declarationDraft.valid_to}
+                  onChange={(e) =>
+                    setDeclarationDraft((prev) => ({
+                      ...prev,
+                      valid_to: e.target.value,
+                    }))
+                  }
+                  style={plafondInputStyle}
+                />
+              </div>
+
+              <div>
+                <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 4 }}>
+                  Importo plafond €
+                </div>
+                <input
+                  type="number"
+                  value={declarationDraft.plafond_amount}
+                  onChange={(e) =>
+                    setDeclarationDraft((prev) => ({
+                      ...prev,
+                      plafond_amount: e.target.value,
+                    }))
+                  }
+                  style={{ ...plafondInputStyle, width: 120 }}
+                />
+              </div>
+
+              <div style={{ flex: 1, minWidth: 160 }}>
+                <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 4 }}>
+                  Nota (opzionale)
+                </div>
+                <input
+                  value={declarationDraft.note}
+                  onChange={(e) =>
+                    setDeclarationDraft((prev) => ({
+                      ...prev,
+                      note: e.target.value,
+                    }))
+                  }
+                  style={{ ...plafondInputStyle, width: "100%" }}
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={addDeclaration}
+                disabled={declarationSaving}
+                style={{
+                  ...primaryButton,
+                  opacity: declarationSaving ? 0.6 : 1,
+                  cursor: declarationSaving ? "default" : "pointer",
+                  border: "none",
+                }}
+              >
+                {declarationSaving ? "Salvo..." : "Salva"}
+              </button>
+
+              {declarationMessage && (
+                <div
+                  style={{
+                    width: "100%",
+                    fontSize: 13,
+                    color: "#ef4444",
+                  }}
+                >
+                  {declarationMessage}
+                </div>
+              )}
+            </div>
+          )}
+
+          {intentDeclarations.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              {intentDeclarations.map((declaration) => (
+                <div
+                  key={declaration.id}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: 10,
+                    padding: "8px 0",
+                    borderTop: "1px solid var(--border-color)",
+                    fontSize: 13,
+                  }}
+                >
+                  <div>
+                    <strong>{declaration.declaration_number}</strong>{" "}
+                    <span style={{ opacity: 0.6 }}>
+                      · dal {formatDateIt(declaration.valid_from)}
+                      {declaration.valid_to
+                        ? ` al ${formatDateIt(declaration.valid_to)}`
+                        : " (senza scadenza)"}{" "}
+                      · {formatEuro(declaration.plafond_amount)}
+                      {declaration.note ? ` · ${declaration.note}` : ""}
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => deleteDeclaration(declaration.id)}
+                    style={{
+                      border: "none",
+                      background: "none",
+                      color: "#ef4444",
+                      cursor: "pointer",
+                      fontSize: 13,
+                      fontWeight: 700,
+                    }}
+                  >
+                    Elimina
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
       {upholsteryEnabled && (
         <section
           style={{
@@ -4402,6 +4845,12 @@ function formatEuro(value: number) {
   }).format(Number(value || 0));
 }
 
+function formatDateIt(value: string) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return value;
+  return new Intl.DateTimeFormat("it-IT").format(date);
+}
+
 /* ---------------- STILI ---------------- */
 
 const primaryButton = {
@@ -4436,6 +4885,16 @@ const secondaryButton = {
 
   textDecoration: "none",
   fontWeight: 650,
+};
+
+const plafondInputStyle = {
+  padding: "9px 10px",
+  borderRadius: 8,
+  border: "1px solid var(--border-color)",
+  background: "var(--card)",
+  color: "var(--foreground)",
+  fontSize: 13,
+  outline: "none",
 };
 
 const warehousePdfButton = {

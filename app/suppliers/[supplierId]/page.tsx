@@ -13,7 +13,6 @@ import {
   loadOrderItemsReference,
   loadSupplierOrderOptions,
   Invoice,
-  UninvoicedShipment,
   OrderItemReference,
   SupplierOrderOption,
 } from "../../../lib/invoices";
@@ -309,17 +308,12 @@ export default function SupplierDetail({
   const [declarationMessage, setDeclarationMessage] = useState("");
 
   const [invoices, setInvoices] = useState<Invoice[]>([]);
-  const [uninvoicedShipments, setUninvoicedShipments] = useState<
-    UninvoicedShipment[]
-  >([]);
   const [invoicesLoading, setInvoicesLoading] = useState(false);
   const [showAddInvoice, setShowAddInvoice] = useState(false);
   const [invoiceDraft, setInvoiceDraft] = useState<InvoiceDraft>(
     EMPTY_INVOICE_DRAFT
   );
-  const [selectedShipmentIds, setSelectedShipmentIds] = useState<string[]>(
-    []
-  );
+  const [selectedItemIds, setSelectedItemIds] = useState<string[]>([]);
   const [invoiceSaving, setInvoiceSaving] = useState(false);
   const [invoiceMessage, setInvoiceMessage] = useState("");
 
@@ -721,16 +715,13 @@ export default function SupplierDetail({
   const loadInvoiceData = useCallback(async () => {
     setInvoicesLoading(true);
 
-    const [
-      { invoices: loadedInvoices, uninvoicedShipments: loadedShipments },
-      loadedOrderOptions,
-    ] = await Promise.all([
-      loadSupplierInvoiceData(supplierId),
-      loadSupplierOrderOptions(supplierId),
-    ]);
+    const [{ invoices: loadedInvoices }, loadedOrderOptions] =
+      await Promise.all([
+        loadSupplierInvoiceData(supplierId),
+        loadSupplierOrderOptions(supplierId),
+      ]);
 
     setInvoices(loadedInvoices);
-    setUninvoicedShipments(loadedShipments);
     setSupplierOrderOptions(loadedOrderOptions);
     setInvoicesLoading(false);
   }, [supplierId]);
@@ -739,8 +730,8 @@ export default function SupplierDetail({
     loadInvoiceData();
   }, [loadInvoiceData]);
 
-  function toggleShipmentSelection(id: string) {
-    setSelectedShipmentIds((prev) =>
+  function toggleItemSelection(id: string) {
+    setSelectedItemIds((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
     );
   }
@@ -752,7 +743,7 @@ export default function SupplierDetail({
     }
 
     setAddedOrderIds([]);
-    setSelectedShipmentIds([]);
+    setSelectedItemIds([]);
     setShowAddInvoice(true);
   }
 
@@ -770,14 +761,10 @@ export default function SupplierDetail({
   function removeOrderFromInvoiceDraft(orderId: string) {
     setAddedOrderIds((prev) => prev.filter((id) => id !== orderId));
 
-    setSelectedShipmentIds((prev) =>
-      prev.filter((shipmentId) => {
-        const shipment = uninvoicedShipments.find(
-          (row) => row.id === shipmentId
-        );
-        return shipment ? shipment.order_id !== orderId : true;
-      })
-    );
+    const itemsOfOrder = orderItemsCache[orderId] || [];
+    const idsToRemove = new Set(itemsOfOrder.map((item) => item.id));
+
+    setSelectedItemIds((prev) => prev.filter((id) => !idsToRemove.has(id)));
   }
 
   async function addInvoice() {
@@ -810,7 +797,7 @@ export default function SupplierDetail({
         amount: amountValue,
         note: invoiceDraft.note.trim() || null,
       },
-      selectedShipmentIds
+      selectedItemIds
     );
 
     if (error) {
@@ -821,7 +808,7 @@ export default function SupplierDetail({
     }
 
     setInvoiceDraft(EMPTY_INVOICE_DRAFT);
-    setSelectedShipmentIds([]);
+    setSelectedItemIds([]);
     setAddedOrderIds([]);
     setShowAddInvoice(false);
     setInvoiceSaving(false);
@@ -830,7 +817,7 @@ export default function SupplierDetail({
 
   async function deleteInvoice(id: string) {
     const confirmed = confirm(
-      "Eliminare questa fattura? I DDT collegati torneranno \"da fatturare\". L'operazione non si può annullare."
+      "Eliminare questa fattura? Gli articoli collegati torneranno \"da fatturare\". L'operazione non si può annullare."
     );
 
     if (!confirmed) return;
@@ -3241,17 +3228,16 @@ export default function SupplierDetail({
                 <div style={{ marginTop: 10, fontSize: 13, opacity: 0.6 }}>
                   {supplierOrderOptions.length === 0
                     ? "Nessun ordine trovato per questo fornitore."
-                    : "Scegli un ordine dal menu qui sopra per vedere i suoi DDT da fatturare."}
+                    : "Scegli un ordine dal menu qui sopra per vedere e spuntare i suoi articoli."}
                 </div>
               )}
 
               {addedOrderIds.map((orderId) => {
-                const orderShipments = uninvoicedShipments.filter(
-                  (shipment) => shipment.order_id === orderId
+                const orderOption = supplierOrderOptions.find(
+                  (option) => option.order_id === orderId
                 );
-                const orderNumber =
-                  orderShipments[0]?.order_number || null;
-                const referenceItems = orderItemsCache[orderId] || [];
+                const orderNumber = orderOption?.order_number || null;
+                const orderItems = orderItemsCache[orderId] || [];
 
                 return (
                   <div
@@ -3292,43 +3278,38 @@ export default function SupplierDetail({
                       </button>
                     </div>
 
-                    {referenceItems.length > 0 && (
-                      <div
-                        style={{ marginTop: 6, fontSize: 12, opacity: 0.65 }}
-                      >
-                        {referenceItems.map((item) => (
-                          <div key={item.id}>
-                            {item.supplier_code || item.code} ·{" "}
-                            {item.description} · ricevuti{" "}
-                            {item.received_qty}/{item.qty}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
                     <div style={{ marginTop: 8 }}>
-                      {orderShipments.map((shipment) => (
+                      {orderItems.length === 0 && (
+                        <div style={{ fontSize: 13, opacity: 0.6 }}>
+                          Nessun articolo in questo ordine.
+                        </div>
+                      )}
+
+                      {orderItems.map((item) => (
                         <label
-                          key={shipment.id}
+                          key={item.id}
                           style={{
                             display: "flex",
                             alignItems: "center",
                             gap: 8,
                             fontSize: 13,
                             padding: "4px 0",
-                            cursor: "pointer",
+                            cursor: item.invoiced ? "default" : "pointer",
+                            opacity: item.invoiced ? 0.45 : 1,
                           }}
                         >
                           <input
                             type="checkbox"
-                            checked={selectedShipmentIds.includes(
-                              shipment.id
-                            )}
-                            onChange={() =>
-                              toggleShipmentSelection(shipment.id)
-                            }
+                            checked={selectedItemIds.includes(item.id)}
+                            disabled={item.invoiced}
+                            onChange={() => toggleItemSelection(item.id)}
                           />
-                          DDT {shipment.ddt_number} · {shipment.ddt_date}
+                          {item.supplier_code || item.code} ·{" "}
+                          {item.description} · ricevuti {item.received_qty}/
+                          {item.qty}
+                          {item.invoiced
+                            ? " (già in un'altra fattura)"
+                            : ""}
                         </label>
                       ))}
                     </div>
@@ -3397,15 +3378,15 @@ export default function SupplierDetail({
                     {invoice.note ? ` · ${invoice.note}` : ""}
                   </span>
 
-                  {invoice.shipments.length > 0 && (
+                  {invoice.items.length > 0 && (
                     <div style={{ marginTop: 4, opacity: 0.6 }}>
-                      DDT:{" "}
-                      {invoice.shipments
+                      Articoli:{" "}
+                      {invoice.items
                         .map(
-                          (shipment) =>
-                            `${shipment.ddt_number}${
-                              shipment.order_number
-                                ? ` (ordine ${shipment.order_number})`
+                          (item) =>
+                            `${item.supplier_code || item.code}${
+                              item.order_number
+                                ? ` (ordine ${item.order_number})`
                                 : ""
                             }`
                         )

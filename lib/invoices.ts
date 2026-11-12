@@ -1,21 +1,30 @@
 import { supabase } from "./supabaseClient";
 
 /*
-  FATTURE FORNITORE (STEP 61 + estensione multi-ordine)
+  FATTURE FORNITORE (STEP 61 + STEP 63)
 
-  Logica condivisa tra la pagina fornitore e la pagina ordine: una
-  fattura è sempre collegata al FORNITORE (mai a un singolo
-  ordine), perché una fattura riepilogativa può coprire DDT di piu'
-  ordini diversi dello stesso fornitore (es. ordine 1936 insieme a
-  1982 e 1983). Entrambe le pagine mostrano quindi TUTTI i DDT del
-  fornitore ancora da fatturare, non solo quelli dell'ordine aperto.
+  Una fattura è sempre collegata al FORNITORE (mai a un singolo
+  ordine), perché una fattura riepilogativa può coprire articoli di
+  più ordini diversi dello stesso fornitore (es. ordine 1936 insieme
+  a 1982 e 1983). Il collegamento è diretto con le righe ordine
+  (order_items): si sceglie un ordine e si spunta articolo per
+  articolo cosa c'è nella fattura, indipendentemente dal DDT. Un
+  articolo (riga ordine) può finire in una sola fattura.
+
+  Il DDT (order_shipments, sezione "DDT" sulla pagina ordine) resta
+  solo per tracciare l'arrivo fisico della merce: non c'entra più
+  con la fatturazione.
 */
 
-export type InvoiceShipmentInfo = {
-  id: string;
-  ddt_number: string;
+export type InvoiceLineItem = {
+  id: string; // id della riga ordine (order_items.id)
   order_id: string;
   order_number: string | null;
+  code: string;
+  supplier_code: string | null;
+  description: string;
+  qty: number;
+  received_qty: number;
 };
 
 export type Invoice = {
@@ -25,20 +34,11 @@ export type Invoice = {
   archive_code: string | null;
   amount: number | null;
   note: string | null;
-  shipments: InvoiceShipmentInfo[];
-};
-
-export type UninvoicedShipment = {
-  id: string;
-  ddt_number: string;
-  ddt_date: string;
-  order_id: string;
-  order_number: string | null;
+  items: InvoiceLineItem[];
 };
 
 export type SupplierInvoiceData = {
   invoices: Invoice[];
-  uninvoicedShipments: UninvoicedShipment[];
 };
 
 type InvoiceOrderRow = {
@@ -46,16 +46,24 @@ type InvoiceOrderRow = {
   order_number: number | string | null;
 };
 
-type InvoiceShipmentRow = {
+type InvoiceOrderItemRow = {
   id: string;
   order_id: string;
-  ddt_number: string | null;
-  ddt_date: string;
+  item_id: string;
+  qty: number | string;
+  received_qty: number | string;
 };
 
-type InvoiceLinkRow = {
+type InvoiceArticleRow = {
+  id: string;
+  code: string | null;
+  supplier_code: string | null;
+  description: string | null;
+};
+
+type InvoiceItemLinkRow = {
   invoice_id: string;
-  shipment_id: string;
+  order_item_id: string;
 };
 
 type InvoiceRow = {
@@ -86,55 +94,56 @@ export async function loadSupplierInvoiceData(
 
   const orderIds = Array.from(orderNumberById.keys());
 
-  let shipmentRows: InvoiceShipmentRow[] = [];
+  let orderItemRows: InvoiceOrderItemRow[] = [];
 
   if (orderIds.length > 0) {
     const { data } = await supabase
-      .from("order_shipments")
-      .select("id,order_id,ddt_number,ddt_date")
-      .in("order_id", orderIds)
-      .order("ddt_date", { ascending: false });
+      .from("order_items")
+      .select("id,order_id,item_id,qty,received_qty")
+      .in("order_id", orderIds);
 
-    shipmentRows = (data || []) as InvoiceShipmentRow[];
+    orderItemRows = (data || []) as InvoiceOrderItemRow[];
   }
 
-  const shipmentIds = shipmentRows.map((row) => String(row.id));
+  const itemIds = orderItemRows.map((row) => String(row.item_id));
 
-  let linkRows: InvoiceLinkRow[] = [];
+  let articleRows: InvoiceArticleRow[] = [];
 
-  if (shipmentIds.length > 0) {
+  if (itemIds.length > 0) {
     const { data } = await supabase
-      .from("order_invoice_shipments")
-      .select("invoice_id,shipment_id")
-      .in("shipment_id", shipmentIds);
+      .from("items")
+      .select("id,code,supplier_code,description")
+      .in("id", itemIds);
 
-    linkRows = (data || []) as InvoiceLinkRow[];
+    articleRows = (data || []) as InvoiceArticleRow[];
   }
 
-  const invoicedShipmentIds = new Set(
-    linkRows.map((row) => String(row.shipment_id))
-  );
+  const articleById = new Map<string, InvoiceArticleRow>();
 
-  const shipmentInfoById = new Map<string, InvoiceShipmentInfo>();
-
-  shipmentRows.forEach((row) => {
-    shipmentInfoById.set(String(row.id), {
-      id: String(row.id),
-      ddt_number: String(row.ddt_number || ""),
-      order_id: String(row.order_id),
-      order_number: orderNumberById.get(String(row.order_id)) || null,
-    });
+  articleRows.forEach((row) => {
+    articleById.set(String(row.id), row);
   });
 
-  const uninvoicedShipments: UninvoicedShipment[] = shipmentRows
-    .filter((row) => !invoicedShipmentIds.has(String(row.id)))
-    .map((row) => ({
+  const orderItemInfoById = new Map<string, InvoiceLineItem>();
+
+  orderItemRows.forEach((row) => {
+    const article = articleById.get(String(row.item_id));
+
+    orderItemInfoById.set(String(row.id), {
       id: String(row.id),
-      ddt_number: String(row.ddt_number || ""),
-      ddt_date: String(row.ddt_date || ""),
       order_id: String(row.order_id),
       order_number: orderNumberById.get(String(row.order_id)) || null,
-    }));
+      code: article?.code ? String(article.code) : "-",
+      supplier_code: article?.supplier_code
+        ? String(article.supplier_code)
+        : null,
+      description: article?.description
+        ? String(article.description)
+        : "Articolo non trovato",
+      qty: Number(row.qty || 0),
+      received_qty: Number(row.received_qty || 0),
+    });
+  });
 
   const { data: invoiceRows, error: invoiceError } = await supabase
     .from("order_invoices")
@@ -142,31 +151,40 @@ export async function loadSupplierInvoiceData(
     .eq("supplier_id", supplierId)
     .order("invoice_date", { ascending: false });
 
-  let invoices: Invoice[] = [];
-
-  if (!invoiceError) {
-    const linksByInvoice = new Map<string, string[]>();
-
-    linkRows.forEach((row) => {
-      const list = linksByInvoice.get(String(row.invoice_id)) || [];
-      list.push(String(row.shipment_id));
-      linksByInvoice.set(String(row.invoice_id), list);
-    });
-
-    invoices = ((invoiceRows || []) as InvoiceRow[]).map((row) => ({
-      id: String(row.id),
-      invoice_number: String(row.invoice_number || ""),
-      invoice_date: String(row.invoice_date || ""),
-      archive_code: row.archive_code ? String(row.archive_code) : null,
-      amount: row.amount !== null ? Number(row.amount) : null,
-      note: row.note ? String(row.note) : null,
-      shipments: (linksByInvoice.get(String(row.id)) || [])
-        .map((shipmentId) => shipmentInfoById.get(shipmentId))
-        .filter((info): info is InvoiceShipmentInfo => Boolean(info)),
-    }));
+  if (invoiceError || !invoiceRows || invoiceRows.length === 0) {
+    return { invoices: [] };
   }
 
-  return { invoices, uninvoicedShipments };
+  const invoiceIds = (invoiceRows as InvoiceRow[]).map((row) =>
+    String(row.id)
+  );
+
+  const { data: linkRows } = await supabase
+    .from("order_invoice_items")
+    .select("invoice_id,order_item_id")
+    .in("invoice_id", invoiceIds);
+
+  const itemsByInvoice = new Map<string, string[]>();
+
+  ((linkRows || []) as InvoiceItemLinkRow[]).forEach((row) => {
+    const list = itemsByInvoice.get(String(row.invoice_id)) || [];
+    list.push(String(row.order_item_id));
+    itemsByInvoice.set(String(row.invoice_id), list);
+  });
+
+  const invoices: Invoice[] = (invoiceRows as InvoiceRow[]).map((row) => ({
+    id: String(row.id),
+    invoice_number: String(row.invoice_number || ""),
+    invoice_date: String(row.invoice_date || ""),
+    archive_code: row.archive_code ? String(row.archive_code) : null,
+    amount: row.amount !== null ? Number(row.amount) : null,
+    note: row.note ? String(row.note) : null,
+    items: (itemsByInvoice.get(String(row.id)) || [])
+      .map((orderItemId) => orderItemInfoById.get(orderItemId))
+      .filter((info): info is InvoiceLineItem => Boolean(info)),
+  }));
+
+  return { invoices };
 }
 
 export type InvoiceDraftInput = {
@@ -180,7 +198,7 @@ export type InvoiceDraftInput = {
 export async function createInvoice(
   supplierId: string,
   draft: InvoiceDraftInput,
-  shipmentIds: string[]
+  orderItemIds: string[]
 ): Promise<{ error: string | null }> {
   const { data: inserted, error } = await supabase
     .from("order_invoices")
@@ -199,20 +217,20 @@ export async function createInvoice(
     return { error: error?.message || "fattura non creata" };
   }
 
-  if (shipmentIds.length > 0) {
+  if (orderItemIds.length > 0) {
     const { error: linkError } = await supabase
-      .from("order_invoice_shipments")
+      .from("order_invoice_items")
       .insert(
-        shipmentIds.map((shipmentId) => ({
+        orderItemIds.map((orderItemId) => ({
           invoice_id: inserted.id,
-          shipment_id: shipmentId,
+          order_item_id: orderItemId,
         }))
       );
 
     if (linkError) {
       return {
         error:
-          "Fattura creata, ma errore nel collegare i DDT: " +
+          "Fattura creata, ma errore nel collegare gli articoli: " +
           linkError.message,
       };
     }
@@ -244,10 +262,8 @@ type SupplierOrderOptionRow = {
 
 /*
   Elenco ordini (non annullati) di un fornitore, per il menu a
-  tendina "scegli ordine" in Registra fattura: a differenza di
-  uninvoicedShipments, qui ci sono TUTTI gli ordini, anche quelli
-  senza ancora nessun DDT registrato (si apriranno comunque, solo
-  senza nulla da spuntare finché non si registra il DDT).
+  tendina "scegli ordine" in Registra fattura: compaiono TUTTI gli
+  ordini, anche quelli senza nessun articolo ancora fatturato.
 */
 export async function loadSupplierOrderOptions(
   supplierId: string
@@ -270,10 +286,10 @@ export async function loadSupplierOrderOptions(
 }
 
 /*
-  Elenco di sola lettura degli articoli di un ordine, da mostrare
-  come riferimento sotto i DDT di quell'ordine quando si sceglie
-  cosa mettere in una fattura (niente prezzi: pagine diverse hanno
-  permessi diversi, qui serve solo a confermare cosa c'è dentro).
+  Articoli (righe ordine) di un ordine, da spuntare uno per uno
+  quando si registra una fattura: ogni riga dice anche se è già
+  stata messa in un'altra fattura (invoiced), per non poterla
+  selezionare due volte.
 */
 export type OrderItemReference = {
   id: string;
@@ -282,6 +298,7 @@ export type OrderItemReference = {
   description: string;
   qty: number;
   received_qty: number;
+  invoiced: boolean;
 };
 
 type OrderItemReferenceRow = {
@@ -311,12 +328,22 @@ export async function loadOrderItemsReference(
   }
 
   const orderItemRows = data as OrderItemReferenceRow[];
+  const orderItemIds = orderItemRows.map((row) => String(row.id));
   const itemIds = orderItemRows.map((row) => String(row.item_id));
 
-  const { data: articleRows, error: articlesError } = await supabase
-    .from("items")
-    .select("id,code,supplier_code,description")
-    .in("id", itemIds);
+  const [
+    { data: articleRows, error: articlesError },
+    { data: linkRows },
+  ] = await Promise.all([
+    supabase
+      .from("items")
+      .select("id,code,supplier_code,description")
+      .in("id", itemIds),
+    supabase
+      .from("order_invoice_items")
+      .select("order_item_id")
+      .in("order_item_id", orderItemIds),
+  ]);
 
   const articleById = new Map<
     string,
@@ -335,6 +362,12 @@ export async function loadOrderItemsReference(
     });
   }
 
+  const invoicedIds = new Set(
+    ((linkRows || []) as { order_item_id: string }[]).map((row) =>
+      String(row.order_item_id)
+    )
+  );
+
   return orderItemRows.map((row) => {
     const article = articleById.get(String(row.item_id));
 
@@ -345,6 +378,7 @@ export async function loadOrderItemsReference(
       description: article?.description || "Articolo non trovato",
       qty: Number(row.qty || 0),
       received_qty: Number(row.received_qty || 0),
+      invoiced: invoicedIds.has(String(row.id)),
     };
   });
 }

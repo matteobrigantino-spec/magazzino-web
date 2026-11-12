@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { supabase } from "../../../../lib/supabaseClient";
 import jsPDF from "jspdf";
 import { fetchCompanyLogo, drawCompanyLogoTopLeft } from "../../../../lib/pdfLogo";
+import { computePlafondStatus } from "../../../../lib/plafond";
 
 /*
   DATI LEGALI ITALBOATS - USATI NELL'INTESTAZIONE DEL PDF ORDINE
@@ -41,6 +42,7 @@ type Supplier = {
   teak_enabled?: boolean;
   bimini_enabled?: boolean;
   teli_enabled?: boolean;
+  requires_intent_declaration?: boolean;
 };
 
 type Item = {
@@ -587,7 +589,9 @@ export default function SupplierOrderPage() {
     const { data: supplierData, error: supplierError } =
       await supabase
         .from("suppliers")
-        .select("id,name,upholstery_enabled,windshield_enabled,teak_enabled,bimini_enabled,teli_enabled")
+        .select(
+          "id,name,upholstery_enabled,windshield_enabled,teak_enabled,bimini_enabled,teli_enabled,requires_intent_declaration"
+        )
         .eq("id", supplierId)
         .single();
 
@@ -2027,6 +2031,43 @@ export default function SupplierOrderPage() {
 
       setMessageType("error");
       return;
+    }
+
+    /*
+      PLAFOND / DICHIARAZIONE D'INTENTO (STEP 61)
+
+      Solo per i fornitori che la richiedono: avvisa PRIMA di
+      confermare se questo ordine sfora il plafond ancora
+      disponibile. E' un avviso, non un blocco: si puo' comunque
+      procedere (es. mentre si invia l'integrazione di plafond).
+    */
+    if (supplier.requires_intent_declaration) {
+      const plafondStatus = await computePlafondStatus(supplier.id);
+
+      if (!plafondStatus.hasActiveDeclaration) {
+        const proceedWithoutDeclaration = confirm(
+          "Questo fornitore richiede una dichiarazione d'intento, ma non ne risulta nessuna attiva oggi.\n\n" +
+            "Vuoi procedere comunque con l'ordine?"
+        );
+
+        if (!proceedWithoutDeclaration) {
+          return;
+        }
+      } else {
+        const overBy = totalValue - plafondStatus.available;
+
+        if (overBy > 0) {
+          const proceedOverPlafond = confirm(
+            `Attenzione: questo ordine (${formatEuro(totalValue)}) supera il plafond ancora disponibile per questo fornitore (${formatEuro(plafondStatus.available)}).\n\n` +
+              `Sforeresti di ${formatEuro(overBy)}.\n\n` +
+              "Vuoi procedere comunque? (ricordati di inviare l'integrazione di plafond al fornitore se necessario)"
+          );
+
+          if (!proceedOverPlafond) {
+            return;
+          }
+        }
+      }
     }
 
     const confirmed = confirm(

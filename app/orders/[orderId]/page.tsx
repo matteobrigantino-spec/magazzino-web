@@ -87,13 +87,23 @@ type KitAssignmentSlot = {
   unitPrice: string;
 };
 
+type ShipmentItemInfo = {
+  id: string;
+  code: string;
+  supplier_code: string | null;
+  description: string;
+  qty_arrived: number;
+};
+
 type Shipment = {
   id: string;
   ddt_number: string;
   ddt_date: string;
   archive_code: string | null;
   note: string | null;
-  invoiced: boolean;
+  scan_pdf_url: string | null;
+  scan_pdf_path: string | null;
+  items: ShipmentItemInfo[];
 };
 
 type ShipmentRow = {
@@ -102,6 +112,14 @@ type ShipmentRow = {
   ddt_date: string;
   archive_code: string | null;
   note: string | null;
+  scan_pdf_url: string | null;
+  scan_pdf_path: string | null;
+};
+
+type ShipmentItemRow = {
+  shipment_id: string;
+  order_item_id: string;
+  qty_arrived: number | string;
 };
 
 type ShipmentDraft = {
@@ -234,6 +252,11 @@ export default function OrderDetailPage() {
   );
   const [shipmentSaving, setShipmentSaving] = useState(false);
   const [shipmentMessage, setShipmentMessage] = useState("");
+  const [ddtItemQty, setDdtItemQty] = useState<Record<string, string>>({});
+  const [ddtPdfFile, setDdtPdfFile] = useState<File | null>(null);
+  const [shipmentUploadingId, setShipmentUploadingId] = useState<
+    string | null
+  >(null);
 
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [invoicesLoading, setInvoicesLoading] = useState(false);
@@ -301,20 +324,26 @@ export default function OrderDetailPage() {
   }, [orderId]);
 
   /*
-    DDT (STEP 61)
+    DDT (STEP 61 + STEP 64)
 
     Indipendente dal resto del caricamento ordine: una riga per
     ogni DDT ricevuto per questo ordine (numero, data, codice di
-    archiviazione). "invoiced" segna se quel DDT è già stato
-    collegato a una fattura (gestite dalla pagina fornitore, dove
-    una fattura può coprire più DDT insieme).
+    archiviazione), con gli articoli e le quantità arrivate in quel
+    DDT, e l'eventuale PDF della scansione del DDT originale. È un
+    registro documentale della consegna fisica: non tocca le
+    quantità ricevute dell'ordine (received_qty), gestite dalla
+    sezione "Ricezione merce" qui sopra. Un articolo può comparire
+    in più DDT diversi nel tempo (consegne parziali), quindi non
+    c'è nessun vincolo di unicità sugli articoli del DDT.
   */
   const loadShipments = useCallback(async () => {
     setShipmentsLoading(true);
 
     const { data: rows, error } = await supabase
       .from("order_shipments")
-      .select("id,ddt_number,ddt_date,archive_code,note")
+      .select(
+        "id,ddt_number,ddt_date,archive_code,note,scan_pdf_url,scan_pdf_path"
+      )
       .eq("order_id", orderId)
       .order("ddt_date", { ascending: false });
 
@@ -326,19 +355,89 @@ export default function OrderDetailPage() {
     const shipmentRows = (rows || []) as ShipmentRow[];
     const ids = shipmentRows.map((row) => String(row.id));
 
-    let invoicedIds = new Set<string>();
+    const itemsByShipment = new Map<string, ShipmentItemInfo[]>();
 
     if (ids.length > 0) {
-      const { data: linkRows } = await supabase
-        .from("order_invoice_shipments")
-        .select("shipment_id")
+      const { data: itemRows } = await supabase
+        .from("order_shipment_items")
+        .select("shipment_id,order_item_id,qty_arrived")
         .in("shipment_id", ids);
 
-      invoicedIds = new Set(
-        ((linkRows || []) as { shipment_id: string }[]).map((row) =>
-          String(row.shipment_id)
-        )
+      const shipmentItemRows = (itemRows || []) as ShipmentItemRow[];
+      const orderItemIds = Array.from(
+        new Set(shipmentItemRows.map((row) => String(row.order_item_id)))
       );
+
+      const articleByOrderItemId = new Map<
+        string,
+        { code: string; supplier_code: string | null; description: string }
+      >();
+
+      if (orderItemIds.length > 0) {
+        const { data: orderItemRows } = await supabase
+          .from("order_items")
+          .select("id,item_id")
+          .in("id", orderItemIds);
+
+        const orderItemLinkRows = (orderItemRows || []) as {
+          id: string;
+          item_id: string;
+        }[];
+
+        const itemIds = orderItemLinkRows.map((row) => String(row.item_id));
+
+        const { data: articleRows } = await supabase
+          .from("items")
+          .select("id,code,supplier_code,description")
+          .in("id", itemIds);
+
+        const articleById = new Map<
+          string,
+          { code: string; supplier_code: string | null; description: string }
+        >();
+
+        (
+          (articleRows || []) as {
+            id: string;
+            code: string | null;
+            supplier_code: string | null;
+            description: string | null;
+          }[]
+        ).forEach((row) => {
+          articleById.set(String(row.id), {
+            code: row.code ? String(row.code) : "-",
+            supplier_code: row.supplier_code
+              ? String(row.supplier_code)
+              : null,
+            description: row.description
+              ? String(row.description)
+              : "Articolo non trovato",
+          });
+        });
+
+        orderItemLinkRows.forEach((row) => {
+          const article = articleById.get(String(row.item_id));
+
+          if (article) {
+            articleByOrderItemId.set(String(row.id), article);
+          }
+        });
+      }
+
+      shipmentItemRows.forEach((row) => {
+        const article = articleByOrderItemId.get(String(row.order_item_id));
+        const list = itemsByShipment.get(String(row.shipment_id)) || [];
+
+        list.push({
+          id: String(row.order_item_id),
+          code: article?.code || "-",
+          supplier_code: article?.supplier_code || null,
+          description: article?.description || "Articolo non trovato",
+          qty_arrived: Number(row.qty_arrived || 0),
+        });
+
+        itemsByShipment.set(String(row.shipment_id), list);
+      });
     }
 
     setShipments(
@@ -348,7 +447,9 @@ export default function OrderDetailPage() {
         ddt_date: String(row.ddt_date || ""),
         archive_code: row.archive_code ? String(row.archive_code) : null,
         note: row.note ? String(row.note) : null,
-        invoiced: invoicedIds.has(String(row.id)),
+        scan_pdf_url: row.scan_pdf_url ? String(row.scan_pdf_url) : null,
+        scan_pdf_path: row.scan_pdf_path ? String(row.scan_pdf_path) : null,
+        items: itemsByShipment.get(String(row.id)) || [],
       }))
     );
 
@@ -358,6 +459,62 @@ export default function OrderDetailPage() {
   useEffect(() => {
     loadShipments();
   }, [loadShipments]);
+
+  function openAddShipment() {
+    if (showAddShipment) {
+      setShowAddShipment(false);
+      return;
+    }
+
+    const prefill: Record<string, string> = {};
+
+    Object.entries(incomingQty).forEach(([lineId, qty]) => {
+      if (qty > 0) {
+        prefill[lineId] = String(qty);
+      }
+    });
+
+    setDdtItemQty(prefill);
+    setDdtPdfFile(null);
+    setShowAddShipment(true);
+  }
+
+  async function uploadDdtPdf(
+    shipmentId: string,
+    file: File
+  ): Promise<string | null> {
+    const safeName = file.name
+      .trim()
+      .replace(/[\\/:*?"<>|]/g, "-")
+      .replace(/\s+/g, "_");
+
+    const path = `${orderId}/${shipmentId}_${safeName}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from("ddt-scans")
+      .upload(path, file, {
+        contentType: "application/pdf",
+        upsert: true,
+      });
+
+    if (uploadError) {
+      return uploadError.message;
+    }
+
+    const { data: publicUrlData } = supabase.storage
+      .from("ddt-scans")
+      .getPublicUrl(path);
+
+    const { error: updateError } = await supabase
+      .from("order_shipments")
+      .update({
+        scan_pdf_url: publicUrlData.publicUrl,
+        scan_pdf_path: path,
+      })
+      .eq("id", shipmentId);
+
+    return updateError ? updateError.message : null;
+  }
 
   async function addShipment() {
     const number = shipmentDraft.ddt_number.trim();
@@ -376,23 +533,78 @@ export default function OrderDetailPage() {
     setShipmentSaving(true);
     setShipmentMessage("");
 
-    const { error } = await supabase.from("order_shipments").insert({
-      order_id: orderId,
-      ddt_number: number,
-      ddt_date: date,
-      archive_code: shipmentDraft.archive_code.trim() || null,
-      note: shipmentDraft.note.trim() || null,
-    });
+    const { data: inserted, error } = await supabase
+      .from("order_shipments")
+      .insert({
+        order_id: orderId,
+        ddt_number: number,
+        ddt_date: date,
+        archive_code: shipmentDraft.archive_code.trim() || null,
+        note: shipmentDraft.note.trim() || null,
+      })
+      .select("id")
+      .single();
 
-    if (error) {
-      setShipmentMessage("Errore: " + error.message);
+    if (error || !inserted) {
+      setShipmentMessage("Errore: " + (error?.message || "DDT non creato"));
       setShipmentSaving(false);
       return;
     }
 
+    const itemRows = Object.entries(ddtItemQty)
+      .map(([orderItemId, value]) => ({
+        shipment_id: inserted.id,
+        order_item_id: orderItemId,
+        qty_arrived: Number(value) || 0,
+      }))
+      .filter((row) => row.qty_arrived > 0);
+
+    let warning = "";
+
+    if (itemRows.length > 0) {
+      const { error: itemsError } = await supabase
+        .from("order_shipment_items")
+        .insert(itemRows);
+
+      if (itemsError) {
+        warning =
+          "DDT creato, ma errore nel salvare gli articoli: " +
+          itemsError.message;
+      }
+    }
+
+    if (ddtPdfFile) {
+      const uploadErrorMessage = await uploadDdtPdf(inserted.id, ddtPdfFile);
+
+      if (uploadErrorMessage) {
+        warning =
+          (warning ? warning + " " : "") +
+          "Errore nel caricare il PDF: " +
+          uploadErrorMessage;
+      }
+    }
+
+    setShipmentMessage(warning);
     setShipmentDraft(EMPTY_SHIPMENT_DRAFT);
+    setDdtItemQty({});
+    setDdtPdfFile(null);
     setShowAddShipment(false);
     setShipmentSaving(false);
+    await loadShipments();
+  }
+
+  async function addPdfToShipment(shipmentId: string, file: File) {
+    setShipmentUploadingId(shipmentId);
+
+    const errorMessage = await uploadDdtPdf(shipmentId, file);
+
+    setShipmentUploadingId(null);
+
+    if (errorMessage) {
+      alert("Errore nel caricare il PDF: " + errorMessage);
+      return;
+    }
+
     await loadShipments();
   }
 
@@ -2474,7 +2686,7 @@ export default function OrderDetailPage() {
 
             <button
               type="button"
-              onClick={() => setShowAddShipment((prev) => !prev)}
+              onClick={openAddShipment}
               style={secondaryButtonStyle}
             >
               {showAddShipment ? "Chiudi" : "+ Aggiungi DDT"}
@@ -2559,6 +2771,58 @@ export default function OrderDetailPage() {
                 />
               </div>
 
+              <div style={{ width: "100%", marginTop: 6 }}>
+                <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 6 }}>
+                  Articoli arrivati con questo DDT (quantità)
+                </div>
+
+                {lines.map((line) => (
+                  <div
+                    key={line.id}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      fontSize: 13,
+                      padding: "4px 0",
+                    }}
+                  >
+                    <div style={{ flex: 1 }}>
+                      {line.supplier_code || line.code} · {line.description}
+                    </div>
+
+                    <input
+                      type="number"
+                      min="0"
+                      value={ddtItemQty[line.id] ?? ""}
+                      onChange={(e) =>
+                        setDdtItemQty((prev) => ({
+                          ...prev,
+                          [line.id]: e.target.value,
+                        }))
+                      }
+                      placeholder="0"
+                      style={{ ...smallInputStyle, width: 80 }}
+                    />
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ width: "100%", marginTop: 6 }}>
+                <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 6 }}>
+                  PDF scansione DDT originale (opzionale)
+                </div>
+
+                <input
+                  type="file"
+                  accept="application/pdf"
+                  onChange={(e) =>
+                    setDdtPdfFile(e.target.files?.[0] || null)
+                  }
+                  style={{ fontSize: 13 }}
+                />
+              </div>
+
               <button
                 type="button"
                 onClick={addShipment}
@@ -2590,9 +2854,9 @@ export default function OrderDetailPage() {
                   style={{
                     display: "flex",
                     justifyContent: "space-between",
-                    alignItems: "center",
+                    alignItems: "flex-start",
                     gap: 10,
-                    padding: "8px 0",
+                    padding: "10px 0",
                     borderTop: "1px solid var(--border-color)",
                     fontSize: 13,
                   }}
@@ -2605,9 +2869,49 @@ export default function OrderDetailPage() {
                         ? ` · archivio ${shipment.archive_code}`
                         : ""}
                       {shipment.note ? ` · ${shipment.note}` : ""}
-                      {" · "}
-                      {shipment.invoiced ? "Fatturato" : "Da fatturare"}
                     </span>
+
+                    {shipment.items.length > 0 && (
+                      <div style={{ marginTop: 4, opacity: 0.6 }}>
+                        Articoli:{" "}
+                        {shipment.items
+                          .map(
+                            (item) =>
+                              `${item.supplier_code || item.code} (${item.qty_arrived})`
+                          )
+                          .join(", ")}
+                      </div>
+                    )}
+
+                    <div style={{ marginTop: 6 }}>
+                      {shipment.scan_pdf_url ? (
+                        <a
+                          href={shipment.scan_pdf_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{ color: "inherit", fontWeight: 700 }}
+                        >
+                          📄 Vedi PDF scansione
+                        </a>
+                      ) : (
+                        <label style={{ cursor: "pointer", opacity: 0.75 }}>
+                          {shipmentUploadingId === shipment.id
+                            ? "Carico..."
+                            : "+ Aggiungi PDF scansione"}
+                          <input
+                            type="file"
+                            accept="application/pdf"
+                            style={{ display: "none" }}
+                            disabled={shipmentUploadingId === shipment.id}
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) addPdfToShipment(shipment.id, file);
+                              e.target.value = "";
+                            }}
+                          />
+                        </label>
+                      )}
+                    </div>
                   </div>
 
                   <button

@@ -232,6 +232,43 @@ export async function deleteInvoiceById(
   return { error: error ? error.message : null };
 }
 
+export type SupplierOrderOption = {
+  order_id: string;
+  order_number: string | null;
+};
+
+type SupplierOrderOptionRow = {
+  id: string;
+  order_number: number | string | null;
+};
+
+/*
+  Elenco ordini (non annullati) di un fornitore, per il menu a
+  tendina "scegli ordine" in Registra fattura: a differenza di
+  uninvoicedShipments, qui ci sono TUTTI gli ordini, anche quelli
+  senza ancora nessun DDT registrato (si apriranno comunque, solo
+  senza nulla da spuntare finché non si registra il DDT).
+*/
+export async function loadSupplierOrderOptions(
+  supplierId: string
+): Promise<SupplierOrderOption[]> {
+  const { data, error } = await supabase
+    .from("orders")
+    .select("id,order_number")
+    .eq("supplier_id", supplierId)
+    .neq("status", "cancelled")
+    .order("order_number", { ascending: false });
+
+  if (error || !data) {
+    return [];
+  }
+
+  return (data as SupplierOrderOptionRow[]).map((row) => ({
+    order_id: String(row.id),
+    order_number: row.order_number != null ? String(row.order_number) : null,
+  }));
+}
+
 /*
   Elenco di sola lettura degli articoli di un ordine, da mostrare
   come riferimento sotto i DDT di quell'ordine quando si sceglie

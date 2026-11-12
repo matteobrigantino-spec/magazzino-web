@@ -11,9 +11,11 @@ import {
   createInvoice,
   deleteInvoiceById,
   loadOrderItemsReference,
+  loadSupplierOrderOptions,
   Invoice,
   UninvoicedShipment,
   OrderItemReference,
+  SupplierOrderOption,
 } from "../../../lib/invoices";
 
 type Item = {
@@ -321,8 +323,10 @@ export default function SupplierDetail({
   const [invoiceSaving, setInvoiceSaving] = useState(false);
   const [invoiceMessage, setInvoiceMessage] = useState("");
 
-  const [orderSearchQuery, setOrderSearchQuery] = useState("");
   const [addedOrderIds, setAddedOrderIds] = useState<string[]>([]);
+  const [supplierOrderOptions, setSupplierOrderOptions] = useState<
+    SupplierOrderOption[]
+  >([]);
   const [orderItemsCache, setOrderItemsCache] = useState<
     Record<string, OrderItemReference[]>
   >({});
@@ -717,11 +721,17 @@ export default function SupplierDetail({
   const loadInvoiceData = useCallback(async () => {
     setInvoicesLoading(true);
 
-    const { invoices: loadedInvoices, uninvoicedShipments: loadedShipments } =
-      await loadSupplierInvoiceData(supplierId);
+    const [
+      { invoices: loadedInvoices, uninvoicedShipments: loadedShipments },
+      loadedOrderOptions,
+    ] = await Promise.all([
+      loadSupplierInvoiceData(supplierId),
+      loadSupplierOrderOptions(supplierId),
+    ]);
 
     setInvoices(loadedInvoices);
     setUninvoicedShipments(loadedShipments);
+    setSupplierOrderOptions(loadedOrderOptions);
     setInvoicesLoading(false);
   }, [supplierId]);
 
@@ -741,51 +751,15 @@ export default function SupplierDetail({
       return;
     }
 
-    setOrderSearchQuery("");
     setAddedOrderIds([]);
     setSelectedShipmentIds([]);
     setShowAddInvoice(true);
   }
 
-  /*
-    Ordini di questo fornitore che hanno almeno un DDT ancora da
-    fatturare, usati per la ricerca "aggiungi ordine alla fattura".
-  */
-  const uninvoicedOrders = useMemo(() => {
-    const map = new Map<string, string | null>();
-
-    uninvoicedShipments.forEach((shipment) => {
-      if (!map.has(shipment.order_id)) {
-        map.set(shipment.order_id, shipment.order_number);
-      }
-    });
-
-    return Array.from(map.entries()).map(([order_id, order_number]) => ({
-      order_id,
-      order_number,
-    }));
-  }, [uninvoicedShipments]);
-
-  const matchingOrders = useMemo(() => {
-    const query = orderSearchQuery.trim().toLowerCase();
-
-    if (!query) {
-      return [];
-    }
-
-    return uninvoicedOrders
-      .filter((order) => !addedOrderIds.includes(order.order_id))
-      .filter((order) =>
-        (order.order_number || "").toLowerCase().includes(query)
-      )
-      .slice(0, 8);
-  }, [uninvoicedOrders, addedOrderIds, orderSearchQuery]);
-
   async function addOrderToInvoiceDraft(orderId: string) {
     setAddedOrderIds((prev) =>
       prev.includes(orderId) ? prev : [...prev, orderId]
     );
-    setOrderSearchQuery("");
 
     if (!orderItemsCache[orderId]) {
       const items = await loadOrderItemsReference(orderId);
@@ -849,7 +823,6 @@ export default function SupplierDetail({
     setInvoiceDraft(EMPTY_INVOICE_DRAFT);
     setSelectedShipmentIds([]);
     setAddedOrderIds([]);
-    setOrderSearchQuery("");
     setShowAddInvoice(false);
     setInvoiceSaving(false);
     await loadInvoiceData();
@@ -3242,54 +3215,33 @@ export default function SupplierDetail({
 
             <div style={{ marginTop: 14 }}>
               <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 6 }}>
-                Cerca l&apos;ordine da aggiungere alla fattura (numero ordine)
+                Scegli l&apos;ordine da aggiungere alla fattura
               </div>
 
-              <input
-                type="text"
-                value={orderSearchQuery}
-                onChange={(e) => setOrderSearchQuery(e.target.value)}
-                placeholder="Numero ordine..."
-                style={{ ...plafondInputStyle, width: 220 }}
-              />
-
-              {matchingOrders.length > 0 && (
-                <div
-                  style={{
-                    marginTop: 6,
-                    maxWidth: 220,
-                    border: "1px solid var(--border-color)",
-                    borderRadius: 8,
-                    overflow: "hidden",
-                  }}
-                >
-                  {matchingOrders.map((order) => (
-                    <button
-                      key={order.order_id}
-                      type="button"
-                      onClick={() => addOrderToInvoiceDraft(order.order_id)}
-                      style={{
-                        display: "block",
-                        width: "100%",
-                        textAlign: "left",
-                        padding: "8px 10px",
-                        border: "none",
-                        background: "var(--card)",
-                        cursor: "pointer",
-                        fontSize: 13,
-                      }}
-                    >
+              <select
+                value=""
+                onChange={(e) => {
+                  if (e.target.value) {
+                    addOrderToInvoiceDraft(e.target.value);
+                  }
+                }}
+                style={{ ...plafondInputStyle, width: 240 }}
+              >
+                <option value="">-- Seleziona ordine --</option>
+                {supplierOrderOptions
+                  .filter((order) => !addedOrderIds.includes(order.order_id))
+                  .map((order) => (
+                    <option key={order.order_id} value={order.order_id}>
                       Ordine N. {order.order_number || "-"}
-                    </button>
+                    </option>
                   ))}
-                </div>
-              )}
+              </select>
 
               {addedOrderIds.length === 0 && (
                 <div style={{ marginTop: 10, fontSize: 13, opacity: 0.6 }}>
-                  {uninvoicedShipments.length === 0
-                    ? "Nessun DDT ancora da fatturare per questo fornitore."
-                    : "Cerca un ordine qui sopra per vedere i suoi DDT da fatturare."}
+                  {supplierOrderOptions.length === 0
+                    ? "Nessun ordine trovato per questo fornitore."
+                    : "Scegli un ordine dal menu qui sopra per vedere i suoi DDT da fatturare."}
                 </div>
               )}
 

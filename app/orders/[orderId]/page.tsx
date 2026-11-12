@@ -3,6 +3,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "../../../lib/supabaseClient";
+import {
+  loadSupplierInvoiceData,
+  createInvoice,
+  deleteInvoiceById,
+  Invoice,
+  UninvoicedShipment,
+} from "../../../lib/invoices";
 
 type OrderRow = {
   id: string;
@@ -108,6 +115,22 @@ const EMPTY_SHIPMENT_DRAFT: ShipmentDraft = {
   note: "",
 };
 
+type InvoiceDraft = {
+  invoice_number: string;
+  invoice_date: string;
+  archive_code: string;
+  amount: string;
+  note: string;
+};
+
+const EMPTY_INVOICE_DRAFT: InvoiceDraft = {
+  invoice_number: "",
+  invoice_date: "",
+  archive_code: "",
+  amount: "",
+  note: "",
+};
+
 type UpholsteryRequirementRow = {
   id: string;
   order_item_id: string | null;
@@ -208,6 +231,21 @@ export default function OrderDetailPage() {
   );
   const [shipmentSaving, setShipmentSaving] = useState(false);
   const [shipmentMessage, setShipmentMessage] = useState("");
+
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [uninvoicedShipments, setUninvoicedShipments] = useState<
+    UninvoicedShipment[]
+  >([]);
+  const [invoicesLoading, setInvoicesLoading] = useState(false);
+  const [showAddInvoice, setShowAddInvoice] = useState(false);
+  const [invoiceDraft, setInvoiceDraft] = useState<InvoiceDraft>(
+    EMPTY_INVOICE_DRAFT
+  );
+  const [selectedShipmentIds, setSelectedShipmentIds] = useState<string[]>(
+    []
+  );
+  const [invoiceSaving, setInvoiceSaving] = useState(false);
+  const [invoiceMessage, setInvoiceMessage] = useState("");
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -370,6 +408,120 @@ export default function OrderDetailPage() {
     }
 
     await loadShipments();
+  }
+
+  /*
+    FATTURE (STEP 61 + estensione multi-ordine)
+
+    Una fattura è collegata al fornitore, non a questo singolo
+    ordine: puo' coprire DDT di ordini diversi dello stesso
+    fornitore insieme (fattura riepilogativa). Per questo il
+    selettore mostra TUTTI i DDT ancora da fatturare del
+    fornitore, non solo quelli di questo ordine - ma quelli di
+    questo ordine vengono pre-selezionati per comodità quando si
+    apre il modulo da qui.
+  */
+  const loadInvoiceData = useCallback(async () => {
+    if (!order?.supplier_id) return;
+
+    setInvoicesLoading(true);
+
+    const { invoices: loadedInvoices, uninvoicedShipments: loadedShipments } =
+      await loadSupplierInvoiceData(order.supplier_id);
+
+    setInvoices(loadedInvoices);
+    setUninvoicedShipments(loadedShipments);
+    setInvoicesLoading(false);
+  }, [order?.supplier_id]);
+
+  useEffect(() => {
+    loadInvoiceData();
+  }, [loadInvoiceData]);
+
+  function toggleShipmentSelection(id: string) {
+    setSelectedShipmentIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  }
+
+  function openAddInvoice() {
+    if (showAddInvoice) {
+      setShowAddInvoice(false);
+      return;
+    }
+
+    const thisOrderShipmentIds = uninvoicedShipments
+      .filter((shipment) => shipment.order_id === orderId)
+      .map((shipment) => shipment.id);
+
+    setSelectedShipmentIds(thisOrderShipmentIds);
+    setShowAddInvoice(true);
+  }
+
+  async function addInvoice() {
+    if (!order?.supplier_id) return;
+
+    const number = invoiceDraft.invoice_number.trim();
+    const date = invoiceDraft.invoice_date.trim();
+
+    if (!number) {
+      setInvoiceMessage("Inserisci il numero della fattura.");
+      return;
+    }
+
+    if (!date) {
+      setInvoiceMessage("Inserisci la data della fattura.");
+      return;
+    }
+
+    setInvoiceSaving(true);
+    setInvoiceMessage("");
+
+    const amountValue = invoiceDraft.amount.trim()
+      ? Number(invoiceDraft.amount)
+      : null;
+
+    const { error } = await createInvoice(
+      order.supplier_id,
+      {
+        invoice_number: number,
+        invoice_date: date,
+        archive_code: invoiceDraft.archive_code.trim() || null,
+        amount: amountValue,
+        note: invoiceDraft.note.trim() || null,
+      },
+      selectedShipmentIds
+    );
+
+    if (error) {
+      setInvoiceMessage("Errore: " + error);
+      setInvoiceSaving(false);
+      await loadInvoiceData();
+      return;
+    }
+
+    setInvoiceDraft(EMPTY_INVOICE_DRAFT);
+    setSelectedShipmentIds([]);
+    setShowAddInvoice(false);
+    setInvoiceSaving(false);
+    await loadInvoiceData();
+  }
+
+  async function deleteInvoice(id: string) {
+    const confirmed = confirm(
+      "Eliminare questa fattura? I DDT collegati torneranno \"da fatturare\". L'operazione non si può annullare."
+    );
+
+    if (!confirmed) return;
+
+    const { error } = await deleteInvoiceById(id);
+
+    if (error) {
+      alert("Errore: " + error);
+      return;
+    }
+
+    await loadInvoiceData();
   }
 
   async function loadData(
@@ -725,6 +877,18 @@ export default function OrderDetailPage() {
       0
     );
   }, [lines, canViewPrices]);
+
+  /*
+    Solo le fatture che coprono almeno un DDT di QUESTO ordine
+    (una fattura puo' comunque coprirne altri di ordini diversi:
+    la riga sotto lo segnala, lo storico completo per fornitore
+    resta nella pagina fornitore).
+  */
+  const relevantInvoices = useMemo(() => {
+    return invoices.filter((invoice) =>
+      invoice.shipments.some((shipment) => shipment.order_id === orderId)
+    );
+  }, [invoices, orderId]);
 
   const totalOrderedQty = useMemo(() => {
     return lines.reduce(
@@ -2349,6 +2513,279 @@ export default function OrderDetailPage() {
                   <button
                     type="button"
                     onClick={() => deleteShipment(shipment.id)}
+                    style={{
+                      border: "none",
+                      background: "none",
+                      color: "#ef4444",
+                      cursor: "pointer",
+                      fontSize: 13,
+                      fontWeight: 700,
+                    }}
+                  >
+                    Elimina
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {canManageOrders && (
+        <div
+          style={{
+            marginTop: 22,
+            padding: 20,
+            border: "1px solid var(--border-color)",
+            borderRadius: 12,
+            background: "var(--card)",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: 16,
+              flexWrap: "wrap",
+            }}
+          >
+            <div style={{ fontSize: 18, fontWeight: 850 }}>Fatture</div>
+
+            <button
+              type="button"
+              onClick={openAddInvoice}
+              style={secondaryButtonStyle}
+            >
+              {showAddInvoice ? "Chiudi" : "+ Registra fattura"}
+            </button>
+          </div>
+
+          <div style={{ marginTop: 5, fontSize: 13, opacity: 0.6, maxWidth: 700 }}>
+            Una fattura è collegata al fornitore e può coprire DDT di
+            più ordini insieme: qui sotto trovi tutti i DDT del
+            fornitore ancora da fatturare, non solo quelli di questo
+            ordine.
+          </div>
+
+          {showAddInvoice && (
+            <div
+              style={{
+                marginTop: 14,
+                padding: 14,
+                borderRadius: 10,
+                background: "var(--input-bg)",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: 10,
+                  alignItems: "flex-end",
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 4 }}>
+                    Numero fattura
+                  </div>
+                  <input
+                    value={invoiceDraft.invoice_number}
+                    onChange={(e) =>
+                      setInvoiceDraft((prev) => ({
+                        ...prev,
+                        invoice_number: e.target.value,
+                      }))
+                    }
+                    style={smallInputStyle}
+                  />
+                </div>
+
+                <div>
+                  <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 4 }}>
+                    Data fattura
+                  </div>
+                  <input
+                    type="date"
+                    value={invoiceDraft.invoice_date}
+                    onChange={(e) =>
+                      setInvoiceDraft((prev) => ({
+                        ...prev,
+                        invoice_date: e.target.value,
+                      }))
+                    }
+                    style={smallInputStyle}
+                  />
+                </div>
+
+                <div>
+                  <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 4 }}>
+                    Codice archivio
+                  </div>
+                  <input
+                    value={invoiceDraft.archive_code}
+                    onChange={(e) =>
+                      setInvoiceDraft((prev) => ({
+                        ...prev,
+                        archive_code: e.target.value,
+                      }))
+                    }
+                    style={smallInputStyle}
+                  />
+                </div>
+
+                {canViewPrices && (
+                  <div>
+                    <div
+                      style={{ fontSize: 11, opacity: 0.6, marginBottom: 4 }}
+                    >
+                      Importo € (opzionale)
+                    </div>
+                    <input
+                      type="number"
+                      value={invoiceDraft.amount}
+                      onChange={(e) =>
+                        setInvoiceDraft((prev) => ({
+                          ...prev,
+                          amount: e.target.value,
+                        }))
+                      }
+                      style={smallInputStyle}
+                    />
+                  </div>
+                )}
+
+                <div style={{ flex: 1, minWidth: 160 }}>
+                  <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 4 }}>
+                    Nota (opzionale)
+                  </div>
+                  <input
+                    value={invoiceDraft.note}
+                    onChange={(e) =>
+                      setInvoiceDraft((prev) => ({
+                        ...prev,
+                        note: e.target.value,
+                      }))
+                    }
+                    style={{ ...smallInputStyle, width: "100%" }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ marginTop: 14 }}>
+                <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 6 }}>
+                  DDT coperti da questa fattura (di tutto il fornitore,
+                  già pre-selezionati quelli di questo ordine)
+                </div>
+
+                {uninvoicedShipments.length === 0 && (
+                  <div style={{ fontSize: 13, opacity: 0.6 }}>
+                    Nessun DDT ancora da fatturare per questo fornitore.
+                  </div>
+                )}
+
+                {uninvoicedShipments.map((shipment) => (
+                  <label
+                    key={shipment.id}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      fontSize: 13,
+                      padding: "4px 0",
+                      cursor: "pointer",
+                      fontWeight:
+                        shipment.order_id === orderId ? 700 : 400,
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedShipmentIds.includes(shipment.id)}
+                      onChange={() => toggleShipmentSelection(shipment.id)}
+                    />
+                    DDT {shipment.ddt_number} · {shipment.ddt_date}
+                    {shipment.order_number
+                      ? ` · ordine ${shipment.order_number}`
+                      : ""}
+                    {shipment.order_id === orderId ? " (questo ordine)" : ""}
+                  </label>
+                ))}
+              </div>
+
+              <div style={{ marginTop: 14 }}>
+                <button
+                  type="button"
+                  onClick={addInvoice}
+                  disabled={invoiceSaving}
+                  style={primaryButtonStyle(invoiceSaving)}
+                >
+                  {invoiceSaving ? "Salvo..." : "Salva"}
+                </button>
+
+                {invoiceMessage && (
+                  <div
+                    style={{ marginTop: 8, fontSize: 13, color: "#ef4444" }}
+                  >
+                    {invoiceMessage}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {!invoicesLoading && relevantInvoices.length === 0 && (
+            <div style={{ marginTop: 12, fontSize: 13, opacity: 0.6 }}>
+              Nessuna fattura registrata per questo ordine.
+            </div>
+          )}
+
+          {relevantInvoices.length > 0 && (
+            <div style={{ marginTop: 14 }}>
+              {relevantInvoices.map((invoice) => (
+                <div
+                  key={invoice.id}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "flex-start",
+                    gap: 10,
+                    padding: "8px 0",
+                    borderTop: "1px solid var(--border-color)",
+                    fontSize: 13,
+                  }}
+                >
+                  <div>
+                    <strong>Fattura {invoice.invoice_number}</strong>{" "}
+                    <span style={{ opacity: 0.6 }}>
+                      · {invoice.invoice_date}
+                      {invoice.archive_code
+                        ? ` · archivio ${invoice.archive_code}`
+                        : ""}
+                      {canViewPrices && invoice.amount !== null
+                        ? ` · ${invoice.amount.toFixed(2)} €`
+                        : ""}
+                    </span>
+
+                    {invoice.shipments.length > 0 && (
+                      <div style={{ marginTop: 4, opacity: 0.6 }}>
+                        DDT:{" "}
+                        {invoice.shipments
+                          .map(
+                            (shipment) =>
+                              `${shipment.ddt_number}${
+                                shipment.order_number
+                                  ? ` (ordine ${shipment.order_number})`
+                                  : ""
+                              }`
+                          )
+                          .join(", ")}
+                      </div>
+                    )}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => deleteInvoice(invoice.id)}
                     style={{
                       border: "none",
                       background: "none",

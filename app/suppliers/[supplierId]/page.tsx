@@ -6,6 +6,13 @@ import jsPDF from "jspdf";
 import { supabase } from "../../../lib/supabaseClient";
 import { fetchCompanyLogo, drawCompanyLogoTopRight } from "../../../lib/pdfLogo";
 import { computePlafondStatus, PlafondStatus } from "../../../lib/plafond";
+import {
+  loadSupplierInvoiceData,
+  createInvoice,
+  deleteInvoiceById,
+  Invoice,
+  UninvoicedShipment,
+} from "../../../lib/invoices";
 
 type Item = {
   id: string;
@@ -64,55 +71,6 @@ const EMPTY_DECLARATION_DRAFT: DeclarationDraft = {
   valid_to: "",
   plafond_amount: "",
   note: "",
-};
-
-type InvoiceShipmentInfo = {
-  id: string;
-  ddt_number: string;
-  order_number: string | null;
-};
-
-type Invoice = {
-  id: string;
-  invoice_number: string;
-  invoice_date: string;
-  archive_code: string | null;
-  amount: number | null;
-  note: string | null;
-  shipments: InvoiceShipmentInfo[];
-};
-
-type UninvoicedShipment = {
-  id: string;
-  ddt_number: string;
-  ddt_date: string;
-  order_number: string | null;
-};
-
-type InvoiceOrderRow = {
-  id: string;
-  order_number: number | string | null;
-};
-
-type InvoiceShipmentRow = {
-  id: string;
-  order_id: string;
-  ddt_number: string | null;
-  ddt_date: string;
-};
-
-type InvoiceLinkRow = {
-  invoice_id: string;
-  shipment_id: string;
-};
-
-type InvoiceRow = {
-  id: string;
-  invoice_number: string | null;
-  invoice_date: string;
-  archive_code: string | null;
-  amount: number | string | null;
-  note: string | null;
 };
 
 type InvoiceDraft = {
@@ -751,102 +709,11 @@ export default function SupplierDetail({
   const loadInvoiceData = useCallback(async () => {
     setInvoicesLoading(true);
 
-    const { data: orderRows } = await supabase
-      .from("orders")
-      .select("id,order_number")
-      .eq("supplier_id", supplierId);
+    const { invoices: loadedInvoices, uninvoicedShipments: loadedShipments } =
+      await loadSupplierInvoiceData(supplierId);
 
-    const orderNumberById = new Map<string, string>();
-
-    ((orderRows || []) as InvoiceOrderRow[]).forEach((row) => {
-      orderNumberById.set(
-        String(row.id),
-        row.order_number != null ? String(row.order_number) : ""
-      );
-    });
-
-    const orderIds = Array.from(orderNumberById.keys());
-
-    let shipmentRows: InvoiceShipmentRow[] = [];
-
-    if (orderIds.length > 0) {
-      const { data } = await supabase
-        .from("order_shipments")
-        .select("id,order_id,ddt_number,ddt_date")
-        .in("order_id", orderIds)
-        .order("ddt_date", { ascending: false });
-
-      shipmentRows = (data || []) as InvoiceShipmentRow[];
-    }
-
-    const shipmentIds = shipmentRows.map((row) => String(row.id));
-
-    let linkRows: InvoiceLinkRow[] = [];
-
-    if (shipmentIds.length > 0) {
-      const { data } = await supabase
-        .from("order_invoice_shipments")
-        .select("invoice_id,shipment_id")
-        .in("shipment_id", shipmentIds);
-
-      linkRows = (data || []) as InvoiceLinkRow[];
-    }
-
-    const invoicedShipmentIds = new Set(
-      linkRows.map((row) => String(row.shipment_id))
-    );
-
-    const shipmentInfoById = new Map<string, InvoiceShipmentInfo>();
-
-    shipmentRows.forEach((row) => {
-      shipmentInfoById.set(String(row.id), {
-        id: String(row.id),
-        ddt_number: String(row.ddt_number || ""),
-        order_number: orderNumberById.get(String(row.order_id)) || null,
-      });
-    });
-
-    setUninvoicedShipments(
-      shipmentRows
-        .filter((row) => !invoicedShipmentIds.has(String(row.id)))
-        .map((row) => ({
-          id: String(row.id),
-          ddt_number: String(row.ddt_number || ""),
-          ddt_date: String(row.ddt_date || ""),
-          order_number: orderNumberById.get(String(row.order_id)) || null,
-        }))
-    );
-
-    const { data: invoiceRows, error: invoiceError } = await supabase
-      .from("order_invoices")
-      .select("id,invoice_number,invoice_date,archive_code,amount,note")
-      .eq("supplier_id", supplierId)
-      .order("invoice_date", { ascending: false });
-
-    if (!invoiceError) {
-      const linksByInvoice = new Map<string, string[]>();
-
-      linkRows.forEach((row) => {
-        const list = linksByInvoice.get(String(row.invoice_id)) || [];
-        list.push(String(row.shipment_id));
-        linksByInvoice.set(String(row.invoice_id), list);
-      });
-
-      setInvoices(
-        ((invoiceRows || []) as InvoiceRow[]).map((row) => ({
-          id: String(row.id),
-          invoice_number: String(row.invoice_number || ""),
-          invoice_date: String(row.invoice_date || ""),
-          archive_code: row.archive_code ? String(row.archive_code) : null,
-          amount: row.amount !== null ? Number(row.amount) : null,
-          note: row.note ? String(row.note) : null,
-          shipments: (linksByInvoice.get(String(row.id)) || [])
-            .map((shipmentId) => shipmentInfoById.get(shipmentId))
-            .filter((info): info is InvoiceShipmentInfo => Boolean(info)),
-        }))
-      );
-    }
-
+    setInvoices(loadedInvoices);
+    setUninvoicedShipments(loadedShipments);
     setInvoicesLoading(false);
   }, [supplierId]);
 
@@ -881,46 +748,23 @@ export default function SupplierDetail({
       ? Number(invoiceDraft.amount)
       : null;
 
-    const { data: inserted, error } = await supabase
-      .from("order_invoices")
-      .insert({
-        supplier_id: supplierId,
+    const { error } = await createInvoice(
+      supplierId,
+      {
         invoice_number: number,
         invoice_date: date,
         archive_code: invoiceDraft.archive_code.trim() || null,
         amount: amountValue,
         note: invoiceDraft.note.trim() || null,
-      })
-      .select("id")
-      .single();
+      },
+      selectedShipmentIds
+    );
 
-    if (error || !inserted) {
-      setInvoiceMessage(
-        "Errore: " + (error?.message || "fattura non creata")
-      );
+    if (error) {
+      setInvoiceMessage("Errore: " + error);
       setInvoiceSaving(false);
+      await loadInvoiceData();
       return;
-    }
-
-    if (selectedShipmentIds.length > 0) {
-      const { error: linkError } = await supabase
-        .from("order_invoice_shipments")
-        .insert(
-          selectedShipmentIds.map((shipmentId) => ({
-            invoice_id: inserted.id,
-            shipment_id: shipmentId,
-          }))
-        );
-
-      if (linkError) {
-        setInvoiceMessage(
-          "Fattura creata, ma errore nel collegare i DDT: " +
-            linkError.message
-        );
-        setInvoiceSaving(false);
-        await loadInvoiceData();
-        return;
-      }
     }
 
     setInvoiceDraft(EMPTY_INVOICE_DRAFT);
@@ -937,13 +781,10 @@ export default function SupplierDetail({
 
     if (!confirmed) return;
 
-    const { error } = await supabase
-      .from("order_invoices")
-      .delete()
-      .eq("id", id);
+    const { error } = await deleteInvoiceById(id);
 
     if (error) {
-      alert("Errore: " + error.message);
+      alert("Errore: " + error);
       return;
     }
 

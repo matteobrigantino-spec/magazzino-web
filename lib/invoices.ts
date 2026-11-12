@@ -1,0 +1,233 @@
+import { supabase } from "./supabaseClient";
+
+/*
+  FATTURE FORNITORE (STEP 61 + estensione multi-ordine)
+
+  Logica condivisa tra la pagina fornitore e la pagina ordine: una
+  fattura è sempre collegata al FORNITORE (mai a un singolo
+  ordine), perché una fattura riepilogativa può coprire DDT di piu'
+  ordini diversi dello stesso fornitore (es. ordine 1936 insieme a
+  1982 e 1983). Entrambe le pagine mostrano quindi TUTTI i DDT del
+  fornitore ancora da fatturare, non solo quelli dell'ordine aperto.
+*/
+
+export type InvoiceShipmentInfo = {
+  id: string;
+  ddt_number: string;
+  order_id: string;
+  order_number: string | null;
+};
+
+export type Invoice = {
+  id: string;
+  invoice_number: string;
+  invoice_date: string;
+  archive_code: string | null;
+  amount: number | null;
+  note: string | null;
+  shipments: InvoiceShipmentInfo[];
+};
+
+export type UninvoicedShipment = {
+  id: string;
+  ddt_number: string;
+  ddt_date: string;
+  order_id: string;
+  order_number: string | null;
+};
+
+export type SupplierInvoiceData = {
+  invoices: Invoice[];
+  uninvoicedShipments: UninvoicedShipment[];
+};
+
+type InvoiceOrderRow = {
+  id: string;
+  order_number: number | string | null;
+};
+
+type InvoiceShipmentRow = {
+  id: string;
+  order_id: string;
+  ddt_number: string | null;
+  ddt_date: string;
+};
+
+type InvoiceLinkRow = {
+  invoice_id: string;
+  shipment_id: string;
+};
+
+type InvoiceRow = {
+  id: string;
+  invoice_number: string | null;
+  invoice_date: string;
+  archive_code: string | null;
+  amount: number | string | null;
+  note: string | null;
+};
+
+export async function loadSupplierInvoiceData(
+  supplierId: string
+): Promise<SupplierInvoiceData> {
+  const { data: orderRows } = await supabase
+    .from("orders")
+    .select("id,order_number")
+    .eq("supplier_id", supplierId);
+
+  const orderNumberById = new Map<string, string>();
+
+  ((orderRows || []) as InvoiceOrderRow[]).forEach((row) => {
+    orderNumberById.set(
+      String(row.id),
+      row.order_number != null ? String(row.order_number) : ""
+    );
+  });
+
+  const orderIds = Array.from(orderNumberById.keys());
+
+  let shipmentRows: InvoiceShipmentRow[] = [];
+
+  if (orderIds.length > 0) {
+    const { data } = await supabase
+      .from("order_shipments")
+      .select("id,order_id,ddt_number,ddt_date")
+      .in("order_id", orderIds)
+      .order("ddt_date", { ascending: false });
+
+    shipmentRows = (data || []) as InvoiceShipmentRow[];
+  }
+
+  const shipmentIds = shipmentRows.map((row) => String(row.id));
+
+  let linkRows: InvoiceLinkRow[] = [];
+
+  if (shipmentIds.length > 0) {
+    const { data } = await supabase
+      .from("order_invoice_shipments")
+      .select("invoice_id,shipment_id")
+      .in("shipment_id", shipmentIds);
+
+    linkRows = (data || []) as InvoiceLinkRow[];
+  }
+
+  const invoicedShipmentIds = new Set(
+    linkRows.map((row) => String(row.shipment_id))
+  );
+
+  const shipmentInfoById = new Map<string, InvoiceShipmentInfo>();
+
+  shipmentRows.forEach((row) => {
+    shipmentInfoById.set(String(row.id), {
+      id: String(row.id),
+      ddt_number: String(row.ddt_number || ""),
+      order_id: String(row.order_id),
+      order_number: orderNumberById.get(String(row.order_id)) || null,
+    });
+  });
+
+  const uninvoicedShipments: UninvoicedShipment[] = shipmentRows
+    .filter((row) => !invoicedShipmentIds.has(String(row.id)))
+    .map((row) => ({
+      id: String(row.id),
+      ddt_number: String(row.ddt_number || ""),
+      ddt_date: String(row.ddt_date || ""),
+      order_id: String(row.order_id),
+      order_number: orderNumberById.get(String(row.order_id)) || null,
+    }));
+
+  const { data: invoiceRows, error: invoiceError } = await supabase
+    .from("order_invoices")
+    .select("id,invoice_number,invoice_date,archive_code,amount,note")
+    .eq("supplier_id", supplierId)
+    .order("invoice_date", { ascending: false });
+
+  let invoices: Invoice[] = [];
+
+  if (!invoiceError) {
+    const linksByInvoice = new Map<string, string[]>();
+
+    linkRows.forEach((row) => {
+      const list = linksByInvoice.get(String(row.invoice_id)) || [];
+      list.push(String(row.shipment_id));
+      linksByInvoice.set(String(row.invoice_id), list);
+    });
+
+    invoices = ((invoiceRows || []) as InvoiceRow[]).map((row) => ({
+      id: String(row.id),
+      invoice_number: String(row.invoice_number || ""),
+      invoice_date: String(row.invoice_date || ""),
+      archive_code: row.archive_code ? String(row.archive_code) : null,
+      amount: row.amount !== null ? Number(row.amount) : null,
+      note: row.note ? String(row.note) : null,
+      shipments: (linksByInvoice.get(String(row.id)) || [])
+        .map((shipmentId) => shipmentInfoById.get(shipmentId))
+        .filter((info): info is InvoiceShipmentInfo => Boolean(info)),
+    }));
+  }
+
+  return { invoices, uninvoicedShipments };
+}
+
+export type InvoiceDraftInput = {
+  invoice_number: string;
+  invoice_date: string;
+  archive_code: string | null;
+  amount: number | null;
+  note: string | null;
+};
+
+export async function createInvoice(
+  supplierId: string,
+  draft: InvoiceDraftInput,
+  shipmentIds: string[]
+): Promise<{ error: string | null }> {
+  const { data: inserted, error } = await supabase
+    .from("order_invoices")
+    .insert({
+      supplier_id: supplierId,
+      invoice_number: draft.invoice_number,
+      invoice_date: draft.invoice_date,
+      archive_code: draft.archive_code,
+      amount: draft.amount,
+      note: draft.note,
+    })
+    .select("id")
+    .single();
+
+  if (error || !inserted) {
+    return { error: error?.message || "fattura non creata" };
+  }
+
+  if (shipmentIds.length > 0) {
+    const { error: linkError } = await supabase
+      .from("order_invoice_shipments")
+      .insert(
+        shipmentIds.map((shipmentId) => ({
+          invoice_id: inserted.id,
+          shipment_id: shipmentId,
+        }))
+      );
+
+    if (linkError) {
+      return {
+        error:
+          "Fattura creata, ma errore nel collegare i DDT: " +
+          linkError.message,
+      };
+    }
+  }
+
+  return { error: null };
+}
+
+export async function deleteInvoiceById(
+  id: string
+): Promise<{ error: string | null }> {
+  const { error } = await supabase
+    .from("order_invoices")
+    .delete()
+    .eq("id", id);
+
+  return { error: error ? error.message : null };
+}

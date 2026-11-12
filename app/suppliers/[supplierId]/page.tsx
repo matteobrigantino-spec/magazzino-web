@@ -66,6 +66,71 @@ const EMPTY_DECLARATION_DRAFT: DeclarationDraft = {
   note: "",
 };
 
+type InvoiceShipmentInfo = {
+  id: string;
+  ddt_number: string;
+  order_number: string | null;
+};
+
+type Invoice = {
+  id: string;
+  invoice_number: string;
+  invoice_date: string;
+  archive_code: string | null;
+  amount: number | null;
+  note: string | null;
+  shipments: InvoiceShipmentInfo[];
+};
+
+type UninvoicedShipment = {
+  id: string;
+  ddt_number: string;
+  ddt_date: string;
+  order_number: string | null;
+};
+
+type InvoiceOrderRow = {
+  id: string;
+  order_number: number | string | null;
+};
+
+type InvoiceShipmentRow = {
+  id: string;
+  order_id: string;
+  ddt_number: string | null;
+  ddt_date: string;
+};
+
+type InvoiceLinkRow = {
+  invoice_id: string;
+  shipment_id: string;
+};
+
+type InvoiceRow = {
+  id: string;
+  invoice_number: string | null;
+  invoice_date: string;
+  archive_code: string | null;
+  amount: number | string | null;
+  note: string | null;
+};
+
+type InvoiceDraft = {
+  invoice_number: string;
+  invoice_date: string;
+  archive_code: string;
+  amount: string;
+  note: string;
+};
+
+const EMPTY_INVOICE_DRAFT: InvoiceDraft = {
+  invoice_number: "",
+  invoice_date: "",
+  archive_code: "",
+  amount: "",
+  note: "",
+};
+
 type UpholsteryOptionType =
   | "color"
   | "details_logos"
@@ -280,6 +345,21 @@ export default function SupplierDetail({
   );
   const [declarationSaving, setDeclarationSaving] = useState(false);
   const [declarationMessage, setDeclarationMessage] = useState("");
+
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [uninvoicedShipments, setUninvoicedShipments] = useState<
+    UninvoicedShipment[]
+  >([]);
+  const [invoicesLoading, setInvoicesLoading] = useState(false);
+  const [showAddInvoice, setShowAddInvoice] = useState(false);
+  const [invoiceDraft, setInvoiceDraft] = useState<InvoiceDraft>(
+    EMPTY_INVOICE_DRAFT
+  );
+  const [selectedShipmentIds, setSelectedShipmentIds] = useState<string[]>(
+    []
+  );
+  const [invoiceSaving, setInvoiceSaving] = useState(false);
+  const [invoiceMessage, setInvoiceMessage] = useState("");
 
   useEffect(() => {
     fetchCompanyLogo().then(setCompanyLogo);
@@ -657,6 +737,217 @@ export default function SupplierDetail({
     }
 
     await loadPlafondData();
+  }
+
+  /*
+    FATTURE (STEP 61)
+
+    Indipendenti dal plafond: utili per qualsiasi fornitore, non
+    solo per chi richiede la dichiarazione d'intento. Una fattura
+    è collegata al fornitore (non a un singolo ordine) perché può
+    coprire più DDT insieme, anche di ordini diversi dello stesso
+    fornitore (fattura riepilogativa).
+  */
+  const loadInvoiceData = useCallback(async () => {
+    setInvoicesLoading(true);
+
+    const { data: orderRows } = await supabase
+      .from("orders")
+      .select("id,order_number")
+      .eq("supplier_id", supplierId);
+
+    const orderNumberById = new Map<string, string>();
+
+    ((orderRows || []) as InvoiceOrderRow[]).forEach((row) => {
+      orderNumberById.set(
+        String(row.id),
+        row.order_number != null ? String(row.order_number) : ""
+      );
+    });
+
+    const orderIds = Array.from(orderNumberById.keys());
+
+    let shipmentRows: InvoiceShipmentRow[] = [];
+
+    if (orderIds.length > 0) {
+      const { data } = await supabase
+        .from("order_shipments")
+        .select("id,order_id,ddt_number,ddt_date")
+        .in("order_id", orderIds)
+        .order("ddt_date", { ascending: false });
+
+      shipmentRows = (data || []) as InvoiceShipmentRow[];
+    }
+
+    const shipmentIds = shipmentRows.map((row) => String(row.id));
+
+    let linkRows: InvoiceLinkRow[] = [];
+
+    if (shipmentIds.length > 0) {
+      const { data } = await supabase
+        .from("order_invoice_shipments")
+        .select("invoice_id,shipment_id")
+        .in("shipment_id", shipmentIds);
+
+      linkRows = (data || []) as InvoiceLinkRow[];
+    }
+
+    const invoicedShipmentIds = new Set(
+      linkRows.map((row) => String(row.shipment_id))
+    );
+
+    const shipmentInfoById = new Map<string, InvoiceShipmentInfo>();
+
+    shipmentRows.forEach((row) => {
+      shipmentInfoById.set(String(row.id), {
+        id: String(row.id),
+        ddt_number: String(row.ddt_number || ""),
+        order_number: orderNumberById.get(String(row.order_id)) || null,
+      });
+    });
+
+    setUninvoicedShipments(
+      shipmentRows
+        .filter((row) => !invoicedShipmentIds.has(String(row.id)))
+        .map((row) => ({
+          id: String(row.id),
+          ddt_number: String(row.ddt_number || ""),
+          ddt_date: String(row.ddt_date || ""),
+          order_number: orderNumberById.get(String(row.order_id)) || null,
+        }))
+    );
+
+    const { data: invoiceRows, error: invoiceError } = await supabase
+      .from("order_invoices")
+      .select("id,invoice_number,invoice_date,archive_code,amount,note")
+      .eq("supplier_id", supplierId)
+      .order("invoice_date", { ascending: false });
+
+    if (!invoiceError) {
+      const linksByInvoice = new Map<string, string[]>();
+
+      linkRows.forEach((row) => {
+        const list = linksByInvoice.get(String(row.invoice_id)) || [];
+        list.push(String(row.shipment_id));
+        linksByInvoice.set(String(row.invoice_id), list);
+      });
+
+      setInvoices(
+        ((invoiceRows || []) as InvoiceRow[]).map((row) => ({
+          id: String(row.id),
+          invoice_number: String(row.invoice_number || ""),
+          invoice_date: String(row.invoice_date || ""),
+          archive_code: row.archive_code ? String(row.archive_code) : null,
+          amount: row.amount !== null ? Number(row.amount) : null,
+          note: row.note ? String(row.note) : null,
+          shipments: (linksByInvoice.get(String(row.id)) || [])
+            .map((shipmentId) => shipmentInfoById.get(shipmentId))
+            .filter((info): info is InvoiceShipmentInfo => Boolean(info)),
+        }))
+      );
+    }
+
+    setInvoicesLoading(false);
+  }, [supplierId]);
+
+  useEffect(() => {
+    loadInvoiceData();
+  }, [loadInvoiceData]);
+
+  function toggleShipmentSelection(id: string) {
+    setSelectedShipmentIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  }
+
+  async function addInvoice() {
+    const number = invoiceDraft.invoice_number.trim();
+    const date = invoiceDraft.invoice_date.trim();
+
+    if (!number) {
+      setInvoiceMessage("Inserisci il numero della fattura.");
+      return;
+    }
+
+    if (!date) {
+      setInvoiceMessage("Inserisci la data della fattura.");
+      return;
+    }
+
+    setInvoiceSaving(true);
+    setInvoiceMessage("");
+
+    const amountValue = invoiceDraft.amount.trim()
+      ? Number(invoiceDraft.amount)
+      : null;
+
+    const { data: inserted, error } = await supabase
+      .from("order_invoices")
+      .insert({
+        supplier_id: supplierId,
+        invoice_number: number,
+        invoice_date: date,
+        archive_code: invoiceDraft.archive_code.trim() || null,
+        amount: amountValue,
+        note: invoiceDraft.note.trim() || null,
+      })
+      .select("id")
+      .single();
+
+    if (error || !inserted) {
+      setInvoiceMessage(
+        "Errore: " + (error?.message || "fattura non creata")
+      );
+      setInvoiceSaving(false);
+      return;
+    }
+
+    if (selectedShipmentIds.length > 0) {
+      const { error: linkError } = await supabase
+        .from("order_invoice_shipments")
+        .insert(
+          selectedShipmentIds.map((shipmentId) => ({
+            invoice_id: inserted.id,
+            shipment_id: shipmentId,
+          }))
+        );
+
+      if (linkError) {
+        setInvoiceMessage(
+          "Fattura creata, ma errore nel collegare i DDT: " +
+            linkError.message
+        );
+        setInvoiceSaving(false);
+        await loadInvoiceData();
+        return;
+      }
+    }
+
+    setInvoiceDraft(EMPTY_INVOICE_DRAFT);
+    setSelectedShipmentIds([]);
+    setShowAddInvoice(false);
+    setInvoiceSaving(false);
+    await loadInvoiceData();
+  }
+
+  async function deleteInvoice(id: string) {
+    const confirmed = confirm(
+      "Eliminare questa fattura? I DDT collegati torneranno \"da fatturare\". L'operazione non si può annullare."
+    );
+
+    if (!confirmed) return;
+
+    const { error } = await supabase
+      .from("order_invoices")
+      .delete()
+      .eq("id", id);
+
+    if (error) {
+      alert("Errore: " + error.message);
+      return;
+    }
+
+    await loadInvoiceData();
   }
 
   /*
@@ -2893,6 +3184,272 @@ export default function SupplierDetail({
           )}
         </section>
       )}
+
+      <section
+        style={{
+          marginBottom: 20,
+          padding: "18px 20px",
+          border: "1px solid var(--border-color)",
+          borderRadius: 12,
+          background: "var(--card)",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 16,
+            flexWrap: "wrap",
+          }}
+        >
+          <div style={{ fontSize: 15, fontWeight: 800 }}>Fatture</div>
+
+          <button
+            type="button"
+            onClick={() => setShowAddInvoice((prev) => !prev)}
+            style={secondaryButton}
+          >
+            {showAddInvoice ? "Chiudi" : "+ Registra fattura"}
+          </button>
+        </div>
+
+        {showAddInvoice && (
+          <div
+            style={{
+              marginTop: 16,
+              padding: 14,
+              borderRadius: 10,
+              background: "var(--input-bg)",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 10,
+                alignItems: "flex-end",
+              }}
+            >
+              <div>
+                <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 4 }}>
+                  Numero fattura
+                </div>
+                <input
+                  value={invoiceDraft.invoice_number}
+                  onChange={(e) =>
+                    setInvoiceDraft((prev) => ({
+                      ...prev,
+                      invoice_number: e.target.value,
+                    }))
+                  }
+                  style={plafondInputStyle}
+                />
+              </div>
+
+              <div>
+                <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 4 }}>
+                  Data fattura
+                </div>
+                <input
+                  type="date"
+                  value={invoiceDraft.invoice_date}
+                  onChange={(e) =>
+                    setInvoiceDraft((prev) => ({
+                      ...prev,
+                      invoice_date: e.target.value,
+                    }))
+                  }
+                  style={plafondInputStyle}
+                />
+              </div>
+
+              <div>
+                <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 4 }}>
+                  Codice archivio
+                </div>
+                <input
+                  value={invoiceDraft.archive_code}
+                  onChange={(e) =>
+                    setInvoiceDraft((prev) => ({
+                      ...prev,
+                      archive_code: e.target.value,
+                    }))
+                  }
+                  style={plafondInputStyle}
+                />
+              </div>
+
+              {canViewPrices && (
+                <div>
+                  <div
+                    style={{ fontSize: 11, opacity: 0.6, marginBottom: 4 }}
+                  >
+                    Importo € (opzionale)
+                  </div>
+                  <input
+                    type="number"
+                    value={invoiceDraft.amount}
+                    onChange={(e) =>
+                      setInvoiceDraft((prev) => ({
+                        ...prev,
+                        amount: e.target.value,
+                      }))
+                    }
+                    style={{ ...plafondInputStyle, width: 120 }}
+                  />
+                </div>
+              )}
+
+              <div style={{ flex: 1, minWidth: 160 }}>
+                <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 4 }}>
+                  Nota (opzionale)
+                </div>
+                <input
+                  value={invoiceDraft.note}
+                  onChange={(e) =>
+                    setInvoiceDraft((prev) => ({
+                      ...prev,
+                      note: e.target.value,
+                    }))
+                  }
+                  style={{ ...plafondInputStyle, width: "100%" }}
+                />
+              </div>
+            </div>
+
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 6 }}>
+                DDT coperti da questa fattura
+              </div>
+
+              {uninvoicedShipments.length === 0 && (
+                <div style={{ fontSize: 13, opacity: 0.6 }}>
+                  Nessun DDT ancora da fatturare per questo fornitore.
+                </div>
+              )}
+
+              {uninvoicedShipments.map((shipment) => (
+                <label
+                  key={shipment.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    fontSize: 13,
+                    padding: "4px 0",
+                    cursor: "pointer",
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedShipmentIds.includes(shipment.id)}
+                    onChange={() => toggleShipmentSelection(shipment.id)}
+                  />
+                  DDT {shipment.ddt_number} · {shipment.ddt_date}
+                  {shipment.order_number
+                    ? ` · ordine ${shipment.order_number}`
+                    : ""}
+                </label>
+              ))}
+            </div>
+
+            <div style={{ marginTop: 14 }}>
+              <button
+                type="button"
+                onClick={addInvoice}
+                disabled={invoiceSaving}
+                style={{
+                  ...primaryButton,
+                  opacity: invoiceSaving ? 0.6 : 1,
+                  cursor: invoiceSaving ? "default" : "pointer",
+                  border: "none",
+                }}
+              >
+                {invoiceSaving ? "Salvo..." : "Salva"}
+              </button>
+
+              {invoiceMessage && (
+                <div
+                  style={{ marginTop: 8, fontSize: 13, color: "#ef4444" }}
+                >
+                  {invoiceMessage}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {!invoicesLoading && invoices.length === 0 && (
+          <div style={{ marginTop: 14, fontSize: 13, opacity: 0.6 }}>
+            Nessuna fattura registrata per questo fornitore.
+          </div>
+        )}
+
+        {invoices.length > 0 && (
+          <div style={{ marginTop: 16 }}>
+            {invoices.map((invoice) => (
+              <div
+                key={invoice.id}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "flex-start",
+                  gap: 10,
+                  padding: "8px 0",
+                  borderTop: "1px solid var(--border-color)",
+                  fontSize: 13,
+                }}
+              >
+                <div>
+                  <strong>Fattura {invoice.invoice_number}</strong>{" "}
+                  <span style={{ opacity: 0.6 }}>
+                    · {formatDateIt(invoice.invoice_date)}
+                    {invoice.archive_code
+                      ? ` · archivio ${invoice.archive_code}`
+                      : ""}
+                    {canViewPrices && invoice.amount !== null
+                      ? ` · ${formatEuro(invoice.amount)}`
+                      : ""}
+                    {invoice.note ? ` · ${invoice.note}` : ""}
+                  </span>
+
+                  {invoice.shipments.length > 0 && (
+                    <div style={{ marginTop: 4, opacity: 0.6 }}>
+                      DDT:{" "}
+                      {invoice.shipments
+                        .map(
+                          (shipment) =>
+                            `${shipment.ddt_number}${
+                              shipment.order_number
+                                ? ` (ordine ${shipment.order_number})`
+                                : ""
+                            }`
+                        )
+                        .join(", ")}
+                    </div>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => deleteInvoice(invoice.id)}
+                  style={{
+                    border: "none",
+                    background: "none",
+                    color: "#ef4444",
+                    cursor: "pointer",
+                    fontSize: 13,
+                    fontWeight: 700,
+                  }}
+                >
+                  Elimina
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
 
       {upholsteryEnabled && (
         <section

@@ -852,6 +852,10 @@ export default function SupplierDetail({
     setAddedOrderIds([]);
     setShowAddInvoice(false);
     setInvoiceSaving(false);
+    // La cache degli articoli ha il flag "invoiced" ormai vecchio
+    // per gli articoli appena fatturati: la svuoto cosi' la prossima
+    // volta che si apre un ordine viene ricaricata aggiornata.
+    setOrderItemsCache({});
     await loadInvoiceData();
   }
 
@@ -867,6 +871,26 @@ export default function SupplierDetail({
     if (error) {
       alert("Errore: " + error);
       return;
+    }
+
+    /*
+      Gli articoli della fattura eliminata tornano "da fatturare",
+      ma la cache locale (usata per il flag "invoiced" nei checkbox)
+      non lo sa ancora. Se il modulo e' aperto con ordini gia'
+      aggiunti li ricarico subito, cosi' lo sblocco si vede senza
+      dover riaprire il modulo; altrimenti svuoto la cache e si
+      ricarica da sola alla prossima apertura.
+    */
+    if (addedOrderIds.length > 0) {
+      const refreshedEntries = await Promise.all(
+        addedOrderIds.map(
+          async (oid) => [oid, await loadOrderItemsReference(oid)] as const
+        )
+      );
+
+      setOrderItemsCache(Object.fromEntries(refreshedEntries));
+    } else {
+      setOrderItemsCache({});
     }
 
     await loadInvoiceData();

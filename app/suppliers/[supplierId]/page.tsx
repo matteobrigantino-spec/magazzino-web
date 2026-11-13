@@ -899,7 +899,16 @@ export default function SupplierDetail({
   async function loadInvoiceFromShipment(shipmentId: string) {
     const shipment = shipments.find((item) => item.id === shipmentId);
 
-    if (!shipment || shipment.items.length === 0) return;
+    if (!shipment) return;
+
+    if (shipment.items.length === 0) {
+      setInvoiceMessage(
+        "Questo DDT non ha articoli collegati (probabilmente creato prima dell'aggiornamento): aggiungi gli articoli a mano qui sotto."
+      );
+      return;
+    }
+
+    setInvoiceMessage("");
 
     const neededOrderIds = Array.from(
       new Set(shipment.items.map((item) => item.order_id))

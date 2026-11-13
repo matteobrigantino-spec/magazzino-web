@@ -3105,6 +3105,14 @@ export default function OrderDetailPage() {
                       </option>
                     ))}
                   </select>
+
+                  {invoiceMessage && (
+                    <div
+                      style={{ marginTop: 8, fontSize: 13, color: "#ef4444" }}
+                    >
+                      {invoiceMessage}
+                    </div>
+                  )}
                 </div>
               )}
 

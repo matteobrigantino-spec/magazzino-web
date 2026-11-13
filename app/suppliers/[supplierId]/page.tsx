@@ -3858,6 +3858,14 @@ export default function SupplierDetail({
                     </option>
                   ))}
                 </select>
+
+                {invoiceMessage && (
+                  <div
+                    style={{ marginTop: 8, fontSize: 13, color: "#ef4444" }}
+                  >
+                    {invoiceMessage}
+                  </div>
+                )}
               </div>
             )}
 

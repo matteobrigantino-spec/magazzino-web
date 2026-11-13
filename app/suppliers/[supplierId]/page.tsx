@@ -16,6 +16,13 @@ import {
   OrderItemReference,
   SupplierOrderOption,
 } from "../../../lib/invoices";
+import {
+  loadSupplierShipmentData,
+  createShipment,
+  uploadShipmentPdf,
+  deleteShipmentById,
+  Shipment,
+} from "../../../lib/shipments";
 
 type Item = {
   id: string;
@@ -89,6 +96,20 @@ const EMPTY_INVOICE_DRAFT: InvoiceDraft = {
   invoice_date: "",
   archive_code: "",
   amount: "",
+  note: "",
+};
+
+type ShipmentDraft = {
+  ddt_number: string;
+  ddt_date: string;
+  archive_code: string;
+  note: string;
+};
+
+const EMPTY_SHIPMENT_DRAFT: ShipmentDraft = {
+  ddt_number: "",
+  ddt_date: "",
+  archive_code: "",
   note: "",
 };
 
@@ -324,6 +345,25 @@ export default function SupplierDetail({
   const [orderItemsCache, setOrderItemsCache] = useState<
     Record<string, OrderItemReference[]>
   >({});
+
+  const [shipments, setShipments] = useState<Shipment[]>([]);
+  const [shipmentsLoading, setShipmentsLoading] = useState(false);
+  const [showAddShipment, setShowAddShipment] = useState(false);
+  const [shipmentDraft, setShipmentDraft] = useState<ShipmentDraft>(
+    EMPTY_SHIPMENT_DRAFT
+  );
+  const [shipmentSaving, setShipmentSaving] = useState(false);
+  const [shipmentMessage, setShipmentMessage] = useState("");
+  const [shipmentAddedOrderIds, setShipmentAddedOrderIds] = useState<
+    string[]
+  >([]);
+  const [shipmentItemQty, setShipmentItemQty] = useState<
+    Record<string, string>
+  >({});
+  const [shipmentPdfFile, setShipmentPdfFile] = useState<File | null>(null);
+  const [shipmentUploadingId, setShipmentUploadingId] = useState<
+    string | null
+  >(null);
 
   useEffect(() => {
     fetchCompanyLogo().then(setCompanyLogo);
@@ -830,6 +870,193 @@ export default function SupplierDetail({
     }
 
     await loadInvoiceData();
+  }
+
+  async function loadInvoiceFromShipment(shipmentId: string) {
+    const shipment = shipments.find((item) => item.id === shipmentId);
+
+    if (!shipment || shipment.items.length === 0) return;
+
+    const neededOrderIds = Array.from(
+      new Set(shipment.items.map((item) => item.order_id))
+    );
+
+    setAddedOrderIds((prev) =>
+      Array.from(new Set([...prev, ...neededOrderIds]))
+    );
+
+    await Promise.all(
+      neededOrderIds
+        .filter((orderId) => !orderItemsCache[orderId])
+        .map(async (orderId) => {
+          const items = await loadOrderItemsReference(orderId);
+          setOrderItemsCache((prev) => ({ ...prev, [orderId]: items }));
+        })
+    );
+
+    const newIds = shipment.items.map((item) => item.id);
+
+    setSelectedItemIds((prev) => Array.from(new Set([...prev, ...newIds])));
+  }
+
+  /*
+    DDT (STEP 61 + STEP 64 + STEP 65)
+
+    Collegato al fornitore, come le fatture: può coprire articoli
+    di più ordini diversi insieme. È un registro documentale della
+    consegna fisica (numero, data, codice archivio, articoli con
+    quantità arrivata, PDF della scansione originale): non tocca
+    received_qty dell'ordine, gestito da "Ricezione merce".
+  */
+  const loadShipmentData = useCallback(async () => {
+    setShipmentsLoading(true);
+
+    const { shipments: loadedShipments } = await loadSupplierShipmentData(
+      supplierId
+    );
+
+    setShipments(loadedShipments);
+    setShipmentsLoading(false);
+  }, [supplierId]);
+
+  useEffect(() => {
+    loadShipmentData();
+  }, [loadShipmentData]);
+
+  function openAddShipment() {
+    if (showAddShipment) {
+      setShowAddShipment(false);
+      return;
+    }
+
+    setShipmentAddedOrderIds([]);
+    setShipmentItemQty({});
+    setShipmentPdfFile(null);
+    setShowAddShipment(true);
+  }
+
+  async function addOrderToShipmentDraft(orderId: string) {
+    setShipmentAddedOrderIds((prev) =>
+      prev.includes(orderId) ? prev : [...prev, orderId]
+    );
+
+    if (!orderItemsCache[orderId]) {
+      const items = await loadOrderItemsReference(orderId);
+      setOrderItemsCache((prev) => ({ ...prev, [orderId]: items }));
+    }
+  }
+
+  function removeOrderFromShipmentDraft(orderId: string) {
+    setShipmentAddedOrderIds((prev) => prev.filter((id) => id !== orderId));
+
+    const itemsOfOrder = orderItemsCache[orderId] || [];
+    const idsToRemove = new Set(itemsOfOrder.map((item) => item.id));
+
+    setShipmentItemQty((prev) => {
+      const next = { ...prev };
+      idsToRemove.forEach((id) => delete next[id]);
+      return next;
+    });
+  }
+
+  async function addShipment() {
+    const number = shipmentDraft.ddt_number.trim();
+    const date = shipmentDraft.ddt_date.trim();
+
+    if (!number) {
+      setShipmentMessage("Inserisci il numero del DDT.");
+      return;
+    }
+
+    if (!date) {
+      setShipmentMessage("Inserisci la data del DDT.");
+      return;
+    }
+
+    setShipmentSaving(true);
+    setShipmentMessage("");
+
+    const itemQtyById: Record<string, number> = {};
+
+    Object.entries(shipmentItemQty).forEach(([id, value]) => {
+      const qty = Number(value) || 0;
+      if (qty > 0) itemQtyById[id] = qty;
+    });
+
+    const { id: newId, error } = await createShipment(
+      supplierId,
+      {
+        ddt_number: number,
+        ddt_date: date,
+        archive_code: shipmentDraft.archive_code.trim() || null,
+        note: shipmentDraft.note.trim() || null,
+      },
+      itemQtyById
+    );
+
+    if (error && !newId) {
+      setShipmentMessage("Errore: " + error);
+      setShipmentSaving(false);
+      return;
+    }
+
+    let warning = error || "";
+
+    if (newId && shipmentPdfFile) {
+      const uploadErrorMessage = await uploadShipmentPdf(
+        newId,
+        supplierId,
+        shipmentPdfFile
+      );
+
+      if (uploadErrorMessage) {
+        warning =
+          (warning ? warning + " " : "") +
+          "Errore nel caricare il PDF: " +
+          uploadErrorMessage;
+      }
+    }
+
+    setShipmentMessage(warning);
+    setShipmentDraft(EMPTY_SHIPMENT_DRAFT);
+    setShipmentAddedOrderIds([]);
+    setShipmentItemQty({});
+    setShipmentPdfFile(null);
+    setShowAddShipment(false);
+    setShipmentSaving(false);
+    await loadShipmentData();
+  }
+
+  async function addPdfToShipment(shipmentId: string, file: File) {
+    setShipmentUploadingId(shipmentId);
+
+    const errorMessage = await uploadShipmentPdf(shipmentId, supplierId, file);
+
+    setShipmentUploadingId(null);
+
+    if (errorMessage) {
+      alert("Errore nel caricare il PDF: " + errorMessage);
+      return;
+    }
+
+    await loadShipmentData();
+  }
+
+  async function deleteShipment(id: string) {
+    const confirmed = confirm(
+      "Eliminare questo DDT? L'operazione non si può annullare."
+    );
+
+    if (!confirmed) return;
+
+    const { error } = await deleteShipmentById(id);
+
+    if (error) {
+      alert("Errore: " + error);
+      return;
+    }
+
+    await loadShipmentData();
   }
 
   /*
@@ -3085,6 +3312,381 @@ export default function SupplierDetail({
             flexWrap: "wrap",
           }}
         >
+          <div style={{ fontSize: 15, fontWeight: 800 }}>DDT</div>
+
+          <button
+            type="button"
+            onClick={openAddShipment}
+            style={secondaryButton}
+          >
+            {showAddShipment ? "Chiudi" : "+ Aggiungi DDT"}
+          </button>
+        </div>
+
+        {showAddShipment && (
+          <div
+            style={{
+              marginTop: 16,
+              padding: 14,
+              borderRadius: 10,
+              background: "var(--input-bg)",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 10,
+                alignItems: "flex-end",
+              }}
+            >
+              <div>
+                <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 4 }}>
+                  Numero DDT
+                </div>
+                <input
+                  value={shipmentDraft.ddt_number}
+                  onChange={(e) =>
+                    setShipmentDraft((prev) => ({
+                      ...prev,
+                      ddt_number: e.target.value,
+                    }))
+                  }
+                  style={plafondInputStyle}
+                />
+              </div>
+
+              <div>
+                <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 4 }}>
+                  Data DDT
+                </div>
+                <input
+                  type="date"
+                  value={shipmentDraft.ddt_date}
+                  onChange={(e) =>
+                    setShipmentDraft((prev) => ({
+                      ...prev,
+                      ddt_date: e.target.value,
+                    }))
+                  }
+                  style={plafondInputStyle}
+                />
+              </div>
+
+              <div>
+                <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 4 }}>
+                  Codice archivio
+                </div>
+                <input
+                  value={shipmentDraft.archive_code}
+                  onChange={(e) =>
+                    setShipmentDraft((prev) => ({
+                      ...prev,
+                      archive_code: e.target.value,
+                    }))
+                  }
+                  style={plafondInputStyle}
+                />
+              </div>
+
+              <div style={{ flex: 1, minWidth: 160 }}>
+                <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 4 }}>
+                  Nota (opzionale)
+                </div>
+                <input
+                  value={shipmentDraft.note}
+                  onChange={(e) =>
+                    setShipmentDraft((prev) => ({
+                      ...prev,
+                      note: e.target.value,
+                    }))
+                  }
+                  style={{ ...plafondInputStyle, width: "100%" }}
+                />
+              </div>
+            </div>
+
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 6 }}>
+                Scegli l&apos;ordine da aggiungere al DDT
+              </div>
+
+              <select
+                value=""
+                onChange={(e) => {
+                  if (e.target.value) {
+                    addOrderToShipmentDraft(e.target.value);
+                  }
+                }}
+                style={{ ...plafondInputStyle, width: 240 }}
+              >
+                <option value="">-- Seleziona ordine --</option>
+                {supplierOrderOptions
+                  .filter(
+                    (order) => !shipmentAddedOrderIds.includes(order.order_id)
+                  )
+                  .map((order) => (
+                    <option key={order.order_id} value={order.order_id}>
+                      Ordine N. {order.order_number || "-"}
+                    </option>
+                  ))}
+              </select>
+
+              {shipmentAddedOrderIds.length === 0 && (
+                <div style={{ marginTop: 10, fontSize: 13, opacity: 0.6 }}>
+                  {supplierOrderOptions.length === 0
+                    ? "Nessun ordine trovato per questo fornitore."
+                    : "Scegli un ordine dal menu qui sopra per vedere i suoi articoli."}
+                </div>
+              )}
+
+              {shipmentAddedOrderIds.map((orderId) => {
+                const orderOption = supplierOrderOptions.find(
+                  (option) => option.order_id === orderId
+                );
+                const orderNumber = orderOption?.order_number || null;
+                const orderItems = orderItemsCache[orderId] || [];
+
+                return (
+                  <div
+                    key={orderId}
+                    style={{
+                      marginTop: 12,
+                      padding: 10,
+                      borderRadius: 8,
+                      border: "1px solid var(--border-color)",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                      }}
+                    >
+                      <div style={{ fontSize: 13, fontWeight: 800 }}>
+                        Ordine N. {orderNumber || "-"}
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          removeOrderFromShipmentDraft(orderId)
+                        }
+                        style={{
+                          border: "none",
+                          background: "none",
+                          color: "#ef4444",
+                          cursor: "pointer",
+                          fontSize: 12,
+                          fontWeight: 700,
+                        }}
+                      >
+                        Rimuovi
+                      </button>
+                    </div>
+
+                    <div style={{ marginTop: 8 }}>
+                      {orderItems.length === 0 && (
+                        <div style={{ fontSize: 13, opacity: 0.6 }}>
+                          Nessun articolo in questo ordine.
+                        </div>
+                      )}
+
+                      {orderItems.map((item) => (
+                        <div
+                          key={item.id}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                            fontSize: 13,
+                            padding: "4px 0",
+                          }}
+                        >
+                          <div style={{ flex: 1 }}>
+                            {item.supplier_code || item.code} ·{" "}
+                            {item.description} · ricevuti {item.received_qty}/
+                            {item.qty}
+                          </div>
+
+                          <input
+                            type="number"
+                            min="0"
+                            value={shipmentItemQty[item.id] ?? ""}
+                            onChange={(e) =>
+                              setShipmentItemQty((prev) => ({
+                                ...prev,
+                                [item.id]: e.target.value,
+                              }))
+                            }
+                            placeholder="0"
+                            style={{ ...plafondInputStyle, width: 80 }}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 6 }}>
+                PDF scansione DDT originale (opzionale)
+              </div>
+              <input
+                type="file"
+                accept="application/pdf"
+                onChange={(e) =>
+                  setShipmentPdfFile(e.target.files?.[0] || null)
+                }
+                style={{ fontSize: 13 }}
+              />
+            </div>
+
+            <div style={{ marginTop: 14 }}>
+              <button
+                type="button"
+                onClick={addShipment}
+                disabled={shipmentSaving}
+                style={{
+                  ...primaryButton,
+                  opacity: shipmentSaving ? 0.6 : 1,
+                  cursor: shipmentSaving ? "default" : "pointer",
+                  border: "none",
+                }}
+              >
+                {shipmentSaving ? "Salvo..." : "Salva"}
+              </button>
+
+              {shipmentMessage && (
+                <div
+                  style={{ marginTop: 8, fontSize: 13, color: "#ef4444" }}
+                >
+                  {shipmentMessage}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {!shipmentsLoading && shipments.length === 0 && (
+          <div style={{ marginTop: 14, fontSize: 13, opacity: 0.6 }}>
+            Nessun DDT registrato per questo fornitore.
+          </div>
+        )}
+
+        {shipments.length > 0 && (
+          <div style={{ marginTop: 16 }}>
+            {shipments.map((shipment) => (
+              <div
+                key={shipment.id}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "flex-start",
+                  gap: 10,
+                  padding: "8px 0",
+                  borderTop: "1px solid var(--border-color)",
+                  fontSize: 13,
+                }}
+              >
+                <div>
+                  <strong>DDT {shipment.ddt_number}</strong>{" "}
+                  <span style={{ opacity: 0.6 }}>
+                    · {formatDateIt(shipment.ddt_date)}
+                    {shipment.archive_code
+                      ? ` · archivio ${shipment.archive_code}`
+                      : ""}
+                    {shipment.note ? ` · ${shipment.note}` : ""}
+                  </span>
+
+                  {shipment.items.length > 0 && (
+                    <div style={{ marginTop: 4, opacity: 0.6 }}>
+                      Articoli:{" "}
+                      {shipment.items
+                        .map(
+                          (item) =>
+                            `${item.supplier_code || item.code}${
+                              item.order_number
+                                ? ` (ordine ${item.order_number})`
+                                : ""
+                            } · ${item.qty_arrived}`
+                        )
+                        .join(", ")}
+                    </div>
+                  )}
+
+                  <div style={{ marginTop: 6 }}>
+                    {shipment.scan_pdf_url ? (
+                      <a
+                        href={shipment.scan_pdf_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ color: "inherit", fontWeight: 700 }}
+                      >
+                        📄 Vedi PDF scansione
+                      </a>
+                    ) : (
+                      <label style={{ cursor: "pointer", opacity: 0.75 }}>
+                        {shipmentUploadingId === shipment.id
+                          ? "Carico..."
+                          : "+ Aggiungi PDF scansione"}
+                        <input
+                          type="file"
+                          accept="application/pdf"
+                          style={{ display: "none" }}
+                          disabled={shipmentUploadingId === shipment.id}
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) addPdfToShipment(shipment.id, file);
+                            e.target.value = "";
+                          }}
+                        />
+                      </label>
+                    )}
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => deleteShipment(shipment.id)}
+                  style={{
+                    border: "none",
+                    background: "none",
+                    color: "#ef4444",
+                    cursor: "pointer",
+                    fontSize: 13,
+                    fontWeight: 700,
+                  }}
+                >
+                  Elimina
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section
+        style={{
+          marginBottom: 20,
+          padding: "18px 20px",
+          border: "1px solid var(--border-color)",
+          borderRadius: 12,
+          background: "var(--card)",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 16,
+            flexWrap: "wrap",
+          }}
+        >
           <div style={{ fontSize: 15, fontWeight: 800 }}>Fatture</div>
 
           <button
@@ -3199,6 +3801,32 @@ export default function SupplierDetail({
                 />
               </div>
             </div>
+
+            {shipments.length > 0 && (
+              <div style={{ marginTop: 14 }}>
+                <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 6 }}>
+                  Carica da un DDT (opzionale)
+                </div>
+
+                <select
+                  value=""
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      loadInvoiceFromShipment(e.target.value);
+                    }
+                  }}
+                  style={{ ...plafondInputStyle, width: 240 }}
+                >
+                  <option value="">-- Seleziona DDT --</option>
+                  {shipments.map((shipment) => (
+                    <option key={shipment.id} value={shipment.id}>
+                      DDT {shipment.ddt_number} ·{" "}
+                      {formatDateIt(shipment.ddt_date)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             <div style={{ marginTop: 14 }}>
               <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 6 }}>

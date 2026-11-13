@@ -13,6 +13,13 @@ import {
   OrderItemReference,
   SupplierOrderOption,
 } from "../../../lib/invoices";
+import {
+  loadSupplierShipmentData,
+  createShipment,
+  uploadShipmentPdf,
+  deleteShipmentById,
+  Shipment,
+} from "../../../lib/shipments";
 
 type OrderRow = {
   id: string;
@@ -85,41 +92,6 @@ type KitAssignmentSlot = {
   matricola: string;
   scannerCode: string;
   unitPrice: string;
-};
-
-type ShipmentItemInfo = {
-  id: string;
-  code: string;
-  supplier_code: string | null;
-  description: string;
-  qty_arrived: number;
-};
-
-type Shipment = {
-  id: string;
-  ddt_number: string;
-  ddt_date: string;
-  archive_code: string | null;
-  note: string | null;
-  scan_pdf_url: string | null;
-  scan_pdf_path: string | null;
-  items: ShipmentItemInfo[];
-};
-
-type ShipmentRow = {
-  id: string;
-  ddt_number: string | null;
-  ddt_date: string;
-  archive_code: string | null;
-  note: string | null;
-  scan_pdf_url: string | null;
-  scan_pdf_path: string | null;
-};
-
-type ShipmentItemRow = {
-  shipment_id: string;
-  order_item_id: string;
-  qty_arrived: number | string;
 };
 
 type ShipmentDraft = {
@@ -252,8 +224,13 @@ export default function OrderDetailPage() {
   );
   const [shipmentSaving, setShipmentSaving] = useState(false);
   const [shipmentMessage, setShipmentMessage] = useState("");
-  const [ddtItemQty, setDdtItemQty] = useState<Record<string, string>>({});
-  const [ddtPdfFile, setDdtPdfFile] = useState<File | null>(null);
+  const [shipmentAddedOrderIds, setShipmentAddedOrderIds] = useState<
+    string[]
+  >([]);
+  const [shipmentItemQty, setShipmentItemQty] = useState<
+    Record<string, string>
+  >({});
+  const [shipmentPdfFile, setShipmentPdfFile] = useState<File | null>(null);
   const [shipmentUploadingId, setShipmentUploadingId] = useState<
     string | null
   >(null);
@@ -324,199 +301,80 @@ export default function OrderDetailPage() {
   }, [orderId]);
 
   /*
-    DDT (STEP 61 + STEP 64)
+    DDT (STEP 61 + STEP 64 + STEP 65)
 
-    Indipendente dal resto del caricamento ordine: una riga per
-    ogni DDT ricevuto per questo ordine (numero, data, codice di
-    archiviazione), con gli articoli e le quantità arrivate in quel
-    DDT, e l'eventuale PDF della scansione del DDT originale. È un
-    registro documentale della consegna fisica: non tocca le
-    quantità ricevute dell'ordine (received_qty), gestite dalla
-    sezione "Ricezione merce" qui sopra. Un articolo può comparire
-    in più DDT diversi nel tempo (consegne parziali), quindi non
-    c'è nessun vincolo di unicità sugli articoli del DDT.
+    Collegato al fornitore, come le fatture: puo' coprire articoli
+    di piu' ordini diversi insieme. Il selettore mostra TUTTI i DDT
+    del fornitore (non solo quelli di questo ordine), ma l'ordine
+    corrente viene pre-aggiunto per comodita' quando si apre il
+    modulo da qui. E' un registro documentale della consegna fisica
+    (numero, data, codice archivio, articoli con quantita'
+    arrivata, PDF della scansione originale): non tocca
+    received_qty dell'ordine, gestito da "Ricezione merce".
   */
-  const loadShipments = useCallback(async () => {
+  const loadShipmentData = useCallback(async () => {
+    if (!order?.supplier_id) return;
+
     setShipmentsLoading(true);
 
-    const { data: rows, error } = await supabase
-      .from("order_shipments")
-      .select(
-        "id,ddt_number,ddt_date,archive_code,note,scan_pdf_url,scan_pdf_path"
-      )
-      .eq("order_id", orderId)
-      .order("ddt_date", { ascending: false });
-
-    if (error) {
-      setShipmentsLoading(false);
-      return;
-    }
-
-    const shipmentRows = (rows || []) as ShipmentRow[];
-    const ids = shipmentRows.map((row) => String(row.id));
-
-    const itemsByShipment = new Map<string, ShipmentItemInfo[]>();
-
-    if (ids.length > 0) {
-      const { data: itemRows } = await supabase
-        .from("order_shipment_items")
-        .select("shipment_id,order_item_id,qty_arrived")
-        .in("shipment_id", ids);
-
-      const shipmentItemRows = (itemRows || []) as ShipmentItemRow[];
-      const orderItemIds = Array.from(
-        new Set(shipmentItemRows.map((row) => String(row.order_item_id)))
-      );
-
-      const articleByOrderItemId = new Map<
-        string,
-        { code: string; supplier_code: string | null; description: string }
-      >();
-
-      if (orderItemIds.length > 0) {
-        const { data: orderItemRows } = await supabase
-          .from("order_items")
-          .select("id,item_id")
-          .in("id", orderItemIds);
-
-        const orderItemLinkRows = (orderItemRows || []) as {
-          id: string;
-          item_id: string;
-        }[];
-
-        const itemIds = orderItemLinkRows.map((row) => String(row.item_id));
-
-        const { data: articleRows } = await supabase
-          .from("items")
-          .select("id,code,supplier_code,description")
-          .in("id", itemIds);
-
-        const articleById = new Map<
-          string,
-          { code: string; supplier_code: string | null; description: string }
-        >();
-
-        (
-          (articleRows || []) as {
-            id: string;
-            code: string | null;
-            supplier_code: string | null;
-            description: string | null;
-          }[]
-        ).forEach((row) => {
-          articleById.set(String(row.id), {
-            code: row.code ? String(row.code) : "-",
-            supplier_code: row.supplier_code
-              ? String(row.supplier_code)
-              : null,
-            description: row.description
-              ? String(row.description)
-              : "Articolo non trovato",
-          });
-        });
-
-        orderItemLinkRows.forEach((row) => {
-          const article = articleById.get(String(row.item_id));
-
-          if (article) {
-            articleByOrderItemId.set(String(row.id), article);
-          }
-        });
-      }
-
-      shipmentItemRows.forEach((row) => {
-        const article = articleByOrderItemId.get(String(row.order_item_id));
-        const list = itemsByShipment.get(String(row.shipment_id)) || [];
-
-        list.push({
-          id: String(row.order_item_id),
-          code: article?.code || "-",
-          supplier_code: article?.supplier_code || null,
-          description: article?.description || "Articolo non trovato",
-          qty_arrived: Number(row.qty_arrived || 0),
-        });
-
-        itemsByShipment.set(String(row.shipment_id), list);
-      });
-    }
-
-    setShipments(
-      shipmentRows.map((row) => ({
-        id: String(row.id),
-        ddt_number: String(row.ddt_number || ""),
-        ddt_date: String(row.ddt_date || ""),
-        archive_code: row.archive_code ? String(row.archive_code) : null,
-        note: row.note ? String(row.note) : null,
-        scan_pdf_url: row.scan_pdf_url ? String(row.scan_pdf_url) : null,
-        scan_pdf_path: row.scan_pdf_path ? String(row.scan_pdf_path) : null,
-        items: itemsByShipment.get(String(row.id)) || [],
-      }))
+    const { shipments: loadedShipments } = await loadSupplierShipmentData(
+      order.supplier_id
     );
 
+    setShipments(loadedShipments);
     setShipmentsLoading(false);
-  }, [orderId]);
+  }, [order?.supplier_id]);
 
   useEffect(() => {
-    loadShipments();
-  }, [loadShipments]);
+    loadShipmentData();
+  }, [loadShipmentData]);
 
-  function openAddShipment() {
+  async function openAddShipment() {
     if (showAddShipment) {
       setShowAddShipment(false);
       return;
     }
 
-    const prefill: Record<string, string> = {};
+    if (!orderItemsCache[orderId]) {
+      const items = await loadOrderItemsReference(orderId);
+      setOrderItemsCache((prev) => ({ ...prev, [orderId]: items }));
+    }
 
-    Object.entries(incomingQty).forEach(([lineId, qty]) => {
-      if (qty > 0) {
-        prefill[lineId] = String(qty);
-      }
-    });
-
-    setDdtItemQty(prefill);
-    setDdtPdfFile(null);
+    setShipmentAddedOrderIds([orderId]);
+    setShipmentItemQty({});
+    setShipmentPdfFile(null);
     setShowAddShipment(true);
   }
 
-  async function uploadDdtPdf(
-    shipmentId: string,
-    file: File
-  ): Promise<string | null> {
-    const safeName = file.name
-      .trim()
-      .replace(/[\\/:*?"<>|]/g, "-")
-      .replace(/\s+/g, "_");
+  async function addOrderToShipmentDraft(orderIdToAdd: string) {
+    setShipmentAddedOrderIds((prev) =>
+      prev.includes(orderIdToAdd) ? prev : [...prev, orderIdToAdd]
+    );
 
-    const path = `${orderId}/${shipmentId}_${safeName}`;
-
-    const { error: uploadError } = await supabase.storage
-      .from("ddt-scans")
-      .upload(path, file, {
-        contentType: "application/pdf",
-        upsert: true,
-      });
-
-    if (uploadError) {
-      return uploadError.message;
+    if (!orderItemsCache[orderIdToAdd]) {
+      const items = await loadOrderItemsReference(orderIdToAdd);
+      setOrderItemsCache((prev) => ({ ...prev, [orderIdToAdd]: items }));
     }
+  }
 
-    const { data: publicUrlData } = supabase.storage
-      .from("ddt-scans")
-      .getPublicUrl(path);
+  function removeOrderFromShipmentDraft(orderIdToRemove: string) {
+    setShipmentAddedOrderIds((prev) =>
+      prev.filter((id) => id !== orderIdToRemove)
+    );
 
-    const { error: updateError } = await supabase
-      .from("order_shipments")
-      .update({
-        scan_pdf_url: publicUrlData.publicUrl,
-        scan_pdf_path: path,
-      })
-      .eq("id", shipmentId);
+    const itemsOfOrder = orderItemsCache[orderIdToRemove] || [];
+    const idsToRemove = new Set(itemsOfOrder.map((item) => item.id));
 
-    return updateError ? updateError.message : null;
+    setShipmentItemQty((prev) => {
+      const next = { ...prev };
+      idsToRemove.forEach((id) => delete next[id]);
+      return next;
+    });
   }
 
   async function addShipment() {
+    if (!order?.supplier_id) return;
+
     const number = shipmentDraft.ddt_number.trim();
     const date = shipmentDraft.ddt_date.trim();
 
@@ -533,48 +391,38 @@ export default function OrderDetailPage() {
     setShipmentSaving(true);
     setShipmentMessage("");
 
-    const { data: inserted, error } = await supabase
-      .from("order_shipments")
-      .insert({
-        order_id: orderId,
+    const itemQtyById: Record<string, number> = {};
+
+    Object.entries(shipmentItemQty).forEach(([id, value]) => {
+      const qty = Number(value) || 0;
+      if (qty > 0) itemQtyById[id] = qty;
+    });
+
+    const { id: newId, error } = await createShipment(
+      order.supplier_id,
+      {
         ddt_number: number,
         ddt_date: date,
         archive_code: shipmentDraft.archive_code.trim() || null,
         note: shipmentDraft.note.trim() || null,
-      })
-      .select("id")
-      .single();
+      },
+      itemQtyById
+    );
 
-    if (error || !inserted) {
-      setShipmentMessage("Errore: " + (error?.message || "DDT non creato"));
+    if (error && !newId) {
+      setShipmentMessage("Errore: " + error);
       setShipmentSaving(false);
       return;
     }
 
-    const itemRows = Object.entries(ddtItemQty)
-      .map(([orderItemId, value]) => ({
-        shipment_id: inserted.id,
-        order_item_id: orderItemId,
-        qty_arrived: Number(value) || 0,
-      }))
-      .filter((row) => row.qty_arrived > 0);
+    let warning = error || "";
 
-    let warning = "";
-
-    if (itemRows.length > 0) {
-      const { error: itemsError } = await supabase
-        .from("order_shipment_items")
-        .insert(itemRows);
-
-      if (itemsError) {
-        warning =
-          "DDT creato, ma errore nel salvare gli articoli: " +
-          itemsError.message;
-      }
-    }
-
-    if (ddtPdfFile) {
-      const uploadErrorMessage = await uploadDdtPdf(inserted.id, ddtPdfFile);
+    if (newId && shipmentPdfFile) {
+      const uploadErrorMessage = await uploadShipmentPdf(
+        newId,
+        order.supplier_id,
+        shipmentPdfFile
+      );
 
       if (uploadErrorMessage) {
         warning =
@@ -586,17 +434,24 @@ export default function OrderDetailPage() {
 
     setShipmentMessage(warning);
     setShipmentDraft(EMPTY_SHIPMENT_DRAFT);
-    setDdtItemQty({});
-    setDdtPdfFile(null);
+    setShipmentAddedOrderIds([]);
+    setShipmentItemQty({});
+    setShipmentPdfFile(null);
     setShowAddShipment(false);
     setShipmentSaving(false);
-    await loadShipments();
+    await loadShipmentData();
   }
 
   async function addPdfToShipment(shipmentId: string, file: File) {
+    if (!order?.supplier_id) return;
+
     setShipmentUploadingId(shipmentId);
 
-    const errorMessage = await uploadDdtPdf(shipmentId, file);
+    const errorMessage = await uploadShipmentPdf(
+      shipmentId,
+      order.supplier_id,
+      file
+    );
 
     setShipmentUploadingId(null);
 
@@ -605,7 +460,7 @@ export default function OrderDetailPage() {
       return;
     }
 
-    await loadShipments();
+    await loadShipmentData();
   }
 
   async function deleteShipment(id: string) {
@@ -615,17 +470,14 @@ export default function OrderDetailPage() {
 
     if (!confirmed) return;
 
-    const { error } = await supabase
-      .from("order_shipments")
-      .delete()
-      .eq("id", id);
+    const { error } = await deleteShipmentById(id);
 
     if (error) {
-      alert("Errore: " + error.message);
+      alert("Errore: " + error);
       return;
     }
 
-    await loadShipments();
+    await loadShipmentData();
   }
 
   /*
@@ -705,6 +557,33 @@ export default function OrderDetailPage() {
     const idsToRemove = new Set(itemsOfOrder.map((item) => item.id));
 
     setSelectedItemIds((prev) => prev.filter((id) => !idsToRemove.has(id)));
+  }
+
+  async function loadInvoiceFromShipment(shipmentId: string) {
+    const shipment = shipments.find((item) => item.id === shipmentId);
+
+    if (!shipment || shipment.items.length === 0) return;
+
+    const neededOrderIds = Array.from(
+      new Set(shipment.items.map((item) => item.order_id))
+    );
+
+    setAddedOrderIds((prev) =>
+      Array.from(new Set([...prev, ...neededOrderIds]))
+    );
+
+    await Promise.all(
+      neededOrderIds
+        .filter((oid) => !orderItemsCache[oid])
+        .map(async (oid) => {
+          const items = await loadOrderItemsReference(oid);
+          setOrderItemsCache((prev) => ({ ...prev, [oid]: items }));
+        })
+    );
+
+    const newIds = shipment.items.map((item) => item.id);
+
+    setSelectedItemIds((prev) => Array.from(new Set([...prev, ...newIds])));
   }
 
   async function addInvoice() {
@@ -1167,6 +1046,12 @@ export default function OrderDetailPage() {
       invoice.items.some((item) => item.order_id === orderId)
     );
   }, [invoices, orderId]);
+
+  const relevantShipments = useMemo(() => {
+    return shipments.filter((shipment) =>
+      shipment.items.some((item) => item.order_id === orderId)
+    );
+  }, [shipments, orderId]);
 
   const totalOrderedQty = useMemo(() => {
     return lines.reduce(
@@ -2773,39 +2658,123 @@ export default function OrderDetailPage() {
 
               <div style={{ width: "100%", marginTop: 6 }}>
                 <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 6 }}>
-                  Articoli arrivati con questo DDT (quantità)
+                  Aggiungi un altro ordine allo stesso DDT
                 </div>
 
-                {lines.map((line) => (
-                  <div
-                    key={line.id}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 10,
-                      fontSize: 13,
-                      padding: "4px 0",
-                    }}
-                  >
-                    <div style={{ flex: 1 }}>
-                      {line.supplier_code || line.code} · {line.description}
-                    </div>
+                <select
+                  value=""
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      addOrderToShipmentDraft(e.target.value);
+                    }
+                  }}
+                  style={{ ...smallInputStyle, width: 240 }}
+                >
+                  <option value="">-- Seleziona ordine --</option>
+                  {supplierOrderOptions
+                    .filter(
+                      (option) =>
+                        !shipmentAddedOrderIds.includes(option.order_id)
+                    )
+                    .map((option) => (
+                      <option key={option.order_id} value={option.order_id}>
+                        Ordine N. {option.order_number || "-"}
+                      </option>
+                    ))}
+                </select>
 
-                    <input
-                      type="number"
-                      min="0"
-                      value={ddtItemQty[line.id] ?? ""}
-                      onChange={(e) =>
-                        setDdtItemQty((prev) => ({
-                          ...prev,
-                          [line.id]: e.target.value,
-                        }))
-                      }
-                      placeholder="0"
-                      style={{ ...smallInputStyle, width: 80 }}
-                    />
-                  </div>
-                ))}
+                {shipmentAddedOrderIds.map((orderIdInDraft) => {
+                  const orderOption = supplierOrderOptions.find(
+                    (option) => option.order_id === orderIdInDraft
+                  );
+                  const orderNumber = orderOption?.order_number || null;
+                  const orderItems = orderItemsCache[orderIdInDraft] || [];
+
+                  return (
+                    <div
+                      key={orderIdInDraft}
+                      style={{
+                        marginTop: 12,
+                        padding: 10,
+                        borderRadius: 8,
+                        border: "1px solid var(--border-color)",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                        }}
+                      >
+                        <div style={{ fontSize: 13, fontWeight: 800 }}>
+                          Ordine N. {orderNumber || "-"}
+                          {orderIdInDraft === orderId ? " (questo ordine)" : ""}
+                        </div>
+
+                        {orderIdInDraft !== orderId && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              removeOrderFromShipmentDraft(orderIdInDraft)
+                            }
+                            style={{
+                              border: "none",
+                              background: "none",
+                              color: "#ef4444",
+                              cursor: "pointer",
+                              fontSize: 12,
+                              fontWeight: 700,
+                            }}
+                          >
+                            Rimuovi
+                          </button>
+                        )}
+                      </div>
+
+                      <div style={{ marginTop: 8 }}>
+                        {orderItems.length === 0 && (
+                          <div style={{ fontSize: 13, opacity: 0.6 }}>
+                            Nessun articolo in questo ordine.
+                          </div>
+                        )}
+
+                        {orderItems.map((item) => (
+                          <div
+                            key={item.id}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 8,
+                              fontSize: 13,
+                              padding: "4px 0",
+                            }}
+                          >
+                            <div style={{ flex: 1 }}>
+                              {item.supplier_code || item.code} ·{" "}
+                              {item.description} · ricevuti{" "}
+                              {item.received_qty}/{item.qty}
+                            </div>
+
+                            <input
+                              type="number"
+                              min="0"
+                              value={shipmentItemQty[item.id] ?? ""}
+                              onChange={(e) =>
+                                setShipmentItemQty((prev) => ({
+                                  ...prev,
+                                  [item.id]: e.target.value,
+                                }))
+                              }
+                              placeholder="0"
+                              style={{ ...smallInputStyle, width: 80 }}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
 
               <div style={{ width: "100%", marginTop: 6 }}>
@@ -2817,7 +2786,7 @@ export default function OrderDetailPage() {
                   type="file"
                   accept="application/pdf"
                   onChange={(e) =>
-                    setDdtPdfFile(e.target.files?.[0] || null)
+                    setShipmentPdfFile(e.target.files?.[0] || null)
                   }
                   style={{ fontSize: 13 }}
                 />
@@ -2840,15 +2809,15 @@ export default function OrderDetailPage() {
             </div>
           )}
 
-          {!shipmentsLoading && shipments.length === 0 && (
+          {!shipmentsLoading && relevantShipments.length === 0 && (
             <div style={{ marginTop: 12, fontSize: 13, opacity: 0.6 }}>
               Nessun DDT registrato per questo ordine.
             </div>
           )}
 
-          {shipments.length > 0 && (
+          {relevantShipments.length > 0 && (
             <div style={{ marginTop: 14 }}>
-              {shipments.map((shipment) => (
+              {relevantShipments.map((shipment) => (
                 <div
                   key={shipment.id}
                   style={{
@@ -2877,7 +2846,12 @@ export default function OrderDetailPage() {
                         {shipment.items
                           .map(
                             (item) =>
-                              `${item.supplier_code || item.code} (${item.qty_arrived})`
+                              `${item.supplier_code || item.code}${
+                                item.order_number &&
+                                item.order_id !== orderId
+                                  ? ` (ordine ${item.order_number})`
+                                  : ""
+                              } · ${item.qty_arrived}`
                           )
                           .join(", ")}
                       </div>
@@ -3075,6 +3049,31 @@ export default function OrderDetailPage() {
                   />
                 </div>
               </div>
+
+              {shipments.length > 0 && (
+                <div style={{ marginTop: 14 }}>
+                  <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 6 }}>
+                    Carica da un DDT (opzionale)
+                  </div>
+
+                  <select
+                    value=""
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        loadInvoiceFromShipment(e.target.value);
+                      }
+                    }}
+                    style={{ ...smallInputStyle, width: 240 }}
+                  >
+                    <option value="">-- Seleziona DDT --</option>
+                    {shipments.map((shipment) => (
+                      <option key={shipment.id} value={shipment.id}>
+                        DDT {shipment.ddt_number} · {shipment.ddt_date}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               <div style={{ marginTop: 14 }}>
                 <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 6 }}>

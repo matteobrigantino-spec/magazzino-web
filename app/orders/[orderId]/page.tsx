@@ -517,25 +517,21 @@ export default function OrderDetailPage() {
     );
   }
 
-  async function openAddInvoice() {
+  function openAddInvoice() {
     if (showAddInvoice) {
       setShowAddInvoice(false);
       return;
     }
 
-    let items = orderItemsCache[orderId];
-
-    if (!items) {
-      items = await loadOrderItemsReference(orderId);
-      setOrderItemsCache((prev) => ({ ...prev, [orderId]: items as OrderItemReference[] }));
-    }
-
-    const notYetInvoicedIds = items
-      .filter((item) => !item.invoiced)
-      .map((item) => item.id);
-
-    setAddedOrderIds([orderId]);
-    setSelectedItemIds(notYetInvoicedIds);
+    /*
+      Niente ordine/articoli pre-spuntati all'apertura: l'utente
+      sceglie lui cosa mettere in fattura, con "Aggiungi un altro
+      ordine" o con "Carica da un DDT" (che aggiunge solo gli
+      articoli di quel DDT). Cosi' non si confonde con la spunta
+      automatica di tutto l'ordine.
+    */
+    setAddedOrderIds([]);
+    setSelectedItemIds([]);
     setShowAddInvoice(true);
   }
 

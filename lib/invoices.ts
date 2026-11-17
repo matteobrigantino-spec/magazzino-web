@@ -25,6 +25,7 @@ export type InvoiceLineItem = {
   description: string;
   qty: number;
   received_qty: number;
+  qty_invoiced: number;
 };
 
 export type Invoice = {
@@ -64,6 +65,7 @@ type InvoiceArticleRow = {
 type InvoiceItemLinkRow = {
   invoice_id: string;
   order_item_id: string;
+  qty_invoiced: number | string;
 };
 
 type InvoiceRow = {
@@ -124,7 +126,10 @@ export async function loadSupplierInvoiceData(
     articleById.set(String(row.id), row);
   });
 
-  const orderItemInfoById = new Map<string, InvoiceLineItem>();
+  const orderItemInfoById = new Map<
+    string,
+    Omit<InvoiceLineItem, "qty_invoiced">
+  >();
 
   orderItemRows.forEach((row) => {
     const article = articleById.get(String(row.item_id));
@@ -161,14 +166,20 @@ export async function loadSupplierInvoiceData(
 
   const { data: linkRows } = await supabase
     .from("order_invoice_items")
-    .select("invoice_id,order_item_id")
+    .select("invoice_id,order_item_id,qty_invoiced")
     .in("invoice_id", invoiceIds);
 
-  const itemsByInvoice = new Map<string, string[]>();
+  const itemsByInvoice = new Map<
+    string,
+    { order_item_id: string; qty_invoiced: number }[]
+  >();
 
   ((linkRows || []) as InvoiceItemLinkRow[]).forEach((row) => {
     const list = itemsByInvoice.get(String(row.invoice_id)) || [];
-    list.push(String(row.order_item_id));
+    list.push({
+      order_item_id: String(row.order_item_id),
+      qty_invoiced: Number(row.qty_invoiced || 0),
+    });
     itemsByInvoice.set(String(row.invoice_id), list);
   });
 
@@ -180,7 +191,13 @@ export async function loadSupplierInvoiceData(
     amount: row.amount !== null ? Number(row.amount) : null,
     note: row.note ? String(row.note) : null,
     items: (itemsByInvoice.get(String(row.id)) || [])
-      .map((orderItemId) => orderItemInfoById.get(orderItemId))
+      .map((link) => {
+        const info = orderItemInfoById.get(link.order_item_id);
+        if (!info) {
+          return null;
+        }
+        return { ...info, qty_invoiced: link.qty_invoiced };
+      })
       .filter((info): info is InvoiceLineItem => Boolean(info)),
   }));
 
@@ -250,7 +267,10 @@ export async function loadAllInvoices(): Promise<AllInvoice[]> {
     articleById.set(String(row.id), row);
   });
 
-  const orderItemInfoById = new Map<string, InvoiceLineItem>();
+  const orderItemInfoById = new Map<
+    string,
+    Omit<InvoiceLineItem, "qty_invoiced">
+  >();
 
   ((orderItemRows || []) as InvoiceOrderItemRow[]).forEach((row) => {
     const article = articleById.get(String(row.item_id));
@@ -288,14 +308,20 @@ export async function loadAllInvoices(): Promise<AllInvoice[]> {
 
   const { data: linkRows } = await supabase
     .from("order_invoice_items")
-    .select("invoice_id,order_item_id")
+    .select("invoice_id,order_item_id,qty_invoiced")
     .in("invoice_id", invoiceIds);
 
-  const itemsByInvoice = new Map<string, string[]>();
+  const itemsByInvoice = new Map<
+    string,
+    { order_item_id: string; qty_invoiced: number }[]
+  >();
 
   ((linkRows || []) as InvoiceItemLinkRow[]).forEach((row) => {
     const list = itemsByInvoice.get(String(row.invoice_id)) || [];
-    list.push(String(row.order_item_id));
+    list.push({
+      order_item_id: String(row.order_item_id),
+      qty_invoiced: Number(row.qty_invoiced || 0),
+    });
     itemsByInvoice.set(String(row.invoice_id), list);
   });
 
@@ -309,7 +335,13 @@ export async function loadAllInvoices(): Promise<AllInvoice[]> {
     amount: row.amount !== null ? Number(row.amount) : null,
     note: row.note ? String(row.note) : null,
     items: (itemsByInvoice.get(String(row.id)) || [])
-      .map((orderItemId) => orderItemInfoById.get(orderItemId))
+      .map((link) => {
+        const info = orderItemInfoById.get(link.order_item_id);
+        if (!info) {
+          return null;
+        }
+        return { ...info, qty_invoiced: link.qty_invoiced };
+      })
       .filter((info): info is InvoiceLineItem => Boolean(info)),
   }));
 }
@@ -325,7 +357,7 @@ export type InvoiceDraftInput = {
 export async function createInvoice(
   supplierId: string,
   draft: InvoiceDraftInput,
-  orderItemIds: string[]
+  itemQtyById: Record<string, number>
 ): Promise<{ error: string | null }> {
   const { data: inserted, error } = await supabase
     .from("order_invoices")
@@ -344,15 +376,18 @@ export async function createInvoice(
     return { error: error?.message || "fattura non creata" };
   }
 
-  if (orderItemIds.length > 0) {
+  const rows = Object.entries(itemQtyById)
+    .filter(([, qty]) => qty > 0)
+    .map(([orderItemId, qty]) => ({
+      invoice_id: inserted.id,
+      order_item_id: orderItemId,
+      qty_invoiced: qty,
+    }));
+
+  if (rows.length > 0) {
     const { error: linkError } = await supabase
       .from("order_invoice_items")
-      .insert(
-        orderItemIds.map((orderItemId) => ({
-          invoice_id: inserted.id,
-          order_item_id: orderItemId,
-        }))
-      );
+      .insert(rows);
 
     if (linkError) {
       return {
@@ -413,10 +448,11 @@ export async function loadSupplierOrderOptions(
 }
 
 /*
-  Articoli (righe ordine) di un ordine, da spuntare uno per uno
-  quando si registra una fattura: ogni riga dice anche se è già
-  stata messa in un'altra fattura (invoiced), per non poterla
-  selezionare due volte.
+  Articoli (righe ordine) di un ordine, da indicare con una quantità
+  quando si registra una fattura: ogni riga dice anche quanto è già
+  stato fatturato finora (qty_invoiced), su tutte le fatture insieme,
+  cosi' si può ancora fatturare la parte rimasta anche se una parte
+  e' gia' in un'altra fattura (fatturazione parziale, come il DDT).
 */
 export type OrderItemReference = {
   id: string;
@@ -425,7 +461,7 @@ export type OrderItemReference = {
   description: string;
   qty: number;
   received_qty: number;
-  invoiced: boolean;
+  qty_invoiced: number;
 };
 
 type OrderItemReferenceRow = {
@@ -468,7 +504,7 @@ export async function loadOrderItemsReference(
       .in("id", itemIds),
     supabase
       .from("order_invoice_items")
-      .select("order_item_id")
+      .select("order_item_id,qty_invoiced")
       .in("order_item_id", orderItemIds),
   ]);
 
@@ -489,10 +525,14 @@ export async function loadOrderItemsReference(
     });
   }
 
-  const invoicedIds = new Set(
-    ((linkRows || []) as { order_item_id: string }[]).map((row) =>
-      String(row.order_item_id)
-    )
+  const invoicedQtyByOrderItemId = new Map<string, number>();
+
+  ((linkRows || []) as { order_item_id: string; qty_invoiced: number | string }[]).forEach(
+    (row) => {
+      const key = String(row.order_item_id);
+      const prev = invoicedQtyByOrderItemId.get(key) || 0;
+      invoicedQtyByOrderItemId.set(key, prev + Number(row.qty_invoiced || 0));
+    }
   );
 
   return orderItemRows.map((row) => {
@@ -505,7 +545,7 @@ export async function loadOrderItemsReference(
       description: article?.description || "Articolo non trovato",
       qty: Number(row.qty || 0),
       received_qty: Number(row.received_qty || 0),
-      invoiced: invoicedIds.has(String(row.id)),
+      qty_invoiced: invoicedQtyByOrderItemId.get(String(row.id)) || 0,
     };
   });
 }

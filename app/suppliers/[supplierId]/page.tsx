@@ -334,7 +334,9 @@ export default function SupplierDetail({
   const [invoiceDraft, setInvoiceDraft] = useState<InvoiceDraft>(
     EMPTY_INVOICE_DRAFT
   );
-  const [selectedItemIds, setSelectedItemIds] = useState<string[]>([]);
+  const [invoiceItemQty, setInvoiceItemQty] = useState<
+    Record<string, string>
+  >({});
   const [invoiceSaving, setInvoiceSaving] = useState(false);
   const [invoiceMessage, setInvoiceMessage] = useState("");
 
@@ -770,12 +772,6 @@ export default function SupplierDetail({
     loadInvoiceData();
   }, [loadInvoiceData]);
 
-  function toggleItemSelection(id: string) {
-    setSelectedItemIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-    );
-  }
-
   function openAddInvoice() {
     if (showAddInvoice) {
       setShowAddInvoice(false);
@@ -783,7 +779,7 @@ export default function SupplierDetail({
     }
 
     setAddedOrderIds([]);
-    setSelectedItemIds([]);
+    setInvoiceItemQty({});
     setShowAddInvoice(true);
   }
 
@@ -804,7 +800,13 @@ export default function SupplierDetail({
     const itemsOfOrder = orderItemsCache[orderId] || [];
     const idsToRemove = new Set(itemsOfOrder.map((item) => item.id));
 
-    setSelectedItemIds((prev) => prev.filter((id) => !idsToRemove.has(id)));
+    setInvoiceItemQty((prev) => {
+      const next = { ...prev };
+      idsToRemove.forEach((id) => {
+        delete next[id];
+      });
+      return next;
+    });
   }
 
   async function addInvoice() {
@@ -828,6 +830,13 @@ export default function SupplierDetail({
       ? Number(invoiceDraft.amount)
       : null;
 
+    const itemQtyById: Record<string, number> = {};
+
+    Object.entries(invoiceItemQty).forEach(([id, value]) => {
+      const qty = Number(value) || 0;
+      if (qty > 0) itemQtyById[id] = qty;
+    });
+
     const { error } = await createInvoice(
       supplierId,
       {
@@ -837,7 +846,7 @@ export default function SupplierDetail({
         amount: amountValue,
         note: invoiceDraft.note.trim() || null,
       },
-      selectedItemIds
+      itemQtyById
     );
 
     if (error) {
@@ -848,13 +857,13 @@ export default function SupplierDetail({
     }
 
     setInvoiceDraft(EMPTY_INVOICE_DRAFT);
-    setSelectedItemIds([]);
+    setInvoiceItemQty({});
     setAddedOrderIds([]);
     setShowAddInvoice(false);
     setInvoiceSaving(false);
-    // La cache degli articoli ha il flag "invoiced" ormai vecchio
-    // per gli articoli appena fatturati: la svuoto cosi' la prossima
-    // volta che si apre un ordine viene ricaricata aggiornata.
+    // La cache degli articoli ha le quantita' gia' fatturate ormai
+    // vecchie per gli articoli appena fatturati: la svuoto cosi' la
+    // prossima volta che si apre un ordine viene ricaricata aggiornata.
     setOrderItemsCache({});
     await loadInvoiceData();
   }
@@ -927,9 +936,13 @@ export default function SupplierDetail({
         })
     );
 
-    const newIds = shipment.items.map((item) => item.id);
-
-    setSelectedItemIds((prev) => Array.from(new Set([...prev, ...newIds])));
+    setInvoiceItemQty((prev) => {
+      const next = { ...prev };
+      shipment.items.forEach((item) => {
+        next[item.id] = String(item.qty_arrived);
+      });
+      return next;
+    });
   }
 
   /*
@@ -3955,7 +3968,7 @@ export default function SupplierDetail({
                       )}
 
                       {orderItems.map((item) => (
-                        <label
+                        <div
                           key={item.id}
                           style={{
                             display: "flex",
@@ -3963,23 +3976,31 @@ export default function SupplierDetail({
                             gap: 8,
                             fontSize: 13,
                             padding: "4px 0",
-                            cursor: item.invoiced ? "default" : "pointer",
-                            opacity: item.invoiced ? 0.45 : 1,
                           }}
                         >
+                          <div style={{ flex: 1 }}>
+                            {item.supplier_code || item.code} ·{" "}
+                            {item.description} · ricevuti {item.received_qty}/
+                            {item.qty}
+                            {item.qty_invoiced > 0
+                              ? ` · già fatturati ${item.qty_invoiced}/${item.qty}`
+                              : ""}
+                          </div>
+
                           <input
-                            type="checkbox"
-                            checked={selectedItemIds.includes(item.id)}
-                            disabled={item.invoiced}
-                            onChange={() => toggleItemSelection(item.id)}
+                            type="number"
+                            min="0"
+                            value={invoiceItemQty[item.id] ?? ""}
+                            onChange={(e) =>
+                              setInvoiceItemQty((prev) => ({
+                                ...prev,
+                                [item.id]: e.target.value,
+                              }))
+                            }
+                            placeholder="0"
+                            style={{ ...plafondInputStyle, width: 80 }}
                           />
-                          {item.supplier_code || item.code} ·{" "}
-                          {item.description} · ricevuti {item.received_qty}/
-                          {item.qty}
-                          {item.invoiced
-                            ? " (già in un'altra fattura)"
-                            : ""}
-                        </label>
+                        </div>
                       ))}
                     </div>
                   </div>

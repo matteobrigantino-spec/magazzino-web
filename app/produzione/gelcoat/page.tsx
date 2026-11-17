@@ -52,6 +52,14 @@ type MonthGroup = {
   rows: { description: string; unit: string; qty: number }[];
 };
 
+type HullCandidate = {
+  boatId: string;
+  boatLabel: string;
+  itemDescription: string;
+  unit: string;
+  qtyKg: number;
+};
+
 const MONTH_NAMES_IT = [
   "Gennaio",
   "Febbraio",
@@ -70,6 +78,8 @@ const MONTH_NAMES_IT = [
 export default function GelcoatPage() {
   const [gelcoatItems, setGelcoatItems] = useState<GelcoatItem[]>([]);
   const [committedByItem, setCommittedByItem] = useState<Map<string, number>>(new Map());
+  const [hullCandidates, setHullCandidates] = useState<HullCandidate[]>([]);
+  const [markingHullBoatId, setMarkingHullBoatId] = useState("");
   const [monthlyGroups, setMonthlyGroups] = useState<MonthGroup[]>([]);
   const [modelOptions, setModelOptions] = useState<OptionRow[]>([]);
   const [recipes, setRecipes] = useState<Recipe[]>([]);
@@ -111,11 +121,11 @@ export default function GelcoatPage() {
         .order("model_boat", { ascending: true }),
       supabase
         .from("production_boat_gelcoat")
-        .select("boat_id,gelcoat_item_id,qty_kg")
+        .select("id,boat_id,gelcoat_item_id,qty_kg,part")
         .eq("status", "pending"),
       supabase
         .from("production_boats")
-        .select("id,requested_delivery_date")
+        .select("id,order_number,model_boat,matricola,requested_delivery_date")
         .neq("status", "cancelled")
         .is("delivered_at", null),
     ]);
@@ -165,12 +175,37 @@ export default function GelcoatPage() {
       boatId: String(row.boat_id || ""),
       itemId: String(row.gelcoat_item_id || ""),
       qty: Number(row.qty_kg || 0),
+      part: row.part === "coperta" ? "coperta" : "scafo",
     }));
     pendingRows.forEach((row) => {
       if (!row.itemId) return;
       committed.set(row.itemId, (committed.get(row.itemId) || 0) + row.qty);
     });
     setCommittedByItem(committed);
+
+    const boatLabelById = new Map<string, string>();
+    (boatsRes.data || []).forEach((row: any) => {
+      const matricola = row.matricola ? ` (${row.matricola})` : "";
+      boatLabelById.set(
+        String(row.id),
+        `${row.order_number ?? "-"} · ${row.model_boat || ""}${matricola}`
+      );
+    });
+
+    // Carena (scafo) gia' laminata ma non ancora scaricata dalla
+    // Giacenza: solo i battelli non cancellati e non ancora
+    // consegnati (quelli nella mappa boatLabelById) compaiono qui.
+    setHullCandidates(
+      pendingRows
+        .filter((row) => row.part === "scafo" && boatLabelById.has(row.boatId))
+        .map((row) => ({
+          boatId: row.boatId,
+          boatLabel: boatLabelById.get(row.boatId) || "-",
+          itemDescription: itemById.get(row.itemId)?.description || "Articolo non trovato",
+          unit: itemById.get(row.itemId)?.unit || "KG",
+          qtyKg: row.qty,
+        }))
+    );
 
     // Fabbisogno per mese: ogni impegno (scarico virtuale) viene attribuito
     // al mese di consegna richiesta del suo battello - cosi' si vede con
@@ -327,6 +362,31 @@ export default function GelcoatPage() {
 
     setMessage("Rimosso.");
     setRemovingPart("");
+    await loadData();
+  }
+
+  async function markHullDone(boatId: string, boatLabel: string) {
+    const confirmed = window.confirm(
+      `Segnare la carena di ${boatLabel} come già fatta?\n\nI kg di gelcoat dello scafo verranno tolti subito dalla Giacenza, senza aspettare la consegna finale al cliente. Non si può annullare da qui.`
+    );
+    if (!confirmed) return;
+
+    setMarkingHullBoatId(boatId);
+    setMessage("");
+    setErrorMessage("");
+
+    const { error } = await supabase.rpc("mark_boat_hull_gelcoat_done", {
+      p_boat_id: boatId,
+    });
+
+    if (error) {
+      setErrorMessage("Errore: " + error.message);
+      setMarkingHullBoatId("");
+      return;
+    }
+
+    setMessage("Carena segnata come fatta: giacenza aggiornata.");
+    setMarkingHullBoatId("");
     await loadData();
   }
 
@@ -512,6 +572,58 @@ export default function GelcoatPage() {
               "Impegnati" = kg già prenotati dai battelli in produzione (non ancora
               consegnati al cliente). "Disponibile" = Giacenza − Impegnati: è il
               numero da guardare per sapere quando e quanto riordinare.
+            </p>
+          </>
+        )}
+      </section>
+
+      <section className="gel-card">
+        <div className="gel-card-head">
+          <h2>Carena già fatta</h2>
+        </div>
+        {hullCandidates.length === 0 ? (
+          <div className="gel-empty">
+            Nessuna carena in attesa: tutti i battelli in produzione non hanno
+            ancora uno scafo da segnare, oppure sono già stati segnati.
+          </div>
+        ) : (
+          <>
+            <table className="gel-table">
+              <thead>
+                <tr>
+                  <th>Battello</th>
+                  <th>Gelcoat scafo</th>
+                  <th>Kg</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {hullCandidates.map((hull) => (
+                  <tr key={hull.boatId}>
+                    <td>{hull.boatLabel}</td>
+                    <td>{hull.itemDescription}</td>
+                    <td>
+                      {hull.qtyKg} {hull.unit}
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        className="gel-btn primary"
+                        onClick={() => markHullDone(hull.boatId, hull.boatLabel)}
+                        disabled={markingHullBoatId === hull.boatId}
+                      >
+                        {markingHullBoatId === hull.boatId ? "..." : "Segna carena fatta"}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="gel-hint">
+              Segnando una carena come fatta, i kg di gelcoat dello scafo di
+              quel battello vengono tolti subito dalla Giacenza (non si
+              aspetta più la consegna finale al cliente). La coperta resta
+              impegnata come prima.
             </p>
           </>
         )}

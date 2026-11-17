@@ -52,12 +52,17 @@ type MonthGroup = {
   rows: { description: string; unit: string; qty: number }[];
 };
 
-type HullCandidate = {
-  boatId: string;
-  boatLabel: string;
+type BoatGelcoatPart = {
+  part: Part;
   itemDescription: string;
   unit: string;
   qtyKg: number;
+};
+
+type BoatGelcoatCandidate = {
+  boatId: string;
+  boatLabel: string;
+  parts: BoatGelcoatPart[];
 };
 
 const MONTH_NAMES_IT = [
@@ -78,8 +83,8 @@ const MONTH_NAMES_IT = [
 export default function GelcoatPage() {
   const [gelcoatItems, setGelcoatItems] = useState<GelcoatItem[]>([]);
   const [committedByItem, setCommittedByItem] = useState<Map<string, number>>(new Map());
-  const [hullCandidates, setHullCandidates] = useState<HullCandidate[]>([]);
-  const [markingHullBoatId, setMarkingHullBoatId] = useState("");
+  const [boatGelcoatCandidates, setBoatGelcoatCandidates] = useState<BoatGelcoatCandidate[]>([]);
+  const [markingBoatId, setMarkingBoatId] = useState("");
   const [monthlyGroups, setMonthlyGroups] = useState<MonthGroup[]>([]);
   const [modelOptions, setModelOptions] = useState<OptionRow[]>([]);
   const [recipes, setRecipes] = useState<Recipe[]>([]);
@@ -175,7 +180,7 @@ export default function GelcoatPage() {
       boatId: String(row.boat_id || ""),
       itemId: String(row.gelcoat_item_id || ""),
       qty: Number(row.qty_kg || 0),
-      part: row.part === "coperta" ? "coperta" : "scafo",
+      part: (row.part === "coperta" ? "coperta" : "scafo") as Part,
     }));
     pendingRows.forEach((row) => {
       if (!row.itemId) return;
@@ -192,20 +197,29 @@ export default function GelcoatPage() {
       );
     });
 
-    // Carena (scafo) gia' laminata ma non ancora scaricata dalla
-    // Giacenza: solo i battelli non cancellati e non ancora
-    // consegnati (quelli nella mappa boatLabelById) compaiono qui.
-    setHullCandidates(
-      pendingRows
-        .filter((row) => row.part === "scafo" && boatLabelById.has(row.boatId))
-        .map((row) => ({
+    // Battelli con gelcoat (scafo e/o coperta) gia' impegnato ma non
+    // ancora scaricato dalla Giacenza: solo i battelli non cancellati e
+    // non ancora consegnati (quelli nella mappa boatLabelById) compaiono
+    // qui. Scafo e coperta possono essere di un colore diverso, quindi
+    // si raggruppano per battello ma si tengono le righe separate.
+    const candidatesByBoat = new Map<string, BoatGelcoatCandidate>();
+    pendingRows
+      .filter((row) => boatLabelById.has(row.boatId))
+      .forEach((row) => {
+        const existing = candidatesByBoat.get(row.boatId) || {
           boatId: row.boatId,
           boatLabel: boatLabelById.get(row.boatId) || "-",
+          parts: [] as BoatGelcoatPart[],
+        };
+        existing.parts.push({
+          part: row.part,
           itemDescription: itemById.get(row.itemId)?.description || "Articolo non trovato",
           unit: itemById.get(row.itemId)?.unit || "KG",
           qtyKg: row.qty,
-        }))
-    );
+        });
+        candidatesByBoat.set(row.boatId, existing);
+      });
+    setBoatGelcoatCandidates(Array.from(candidatesByBoat.values()));
 
     // Fabbisogno per mese: ogni impegno (scarico virtuale) viene attribuito
     // al mese di consegna richiesta del suo battello - cosi' si vede con
@@ -365,28 +379,28 @@ export default function GelcoatPage() {
     await loadData();
   }
 
-  async function markHullDone(boatId: string, boatLabel: string) {
+  async function markBoatGelcoatDone(boatId: string, boatLabel: string) {
     const confirmed = window.confirm(
-      `Segnare la carena di ${boatLabel} come già fatta?\n\nI kg di gelcoat dello scafo verranno tolti subito dalla Giacenza, senza aspettare la consegna finale al cliente. Non si può annullare da qui.`
+      `Segnare ${boatLabel} come battello fatto?\n\nI kg di gelcoat impegnati per scafo e coperta di questo battello verranno tolti subito dalla Giacenza, senza aspettare la consegna finale al cliente. Non si può annullare da qui.`
     );
     if (!confirmed) return;
 
-    setMarkingHullBoatId(boatId);
+    setMarkingBoatId(boatId);
     setMessage("");
     setErrorMessage("");
 
-    const { error } = await supabase.rpc("mark_boat_hull_gelcoat_done", {
+    const { error } = await supabase.rpc("mark_boat_gelcoat_done", {
       p_boat_id: boatId,
     });
 
     if (error) {
       setErrorMessage("Errore: " + error.message);
-      setMarkingHullBoatId("");
+      setMarkingBoatId("");
       return;
     }
 
-    setMessage("Carena segnata come fatta: giacenza aggiornata.");
-    setMarkingHullBoatId("");
+    setMessage("Battello segnato come fatto: giacenza aggiornata.");
+    setMarkingBoatId("");
     await loadData();
   }
 
@@ -579,12 +593,12 @@ export default function GelcoatPage() {
 
       <section className="gel-card">
         <div className="gel-card-head">
-          <h2>Carena già fatta</h2>
+          <h2>Battello fatto</h2>
         </div>
-        {hullCandidates.length === 0 ? (
+        {boatGelcoatCandidates.length === 0 ? (
           <div className="gel-empty">
-            Nessuna carena in attesa: tutti i battelli in produzione non hanno
-            ancora uno scafo da segnare, oppure sono già stati segnati.
+            Nessun battello in attesa: non ci sono battelli in produzione con
+            gelcoat ancora impegnato, oppure sono già stati tutti segnati.
           </div>
         ) : (
           <>
@@ -592,27 +606,37 @@ export default function GelcoatPage() {
               <thead>
                 <tr>
                   <th>Battello</th>
-                  <th>Gelcoat scafo</th>
+                  <th>Gelcoat</th>
                   <th>Kg</th>
                   <th></th>
                 </tr>
               </thead>
               <tbody>
-                {hullCandidates.map((hull) => (
-                  <tr key={hull.boatId}>
-                    <td>{hull.boatLabel}</td>
-                    <td>{hull.itemDescription}</td>
+                {boatGelcoatCandidates.map((boat) => (
+                  <tr key={boat.boatId}>
+                    <td>{boat.boatLabel}</td>
                     <td>
-                      {hull.qtyKg} {hull.unit}
+                      {boat.parts.map((part, index) => (
+                        <div key={index}>
+                          {part.part === "scafo" ? "Scafo" : "Coperta"}: {part.itemDescription}
+                        </div>
+                      ))}
+                    </td>
+                    <td>
+                      {boat.parts.map((part, index) => (
+                        <div key={index}>
+                          {part.qtyKg} {part.unit}
+                        </div>
+                      ))}
                     </td>
                     <td>
                       <button
                         type="button"
                         className="gel-btn primary"
-                        onClick={() => markHullDone(hull.boatId, hull.boatLabel)}
-                        disabled={markingHullBoatId === hull.boatId}
+                        onClick={() => markBoatGelcoatDone(boat.boatId, boat.boatLabel)}
+                        disabled={markingBoatId === boat.boatId}
                       >
-                        {markingHullBoatId === hull.boatId ? "..." : "Segna carena fatta"}
+                        {markingBoatId === boat.boatId ? "..." : "Segna battello fatto"}
                       </button>
                     </td>
                   </tr>
@@ -620,10 +644,10 @@ export default function GelcoatPage() {
               </tbody>
             </table>
             <p className="gel-hint">
-              Segnando una carena come fatta, i kg di gelcoat dello scafo di
-              quel battello vengono tolti subito dalla Giacenza (non si
-              aspetta più la consegna finale al cliente). La coperta resta
-              impegnata come prima.
+              Segnando un battello come fatto, i kg di gelcoat impegnati per
+              scafo e coperta (anche se di colori diversi) vengono tolti
+              subito dalla Giacenza, senza aspettare la consegna finale al
+              cliente.
             </p>
           </>
         )}

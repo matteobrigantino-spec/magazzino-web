@@ -239,6 +239,12 @@ export default function ProductionPage() {
   // colonna printed_at non esiste ancora su production_tubolari.
   const [tubolariPrinted, setTubolariPrinted] = useState<Record<string, string>>({});
 
+  // Spunta per vedere, nel pannello Tubolari, anche i battelli gia'
+  // stampati in precedenza (di base restano esclusi: vedi
+  // tubolariPrinted sopra). Si riazzera ogni volta che si riapre il
+  // pannello, cosi' l'esclusione di default torna attiva.
+  const [tubolariShowAll, setTubolariShowAll] = useState(false);
+
   // Stessa cosa ma per Verniciatura (e in generale qualunque reparto che
   // usi il pannello rapido): qui il "passaggio" e' il singolo step in
   // production_department_steps, quindi la mappa e' step_id -> data/ora
@@ -1493,7 +1499,7 @@ export default function ProductionPage() {
 
     const list = printPanel === "tubolari"
       ? activeBoats
-          .filter((boat) => !tubolariPrinted[boat.id])
+          .filter((boat) => tubolariShowAll || !tubolariPrinted[boat.id])
           .map((boat) => ({
             boat,
             step: steps.find((s) => s.boat_id === boat.id && s.department_id === dept.id) || null,
@@ -1530,6 +1536,7 @@ export default function ProductionPage() {
     steps,
     boats,
     tubolariPrinted,
+    tubolariShowAll,
     stepsPrinted,
   ]);
 
@@ -1544,6 +1551,7 @@ export default function ProductionPage() {
 
   function openPrintPanel(kind: "verniciatura" | "tubolari") {
     setPrintError("");
+    setTubolariShowAll(false);
     setPrintPanel((current) => (current === kind ? null : kind));
   }
 
@@ -2869,6 +2877,7 @@ export default function ProductionPage() {
               Spunta i battelli da mettere nel PDF (in qualsiasi combinazione,
               non serve che siano di fila).
               {printPanel === "tubolari" &&
+                !tubolariShowAll &&
                 (() => {
                   const printedCount = activeBoats.filter(
                     (boat) => tubolariPrinted[boat.id]
@@ -2882,6 +2891,17 @@ export default function ProductionPage() {
                   ) : null;
                 })()}
             </p>
+
+            {printPanel === "tubolari" && (
+              <label className="prod-print-showall">
+                <input
+                  type="checkbox"
+                  checked={tubolariShowAll}
+                  onChange={(e) => setTubolariShowAll(e.target.checked)}
+                />
+                Mostra tutti i battelli in produzione (anche quelli già stampati)
+              </label>
+            )}
 
             {printCandidateRows.length === 0 ? (
               <p className="prod-print-empty">
@@ -2897,7 +2917,11 @@ export default function ProductionPage() {
                   }
                   // Verniciatura mostra sempre tutti i battelli attivi senza
                   // esclusioni, quindi puo' arrivare a zero solo se non ce
-                  // ne sono. Tubolari invece esclude i gia' stampati.
+                  // ne sono. Tubolari invece esclude i gia' stampati, a
+                  // meno che non sia spuntato "mostra tutti".
+                  if (printPanel === "tubolari" && tubolariShowAll) {
+                    return "Nessun battello attivo in produzione.";
+                  }
                   return "Tutti i battelli sono gia' stati stampati.";
                 })()}
               </p>
@@ -3294,6 +3318,15 @@ function Styles() {
         border: 1px solid rgba(19,34,39,.12);
         border-radius: 10px;
         background: #fbf8f2;
+      }
+
+      .prod-print-showall {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        font-size: 12px;
+        margin: 4px 0 10px;
+        cursor: pointer;
       }
 
       .prod-print-boat-row {

@@ -85,6 +85,12 @@ type UpholsteryCandidate = {
 
 type KitAssignmentSlot = {
   key: string;
+  // "upholstery" (tappezzeria) o "bimini": stesso meccanismo,
+  // stessa forma di "requirement" (per Bimini i campi
+  // detailsLogos/stitching/quilting restano vuoti, Bimini ha solo
+  // il colore), cambia solo quali RPC chiamare per creare/assegnare
+  // il kit fisico.
+  kind: "upholstery" | "bimini";
   lineId: string;
   itemId: string;
   itemDescription: string;
@@ -132,6 +138,21 @@ type UpholsteryRequirementRow = {
   details_logos: string | null;
   stitching: string | null;
   quilting: string | null;
+  production_boats:
+    | {
+        order_number: string | null;
+        requested_delivery_date: string | null;
+      }[]
+    | null;
+};
+
+// Stessa cosa ma per Bimini (production_boat_bimini): niente
+// details_logos/stitching/quilting, solo colore.
+type BiminiRequirementRow = {
+  id: string;
+  order_item_id: string | null;
+  boat_id: string | null;
+  color: string | null;
   production_boats:
     | {
         order_number: string | null;
@@ -207,6 +228,9 @@ export default function OrderDetailPage() {
     Record<string, number>
   >({});
 
+  const [biminiCandidatesByLine, setBiminiCandidatesByLine] = useState<
+    Record<string, UpholsteryCandidate[]>
+  >({});
   const [upholsteryCandidatesByLine, setUpholsteryCandidatesByLine] =
     useState<Record<string, UpholsteryCandidate[]>>({});
 
@@ -1026,11 +1050,66 @@ export default function OrderDetailPage() {
       });
     }
 
+    const biminiCandidatesByLine: Record<string, UpholsteryCandidate[]> = {};
+
+    if (lineIds.length > 0) {
+      const { data: biminiReqRows } = await supabase
+        .from("production_boat_bimini")
+        .select(
+          "id,order_item_id,boat_id,color,production_boats(order_number,requested_delivery_date)"
+        )
+        .in("order_item_id", lineIds)
+        .is("kit_id", null);
+
+      ((biminiReqRows || []) as BiminiRequirementRow[]).forEach((row) => {
+        const lineId = String(row.order_item_id || "");
+
+        if (!lineId) return;
+
+        const boat = (row.production_boats && row.production_boats[0]) || {
+          order_number: null,
+          requested_delivery_date: null,
+        };
+
+        const candidate: UpholsteryCandidate = {
+          requirementId: String(row.id),
+          boatId: String(row.boat_id || ""),
+          boatMatricola: String(boat.order_number || "-"),
+          color: String(row.color || ""),
+          detailsLogos: "",
+          stitching: "",
+          quilting: "",
+          requestedDeliveryDate: boat.requested_delivery_date
+            ? String(boat.requested_delivery_date)
+            : null,
+        };
+
+        const list = biminiCandidatesByLine[lineId] || [];
+        list.push(candidate);
+        biminiCandidatesByLine[lineId] = list;
+      });
+
+      Object.keys(biminiCandidatesByLine).forEach((lineId) => {
+        biminiCandidatesByLine[lineId].sort((a, b) => {
+          if (a.requestedDeliveryDate && b.requestedDeliveryDate) {
+            return a.requestedDeliveryDate.localeCompare(
+              b.requestedDeliveryDate
+            );
+          }
+
+          if (a.requestedDeliveryDate) return -1;
+          if (b.requestedDeliveryDate) return 1;
+          return 0;
+        });
+      });
+    }
+
     setOrder(orderData);
     setSupplier(supplierData);
     setLines(lineViews);
     setIncomingQty(initialIncoming);
     setUpholsteryCandidatesByLine(candidatesByLine);
+    setBiminiCandidatesByLine(biminiCandidatesByLine);
 
     setLoading(false);
   }
@@ -1342,6 +1421,7 @@ export default function OrderDetailPage() {
 
         newSlots.push({
           key: lineId + "-" + requirement.requirementId,
+          kind: "upholstery",
           lineId,
           itemId: line.item_id,
           itemDescription: line.description,
@@ -1353,6 +1433,51 @@ export default function OrderDetailPage() {
         });
 
         nextMatricola += 1;
+      }
+    });
+
+    /*
+      Stesso meccanismo, ma per i kit Bimini: appena arrivano pezzi
+      che corrispondono a un battello "IN ORDINE" in attesa di
+      bimini (production_boat_bimini con kit_id ancora vuoto),
+      proponiamo subito la creazione+assegnazione del kit fisico.
+    */
+    let nextBiminiMatricola = 1;
+
+    const { data: biminiMatricolaData } = await supabase.rpc(
+      "next_bimini_matricola",
+      { p_supplier_id: order.supplier_id }
+    );
+
+    if (biminiMatricolaData !== null && biminiMatricolaData !== undefined) {
+      nextBiminiMatricola = Number(biminiMatricolaData);
+    }
+
+    Object.entries(arrivedQtyByLine).forEach(([lineId, qty]) => {
+      const candidates = biminiCandidatesByLine[lineId] || [];
+      const line = lines.find((row) => row.id === lineId);
+
+      if (!line) return;
+
+      const slotsForLine = Math.min(qty, candidates.length);
+
+      for (let i = 0; i < slotsForLine; i++) {
+        const requirement = candidates[i];
+
+        newSlots.push({
+          key: "bimini-" + lineId + "-" + requirement.requirementId,
+          kind: "bimini",
+          lineId,
+          itemId: line.item_id,
+          itemDescription: line.description,
+          requirement,
+          matricola: String(nextBiminiMatricola),
+          scannerCode: "",
+          unitPrice:
+            line.unit_price > 0 ? String(line.unit_price) : "",
+        });
+
+        nextBiminiMatricola += 1;
       }
     });
 
@@ -1470,20 +1595,32 @@ export default function OrderDetailPage() {
         continue;
       }
 
+      const isBimini = slot.kind === "bimini";
+
       const { data: newKitId, error: createError } = await supabase.rpc(
-        "create_upholstery_stock_kit",
-        {
-          p_supplier_id: order.supplier_id,
-          p_item_id: slot.itemId,
-          p_matricola: matricolaNumber,
-          p_scanner_code: slot.scannerCode.trim(),
-          p_unit_price: priceNumber,
-          p_color: slot.requirement.color,
-          p_details_logos: slot.requirement.detailsLogos,
-          p_stitching: slot.requirement.stitching,
-          p_quilting: slot.requirement.quilting,
-          p_note: null,
-        }
+        isBimini ? "create_bimini_stock_kit" : "create_upholstery_stock_kit",
+        isBimini
+          ? {
+              p_supplier_id: order.supplier_id,
+              p_item_id: slot.itemId,
+              p_matricola: matricolaNumber,
+              p_scanner_code: slot.scannerCode.trim(),
+              p_unit_price: priceNumber,
+              p_color: slot.requirement.color,
+              p_note: null,
+            }
+          : {
+              p_supplier_id: order.supplier_id,
+              p_item_id: slot.itemId,
+              p_matricola: matricolaNumber,
+              p_scanner_code: slot.scannerCode.trim(),
+              p_unit_price: priceNumber,
+              p_color: slot.requirement.color,
+              p_details_logos: slot.requirement.detailsLogos,
+              p_stitching: slot.requirement.stitching,
+              p_quilting: slot.requirement.quilting,
+              p_note: null,
+            }
       );
 
       if (createError || !newKitId) {
@@ -1499,11 +1636,16 @@ export default function OrderDetailPage() {
       }
 
       const { error: assignError } = await supabase.rpc(
-        "assign_upholstery_kit_to_boat",
-        {
-          p_kit_id: newKitId,
-          p_boat_upholstery_id: slot.requirement.requirementId,
-        }
+        isBimini ? "assign_bimini_kit_to_boat" : "assign_upholstery_kit_to_boat",
+        isBimini
+          ? {
+              p_kit_id: newKitId,
+              p_boat_bimini_id: slot.requirement.requirementId,
+            }
+          : {
+              p_kit_id: newKitId,
+              p_boat_upholstery_id: slot.requirement.requirementId,
+            }
       );
 
       if (assignError) {
@@ -2400,7 +2542,7 @@ export default function OrderDetailPage() {
           }}
         >
           <div style={{ fontSize: 18, fontWeight: 850 }}>
-            Kit tappezzeria appena arrivati da assegnare
+            Kit tappezzeria / bimini appena arrivati da assegnare
           </div>
 
           <div
@@ -2417,7 +2559,7 @@ export default function OrderDetailPage() {
             scanner e prezzo di ciascun kit per segnarlo come consegnato:
             la richiesta del battello diventerà &quot;ASSEGNATA&quot;.
             Puoi anche ignorare un pezzo: resta in giacenza generica,
-            assegnabile più tardi dalla scheda Tappezzeria.
+            assegnabile più tardi dalla scheda Tappezzeria o Bimini.
           </div>
 
           <div
@@ -2464,10 +2606,16 @@ export default function OrderDetailPage() {
                       marginTop: 2,
                     }}
                   >
-                    {slot.requirement.color} ·{" "}
-                    {slot.requirement.detailsLogos} ·{" "}
-                    {slot.requirement.stitching} ·{" "}
-                    {slot.requirement.quilting}
+                    {slot.kind === "upholstery" ? (
+                      <>
+                        {slot.requirement.color} ·{" "}
+                        {slot.requirement.detailsLogos} ·{" "}
+                        {slot.requirement.stitching} ·{" "}
+                        {slot.requirement.quilting}
+                      </>
+                    ) : (
+                      slot.requirement.color
+                    )}
                   </div>
                 </div>
 

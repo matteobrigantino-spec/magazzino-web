@@ -2,6 +2,7 @@
 
 import {
   use,
+  useCallback,
   useEffect,
   useMemo,
   useState,
@@ -25,9 +26,17 @@ type UpholsteryKit = {
   quilting: string;
   unit_price: number;
   boat_registration: string | null;
+  boat_id: string | null;
   status: string;
+  delivered_at: string | null;
   note: string | null;
   created_at: string;
+};
+
+type ProductionBoatLite = {
+  id: string;
+  order_number: string | null;
+  delivered_at: string | null;
 };
 
 type ItemLookup = {
@@ -80,6 +89,14 @@ export default function UpholsteryWarehousePage({
   ] =
     useState<
       UpholsteryKit[]
+    >([]);
+
+  const [
+    boats,
+    setBoats,
+  ] =
+    useState<
+      ProductionBoatLite[]
     >([]);
 
   const [
@@ -168,14 +185,66 @@ export default function UpholsteryWarehousePage({
       () =>
         kits.filter(
           (kit) =>
-            kit.status ===
-              "out" &&
+            (kit.status === "out" || kit.status === "delivered") &&
             Boolean(
               kit.boat_registration
             )
         ),
       [kits]
     );
+
+  // STEP70: un kit "out" (destinato) e' considerato consegnato se il
+  // kit stesso e' gia' marcato "delivered", oppure se il battello a
+  // cui e' collegato risulta gia' consegnato al cliente (coprendo
+  // anche i kit assegnati PRIMA che esistesse questo controllo).
+  const boatDeliveredById = useMemo(() => {
+    const map = new Map<string, boolean>();
+    boats.forEach((boat) => {
+      map.set(boat.id, Boolean(boat.delivered_at));
+    });
+    return map;
+  }, [boats]);
+
+  const boatDeliveredByOrderNumber = useMemo(() => {
+    const map = new Map<string, boolean>();
+    boats.forEach((boat) => {
+      if (boat.order_number) {
+        map.set(boat.order_number, Boolean(boat.delivered_at));
+      }
+    });
+    return map;
+  }, [boats]);
+
+  const isKitBoatDelivered = useCallback(
+    (kit: UpholsteryKit) => {
+      if (kit.status === "delivered") return true;
+
+      if (kit.boat_id) {
+        return Boolean(boatDeliveredById.get(kit.boat_id));
+      }
+
+      if (kit.boat_registration) {
+        return Boolean(
+          boatDeliveredByOrderNumber.get(kit.boat_registration)
+        );
+      }
+
+      return false;
+    },
+    [boatDeliveredById, boatDeliveredByOrderNumber]
+  );
+
+  const destinedKits = useMemo(
+    () =>
+      soldKits.filter((kit) => !isKitBoatDelivered(kit)),
+    [soldKits, isKitBoatDelivered]
+  );
+
+  const deliveredKits = useMemo(
+    () =>
+      soldKits.filter((kit) => isKitBoatDelivered(kit)),
+    [soldKits, isKitBoatDelivered]
+  );
 
   const totalValue =
     useMemo(
@@ -200,6 +269,7 @@ export default function UpholsteryWarehousePage({
       supplierResponse,
       kitsResponse,
       itemsResponse,
+      boatsResponse,
     ] =
       await Promise.all([
         supabase
@@ -220,7 +290,7 @@ export default function UpholsteryWarehousePage({
             "upholstery_kits"
           )
           .select(
-            "id,item_id,matricola,scanner_code,color,details_logos,stitching,quilting,unit_price,boat_registration,status,note,created_at"
+            "id,item_id,matricola,scanner_code,color,details_logos,stitching,quilting,unit_price,boat_registration,boat_id,status,delivered_at,note,created_at"
           )
           .eq(
             "supplier_id",
@@ -244,6 +314,16 @@ export default function UpholsteryWarehousePage({
           .eq(
             "supplier_id",
             supplierId
+          ),
+
+        // STEP70: serve solo per sapere, dato un battello, se e'
+        // gia' stato consegnato al cliente (production_boats.delivered_at).
+        supabase
+          .from(
+            "production_boats"
+          )
+          .select(
+            "id,order_number,delivered_at"
           ),
       ]);
 
@@ -346,11 +426,23 @@ export default function UpholsteryWarehousePage({
                   row.boat_registration
                 )
               : null,
+          boat_id:
+            row.boat_id
+              ? String(
+                  row.boat_id
+                )
+              : null,
           status:
             String(
               row.status ||
                 ""
             ),
+          delivered_at:
+            row.delivered_at
+              ? String(
+                  row.delivered_at
+                )
+              : null,
           note:
             row.note
               ? String(
@@ -367,6 +459,16 @@ export default function UpholsteryWarehousePage({
 
     setKits(
       cleanKits
+    );
+
+    setBoats(
+      ((boatsResponse.data || []) as any[]).map(
+        (row) => ({
+          id: String(row.id),
+          order_number: row.order_number ? String(row.order_number) : null,
+          delivered_at: row.delivered_at ? String(row.delivered_at) : null,
+        })
+      )
     );
 
     setPriceDrafts(
@@ -1199,6 +1301,26 @@ export default function UpholsteryWarehousePage({
           </strong>
         </div>
 
+        <div>
+          <span>
+            DESTINATI (NON CONSEGNATI)
+          </span>
+
+          <strong>
+            {destinedKits.length}
+          </strong>
+        </div>
+
+        <div>
+          <span>
+            CONSEGNATI
+          </span>
+
+          <strong>
+            {deliveredKits.length}
+          </strong>
+        </div>
+
         <div className="tap-pdf-actions">
           <button
             type="button"
@@ -1514,7 +1636,125 @@ export default function UpholsteryWarehousePage({
         )}
       </section>
 
-      {soldKits.length > 0 && (
+      {destinedKits.length > 0 && (
+        <section className="tap-sold-card">
+          <div className="tap-sold-head">
+            <div>
+              <div className="tap-eyebrow">
+                GIA&apos; DESTINATI
+              </div>
+
+              <h2>
+                Kit destinati (battello non ancora consegnato)
+              </h2>
+
+              <p>
+                Questi kit sono gia&apos; assegnati a un battello ma il
+                battello non risulta ancora consegnato al cliente:
+                non fanno piu&apos; parte della giacenza libera, ma non
+                sono nemmeno definitivamente andati.
+              </p>
+            </div>
+
+            <strong>
+              {destinedKits.length}
+            </strong>
+          </div>
+
+          <div className="tap-table-wrap">
+            <table className="tap-table sold">
+              <thead>
+                <tr>
+                  <th>Matricola Kit</th>
+                  <th>Matricola Battello</th>
+                  <th>Codice articolo</th>
+                  <th>Codice scanner</th>
+                  <th>Descrizione</th>
+                  <th>Colore</th>
+                  <th>Dettagli e loghi</th>
+                  <th>Cucitura</th>
+                  <th>Trapuntatura</th>
+                  <th>Stato</th>
+                  <th>Azione</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {destinedKits.map((kit) => {
+                  const item = itemMap.get(kit.item_id);
+
+                  return (
+                    <tr
+                      key={kit.id}
+                      className="tap-clickable-row"
+                      title="Apri scheda kit e note"
+                      onClick={() =>
+                        router.push(
+                          `/suppliers/${supplierId}/upholstery/kit/${kit.id}`
+                        )
+                      }
+                    >
+                      <td>
+                        <strong className="tap-matricola">
+                          #{kit.matricola}
+                        </strong>
+                      </td>
+
+                      <td>
+                        <strong className="tap-boat-chip">
+                          {kit.boat_registration}
+                        </strong>
+                      </td>
+
+                      <td>
+                        <strong>
+                          {item?.supplier_code || item?.code || "—"}
+                        </strong>
+                      </td>
+
+                      <td>
+                        <span className="tap-scanner">
+                          {kit.scanner_code}
+                        </span>
+                      </td>
+
+                      <td className="tap-description">
+                        {item?.description || "Articolo non trovato"}
+                      </td>
+
+                      <td>{kit.color}</td>
+                      <td>{kit.details_logos}</td>
+                      <td>{kit.stitching}</td>
+                      <td>{kit.quilting}</td>
+
+                      <td>
+                        <span className="tap-status sold">
+                          DESTINATO
+                        </span>
+                      </td>
+
+                      <td onClick={(event) => event.stopPropagation()}>
+                        <button
+                          type="button"
+                          className="tap-restore"
+                          onClick={() => restoreSoldKit(kit)}
+                          disabled={savingBoatId === kit.id}
+                        >
+                          {savingBoatId === kit.id
+                            ? "..."
+                            : "Annulla vendita"}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {deliveredKits.length > 0 && (
         <section className="tap-sold-card">
           <div className="tap-sold-head">
             <div>
@@ -1523,17 +1763,18 @@ export default function UpholsteryWarehousePage({
               </div>
 
               <h2>
-                Kit venduti
+                Kit consegnati
               </h2>
 
               <p>
-                Questi kit non fanno più parte della giacenza
-                e non vengono inseriti nei PDF di magazzino.
+                Il battello collegato a questi kit risulta consegnato
+                al cliente: questi kit non fanno piu&apos; parte della
+                giacenza e non vengono inseriti nei PDF di magazzino.
               </p>
             </div>
 
             <strong>
-              {soldKits.length}
+              {deliveredKits.length}
             </strong>
           </div>
 
@@ -1541,173 +1782,75 @@ export default function UpholsteryWarehousePage({
             <table className="tap-table sold">
               <thead>
                 <tr>
-                  <th>
-                    Matricola Kit
-                  </th>
-
-                  <th>
-                    Matricola Battello
-                  </th>
-
-                  <th>
-                    Codice articolo
-                  </th>
-
-                  <th>
-                    Codice scanner
-                  </th>
-
-                  <th>
-                    Descrizione
-                  </th>
-
-                  <th>
-                    Colore
-                  </th>
-
-                  <th>
-                    Dettagli e loghi
-                  </th>
-
-                  <th>
-                    Cucitura
-                  </th>
-
-                  <th>
-                    Trapuntatura
-                  </th>
-
-                  <th>
-                    Stato
-                  </th>
-
-                  <th>
-                    Azione
-                  </th>
+                  <th>Matricola Kit</th>
+                  <th>Matricola Battello</th>
+                  <th>Codice articolo</th>
+                  <th>Codice scanner</th>
+                  <th>Descrizione</th>
+                  <th>Colore</th>
+                  <th>Dettagli e loghi</th>
+                  <th>Cucitura</th>
+                  <th>Trapuntatura</th>
+                  <th>Stato</th>
                 </tr>
               </thead>
 
               <tbody>
-                {soldKits.map(
-                  (kit) => {
-                    const item =
-                      itemMap.get(
-                        kit.item_id
-                      );
+                {deliveredKits.map((kit) => {
+                  const item = itemMap.get(kit.item_id);
 
-                    return (
-                      <tr
-                        key={
-                          kit.id
-                        }
-                        className="tap-clickable-row"
-                        title="Apri scheda kit e note"
-                        onClick={() =>
-                          router.push(
-                            `/suppliers/${supplierId}/upholstery/kit/${kit.id}`
-                          )
-                        }
-                      >
-                        <td>
-                          <strong className="tap-matricola">
-                            #
-                            {
-                              kit.matricola
-                            }
-                          </strong>
-                        </td>
+                  return (
+                    <tr
+                      key={kit.id}
+                      className="tap-clickable-row"
+                      title="Apri scheda kit e note"
+                      onClick={() =>
+                        router.push(
+                          `/suppliers/${supplierId}/upholstery/kit/${kit.id}`
+                        )
+                      }
+                    >
+                      <td>
+                        <strong className="tap-matricola">
+                          #{kit.matricola}
+                        </strong>
+                      </td>
 
-                        <td>
-                          <strong className="tap-boat-chip">
-                            {
-                              kit.boat_registration
-                            }
-                          </strong>
-                        </td>
+                      <td>
+                        <strong className="tap-boat-chip">
+                          {kit.boat_registration}
+                        </strong>
+                      </td>
 
-                        <td>
-                          <strong>
-                            {item
-                              ?.supplier_code ||
-                              item?.code ||
-                              "—"}
-                          </strong>
-                        </td>
+                      <td>
+                        <strong>
+                          {item?.supplier_code || item?.code || "—"}
+                        </strong>
+                      </td>
 
-                        <td>
-                          <span className="tap-scanner">
-                            {
-                              kit.scanner_code
-                            }
-                          </span>
-                        </td>
+                      <td>
+                        <span className="tap-scanner">
+                          {kit.scanner_code}
+                        </span>
+                      </td>
 
-                        <td className="tap-description">
-                          {item
-                            ?.description ||
-                            "Articolo non trovato"}
-                        </td>
+                      <td className="tap-description">
+                        {item?.description || "Articolo non trovato"}
+                      </td>
 
-                        <td>
-                          {
-                            kit.color
-                          }
-                        </td>
+                      <td>{kit.color}</td>
+                      <td>{kit.details_logos}</td>
+                      <td>{kit.stitching}</td>
+                      <td>{kit.quilting}</td>
 
-                        <td>
-                          {
-                            kit.details_logos
-                          }
-                        </td>
-
-                        <td>
-                          {
-                            kit.stitching
-                          }
-                        </td>
-
-                        <td>
-                          {
-                            kit.quilting
-                          }
-                        </td>
-
-                        <td>
-                          <span className="tap-status sold">
-                            VENDUTO
-                          </span>
-                        </td>
-
-                        <td
-                          onClick={(
-                            event
-                          ) =>
-                            event.stopPropagation()
-                          }
-                        >
-                          <button
-                            type="button"
-                            className="tap-restore"
-                            onClick={() =>
-                              restoreSoldKit(
-                                kit
-                              )
-                            }
-                            disabled={
-                              savingBoatId ===
-                              kit.id
-                            }
-                          >
-                            {savingBoatId ===
-                            kit.id
-                              ? "..."
-                              : "Annulla vendita"}
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  }
-                )}
+                      <td>
+                        <span className="tap-status sold">
+                          CONSEGNATO
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

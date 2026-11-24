@@ -135,6 +135,8 @@ export default function UpholsteryWarehousePage({
   ] =
     useState("");
 
+  const [deletingDestinedId, setDeletingDestinedId] = useState("");
+
   const [
     loading,
     setLoading,
@@ -781,6 +783,166 @@ export default function UpholsteryWarehousePage({
     );
 
     await loadData();
+  }
+
+  async function deleteDestinedKit(kit: UpholsteryKit) {
+    const confirmed = window.confirm(
+      `Eliminare definitivamente il Kit #${kit.matricola}?\n\n` +
+        "Il kit verra' rimosso del tutto (non solo rimesso in giacenza) e la giacenza dell'articolo verra' aumentata di 1.\n" +
+        "Usa questa opzione solo per kit inseriti o destinati per errore."
+    );
+
+    if (!confirmed) return;
+
+    setDeletingDestinedId(kit.id);
+    clearMessages();
+
+    const { error } = await supabase.rpc("delete_destined_upholstery_kit", {
+      p_kit_id: kit.id,
+    });
+
+    if (error) {
+      setErrorMessage("Errore eliminazione kit: " + error.message);
+      setDeletingDestinedId("");
+      return;
+    }
+
+    setMessage(`Kit #${kit.matricola} eliminato definitivamente.`);
+    setDeletingDestinedId("");
+    await loadData();
+  }
+
+  async function generateDestinedKitsPdf() {
+    if (destinedKits.length === 0) {
+      setErrorMessage("Non ci sono kit destinati da inserire nel PDF.");
+      return;
+    }
+
+    clearMessages();
+
+    const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+
+    const companyLogo = await fetchCompanyLogo();
+
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+
+    const marginLeft = 9;
+    const marginRight = 9;
+
+    let y = 13;
+
+    function drawHeader() {
+      drawCompanyLogoTopRight(doc, companyLogo, { maxWidth: 26, maxHeight: 12 });
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(16);
+      doc.text("MAGAZZINO TAPPEZZERIE", marginLeft, y);
+
+      y += 6;
+
+      doc.setFontSize(10);
+      doc.text(supplierName, marginLeft, y);
+
+      y += 5;
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7);
+      doc.text("Kit destinati (battello non ancora consegnato)", marginLeft, y);
+
+      y += 4;
+
+      doc.text(
+        `Data: ${new Intl.DateTimeFormat("it-IT").format(new Date())}`,
+        marginLeft,
+        y
+      );
+
+      y += 5;
+
+      doc.setDrawColor(190);
+      doc.line(marginLeft, y, pageWidth - marginRight, y);
+
+      y += 5;
+    }
+
+    const columns = {
+      matricola: 9,
+      boat: 26,
+      code: 55,
+      description: 86,
+      color: 150,
+      details: 190,
+      stitching: 235,
+      quilting: 268,
+    };
+
+    function drawTableHeader() {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(6.5);
+
+      doc.text("MATR.", columns.matricola, y);
+      doc.text("MATR. BATTELLO", columns.boat, y);
+      doc.text("COD. ARTICOLO", columns.code, y);
+      doc.text("DESCRIZIONE", columns.description, y);
+      doc.text("COLORE", columns.color, y);
+      doc.text("DETTAGLI / LOGHI", columns.details, y);
+      doc.text("CUCITURA", columns.stitching, y);
+      doc.text("TRAPUNT.", columns.quilting, y);
+
+      y += 3;
+
+      doc.setDrawColor(170);
+      doc.line(marginLeft, y, pageWidth - marginRight, y);
+
+      y += 4;
+    }
+
+    drawHeader();
+    drawTableHeader();
+
+    destinedKits.forEach((kit) => {
+      const item = itemMap.get(kit.item_id);
+
+      const code = item?.supplier_code || item?.code || "-";
+      const description = item?.description || "Articolo non trovato";
+
+      const descriptionLines = doc.splitTextToSize(description, 60);
+
+      const rowHeight = Math.max(6, descriptionLines.length * 3.2);
+
+      if (y + rowHeight > pageHeight - 14) {
+        doc.addPage();
+        y = 13;
+        drawHeader();
+        drawTableHeader();
+      }
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(6.5);
+
+      doc.text(`#${kit.matricola}`, columns.matricola, y);
+      doc.text(kit.boat_registration || "-", columns.boat, y);
+      doc.text(String(code), columns.code, y);
+      doc.text(descriptionLines, columns.description, y);
+      doc.text(kit.color || "-", columns.color, y);
+      doc.text(kit.details_logos || "-", columns.details, y);
+      doc.text(kit.stitching || "-", columns.stitching, y);
+      doc.text(kit.quilting || "-", columns.quilting, y);
+
+      y += rowHeight;
+
+      doc.setDrawColor(225);
+      doc.line(marginLeft, y, pageWidth - marginRight, y);
+
+      y += 3;
+    });
+
+    const safeName = supplierName
+      .replace(/[^a-zA-Z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "");
+
+    doc.save(`Tappezzerie_Destinati_${safeName}.pdf`);
   }
 
   async function generateKitsPdf(
@@ -1656,9 +1818,20 @@ export default function UpholsteryWarehousePage({
               </p>
             </div>
 
-            <strong>
-              {destinedKits.length}
-            </strong>
+            <div className="tap-sold-actions">
+              <button
+                type="button"
+                className="tap-sold-pdf-btn"
+                onClick={generateDestinedKitsPdf}
+                disabled={destinedKits.length === 0}
+              >
+                Esporta PDF
+              </button>
+
+              <strong>
+                {destinedKits.length}
+              </strong>
+            </div>
           </div>
 
           <div className="tap-table-wrap">
@@ -1734,16 +1907,29 @@ export default function UpholsteryWarehousePage({
                       </td>
 
                       <td onClick={(event) => event.stopPropagation()}>
-                        <button
-                          type="button"
-                          className="tap-restore"
-                          onClick={() => restoreSoldKit(kit)}
-                          disabled={savingBoatId === kit.id}
-                        >
-                          {savingBoatId === kit.id
-                            ? "..."
-                            : "Annulla vendita"}
-                        </button>
+                        <div className="tap-row-actions">
+                          <button
+                            type="button"
+                            className="tap-restore"
+                            onClick={() => restoreSoldKit(kit)}
+                            disabled={savingBoatId === kit.id}
+                          >
+                            {savingBoatId === kit.id
+                              ? "..."
+                              : "Annulla vendita"}
+                          </button>
+
+                          <button
+                            type="button"
+                            className="tap-delete-destined"
+                            onClick={() => deleteDestinedKit(kit)}
+                            disabled={deletingDestinedId === kit.id}
+                          >
+                            {deletingDestinedId === kit.id
+                              ? "..."
+                              : "Elimina definitivamente"}
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -2280,6 +2466,54 @@ function Styles() {
       .tap-boat-editor button:disabled {
         opacity: 0.5;
         cursor: wait;
+      }
+
+      .tap-row-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+
+      .tap-delete-destined {
+        min-height: 30px;
+        padding: 0 8px;
+        border: 1px solid rgba(239, 68, 68, 0.30);
+        border-radius: 6px;
+        background: rgba(239, 68, 68, 0.08);
+        color: #fca5a5;
+        cursor: pointer;
+        font-size: 8px;
+        font-weight: 850;
+      }
+
+      .tap-delete-destined:disabled {
+        opacity: 0.5;
+        cursor: wait;
+      }
+
+      .tap-sold-actions {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 7px;
+      }
+
+      .tap-sold-pdf-btn {
+        min-height: 30px;
+        padding: 0 10px;
+        border: 1px solid rgba(96, 165, 250, 0.30);
+        border-radius: 8px;
+        background: rgba(59, 130, 246, 0.08);
+        color: #bfdbfe;
+        cursor: pointer;
+        font-size: 9px;
+        font-weight: 900;
+        white-space: nowrap;
+      }
+
+      .tap-sold-pdf-btn:disabled {
+        opacity: 0.42;
+        cursor: not-allowed;
       }
 
       .tap-empty {
